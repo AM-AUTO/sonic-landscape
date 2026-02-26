@@ -1,0 +1,18 @@
+{
+  "name": "sonic-landscape",
+  "version": "1.0.0",
+  "description": "An interactive map visualization of sound environments and acoustic landmarks",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "npx serve . -l 3000",
+    "test": "npx jest --coverage",
+    "lint": "npx eslint src/**/*.js"
+  },
+  "keywords": ["map", "sound", "visualization", "leaflet"],
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "jest-environment-jsdom": "^29.0.0",
+    "@jest/globals": "^29.0.0"
+  }
+}
