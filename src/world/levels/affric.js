@@ -69,7 +69,7 @@ export default {
     T.label(40, 134, 'Athnamulloch', 'feature');
   },
 
-  cover: { treeline: 660, woodDensity: 0.8, woodSlope: 0.62, bogFlatness: 0.05, bogMax: 330, bogAmount: 0.4, snowline: 1150, rockline: 880, cragSlope: 1.0, cragJitter: 0.16, screeMinH: 600, streamThreshold: 200, riverThreshold: 3500, fallDrop: 40 },
+  cover: { treeline: 660, woodDensity: 0.8, woodSlope: 0.62, bogFlatness: 0.05, bogMax: 330, bogAmount: 0.4, snowline: 1150, rockline: 880, cragSlope: 0.85, cragStrata: 0.25, cragJitter: 0.16, screeMinH: 600, streamThreshold: 1300, riverThreshold: 3500, fallDrop: 40 },
 
   spawn: { x: 238, y: 114 },
   pois: [

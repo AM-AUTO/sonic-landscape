@@ -217,8 +217,9 @@ export function scheduleDemo(r, t0 = 0.2) {
       if (b % 3 === 0) r.kit.hit('click', bt, 0.7);
     }
     r.lead.note(74, tt + 1, 2.5, 0.8); r.bell.note(86, tt + 4, 2, 0.8); r.pluck.note(69, tt + 5, 1, 0.8); r.bass.note(38, tt + 2, 1.5, 0.8);
-    E.fx.master.setDrive(0.8); E.fx.master.setLowCut(120); E.fx.master.setHighCut(9000);
-    act(tt + 7.5, () => { E.fx.master.setDrive(0); E.fx.master.setLowCut(28); E.fx.master.setHighCut(17500); E.fx.master.setGain(0.95); });
+    const M = E.fx.master;
+    M.setDrive(0.8, tt); M.setLowCut(120, tt); M.setHighCut(9000, tt); M.setGain(0.9, tt);
+    M.setDrive(0, tt + 7.5); M.setLowCut(28, tt + 7.5); M.setHighCut(17500, tt + 7.5); M.setGain(0.95, tt + 7.5);
     E.fx.master.duck(0.5, 0.05, 0.5, 1.5, tt + 4);
   });
     t += 0.2;

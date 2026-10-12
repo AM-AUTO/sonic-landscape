@@ -27,12 +27,12 @@ export default {
     // the Rannoch Moor shoulder lifts the east end
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) h[y * S + x] += Math.max(0, x - 170) * 1.1;
     // Aonach Eagach: a long, very jagged ridge on the north wall
-    T.ridge({ points: [[250, 54, 330], [220, 50, 380], [188, 48, 410], [156, 46, 380], [126, 44, 420], [96, 48, 360], [66, 56, 280]], width: 13, jagged: 0.9, sharpness: 1.4, height: 360 });
+    T.ridge({ points: [[250, 54, 330], [220, 50, 380], [188, 48, 410], [156, 46, 380], [126, 44, 420], [96, 48, 360], [66, 56, 280]], width: 13, jagged: 0.55, sharpness: 1.4, height: 360, meander: 5 });
     // Bidean nam Bian and the Three Sisters
     T.dome({ x: 146, y: 172, rx: 40, ry: 36, angle: 0.3, height: 540, steep: 0.15, warp: 0.25, jagged: 0.45 });
-    T.ridge({ points: [[100, 168, 380], [100, 142, 330], [102, 114, 290]], width: 8, jagged: 0.5, sharpness: 1.4, height: 300 });   // Aonach Dubh
-    T.ridge({ points: [[132, 172, 400], [132, 146, 350], [133, 116, 300]], width: 8, jagged: 0.5, sharpness: 1.4, height: 300 });   // Gearr Aonach
-    T.ridge({ points: [[178, 170, 420], [178, 144, 360], [180, 116, 310]], width: 8, jagged: 0.5, sharpness: 1.4, height: 300 });   // Beinn Fhada
+    T.ridge({ points: [[100, 168, 380], [100, 142, 330], [102, 114, 290]], width: 8, jagged: 0.5, sharpness: 1.4, height: 300, meander: 4 });   // Aonach Dubh
+    T.ridge({ points: [[132, 172, 400], [132, 146, 350], [133, 116, 300]], width: 8, jagged: 0.5, sharpness: 1.4, height: 300, meander: 4 });   // Gearr Aonach
+    T.ridge({ points: [[178, 170, 420], [178, 144, 360], [180, 116, 310]], width: 8, jagged: 0.5, sharpness: 1.4, height: 300, meander: 4 });   // Beinn Fhada
     // Buachaille Etive Mòr: a pyramid at the east end
     T.dome({ x: 214, y: 152, rx: 28, ry: 26, height: 500, steep: 0.4, warp: 0.2, jagged: 0.35 });
     T.dome({ x: 238, y: 168, radius: 16, height: 220, steep: 0.3 });                     // Buachaille Etive Beag
@@ -75,7 +75,7 @@ export default {
     T.label(80, 90, 'Abhainn Comhann', 'water');
   },
 
-  cover: { treeline: 380, woodDensity: 0.3, woodSlope: 0.5, bogFlatness: 0.07, bogMax: 420, bogAmount: 0.5, snowline: 1100, rockline: 800, cragSlope: 1.08, cragJitter: 0.16, screeMinH: 400, streamThreshold: 200, riverThreshold: 3000, fallDrop: 40 },
+  cover: { treeline: 380, woodDensity: 0.3, woodSlope: 0.5, bogFlatness: 0.07, bogMax: 420, bogAmount: 0.5, snowline: 1100, rockline: 800, cragSlope: 0.88, cragStrata: 0.25, cragJitter: 0.16, screeMinH: 400, streamThreshold: 1500, riverThreshold: 3000, fallDrop: 40 },
 
   spawn: { x: 238, y: 92 },
   pois: [

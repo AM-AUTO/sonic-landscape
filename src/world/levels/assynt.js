@@ -73,7 +73,7 @@ export default {
     T.label(10, 172, 'Loch an Inbhir', 'feature');
   },
 
-  cover: { treeline: 180, woodDensity: 0.1, woodSlope: 0.4, bogFlatness: 0.10, bogMax: 260, bogAmount: 0.6, snowline: null, rockline: 140, rockAmount: 0.45, cragSlope: 0.95, cragJitter: 0.14, cragGap: 0.15, screeSlope: 0.6, screeBand: 3, screeMinH: 150, streamThreshold: 260, riverThreshold: 3000, fallDrop: 30 },
+  cover: { treeline: 180, woodDensity: 0.1, woodSlope: 0.4, bogFlatness: 0.10, bogMax: 260, bogAmount: 0.6, snowline: null, rockline: 140, rockAmount: 0.45, cragSlope: 0.85, cragStrata: 0.25, cragJitter: 0.14, cragGap: 0.15, screeSlope: 0.6, screeBand: 3, screeMinH: 150, streamThreshold: 1100, riverThreshold: 3000, fallDrop: 30 },
 
   spawn: { x: 28, y: 192 },
   pois: [

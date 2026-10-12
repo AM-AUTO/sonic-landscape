@@ -79,7 +79,7 @@ export default {
     T.label(184, 133, 'Beinn Mheadhoin', 'peak');
   },
 
-  cover: { treeline: 720, woodDensity: 0.22, woodMin: 600, woodSlope: 0.4, bogFlatness: 0.05, bogMax: 800, bogAmount: 0.3, snowline: 1125, snowSlope: 1.0, rockline: 1030, rockAmount: 0.6, cragSlope: 0.82, cragJitter: 0.14, screeMinH: 700, streamThreshold: 160, riverThreshold: 3000, fallDrop: 40 },
+  cover: { treeline: 720, woodDensity: 0.22, woodMin: 600, woodSlope: 0.4, bogFlatness: 0.05, bogMax: 800, bogAmount: 0.3, snowline: 1125, snowSlope: 1.0, rockline: 1030, rockAmount: 0.6, cragSlope: 0.7, cragStrata: 0.25, cragJitter: 0.14, screeMinH: 700, streamThreshold: 1300, riverThreshold: 3000, fallDrop: 40 },
 
   spawn: { x: 166, y: 6 },
   pois: [

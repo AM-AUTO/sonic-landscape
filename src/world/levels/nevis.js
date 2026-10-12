@@ -78,7 +78,7 @@ export default {
     T.label(60, 176, 'Abhainn Nibheis', 'water');
   },
 
-  cover: { treeline: 340, woodDensity: 0.5, woodSlope: 0.5, bogFlatness: 0.06, bogMax: 360, bogAmount: 0.4, snowline: 1190, snowSlope: 1.0, rockline: 880, rockAmount: 0.85, cragSlope: 1.0, cragJitter: 0.16, cragGap: 0.2, screeSlope: 0.6, screeBand: 3, screeMinH: 450, streamThreshold: 130, riverThreshold: 3000, fallDrop: 40 },
+  cover: { treeline: 340, woodDensity: 0.5, woodSlope: 0.5, bogFlatness: 0.06, bogMax: 360, bogAmount: 0.4, snowline: 1190, snowSlope: 1.0, rockline: 880, rockAmount: 0.85, cragSlope: 0.82, cragStrata: 0.25, cragJitter: 0.16, cragGap: 0.2, screeSlope: 0.6, screeBand: 3, screeMinH: 450, streamThreshold: 1500, riverThreshold: 3000, fallDrop: 40 },
 
   spawn: { x: 250, y: 188 },
   pois: [

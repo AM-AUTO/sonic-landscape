@@ -7,7 +7,7 @@
  */
 import { COVER, MAP_SIZE as S, CELL_METERS } from './codes.js';
 import { createSculptKit, densify } from './sculpt.js';
-import { resolveWater, computeFlow, buildStreams, findWaterfalls, dropAt, Heap, WATER_DEEP } from './hydro.js';
+import { resolveWater, computeFlow, buildStreams, findWaterfalls, dropAt, meanderStreams, Heap, WATER_DEEP } from './hydro.js';
 import { computeSlope, assignCover } from './landcover.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -29,7 +29,7 @@ export function buildWorld(levelDef) {
   const P = levelDef.cover || {};
   const { water, bodyOf } = resolveWater(h, bodyMask, bodies);
   const { flowTo, acc } = computeFlow(h, water, bodyOf, bodies, noise);
-  const stream = buildStreams(acc, water, P.streamThreshold ?? 180);
+  let stream = buildStreams(acc, water, P.streamThreshold ?? 900);
   const slope = computeSlope(h);
   const cover = assignCover({ h, slope, water, acc, noise, params: P });
 
@@ -112,8 +112,35 @@ export function buildWorld(levelDef) {
   }
 
   // ---- waterfalls ----------------------------------------------------
-  const falls = findWaterfalls(h, stream, flowTo, water, acc, { minDrop: P.fallDrop ?? 24, spacing: 10, max: 10, minAcc: (P.streamThreshold ?? 180) * 1.2 })
+  const falls = findWaterfalls(h, stream, flowTo, water, acc, { minDrop: P.fallDrop ?? 24, spacing: 10, max: 10, minAcc: P.streamThreshold ?? 900 })
     .filter((f) => cover[f.y * S + f.x] !== COVER.CRAG);
+
+  /**
+   * A requested waterfall may sit on a small burn below the map-wide stream threshold: trace that burn
+   * upstream to its source and downstream until it joins a real stream, so the fall has a visible course.
+   */
+  function burnify(i) {
+    let c = i;
+    for (let k = 0; k < 120 && c >= 0 && !water[c]; k++) {
+      stream[c] = 1;
+      const n = flowTo[c];
+      if (n >= 0 && stream[n] && acc[n] >= (P.streamThreshold ?? 900)) break;
+      c = n;
+    }
+    c = i;
+    for (let k = 0; k < 45; k++) {
+      const cx = c % S, cy = (c / S) | 0;
+      let best = -1, ba = 40;
+      for (let d = 0; d < 8; d++) {
+        const nx = cx + [1, 1, 0, -1, -1, -1, 0, 1][d], ny = cy + [0, 1, 1, 1, 0, -1, -1, -1][d];
+        if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+        const ni = ny * S + nx;
+        if (flowTo[ni] === c && acc[ni] > ba && !water[ni]) { ba = acc[ni]; best = ni; }
+      }
+      if (best < 0) break;
+      stream[best] = 1; c = best;
+    }
+  }
 
   // ---- POIs -----------------------------------------------------------
   const placed = []; // {x,y}
@@ -147,8 +174,8 @@ export function buildWorld(levelDef) {
         for (const f of falls) { const d = Math.hypot(f.x - tx, f.y - ty); if (d < bd && d < 12) { bd = d; fall = f; } }
         if (!fall) {
           // force one: the steepest-dropping stream cell near the requested spot
-          const fi = search(tx, ty, 38, (x, y, i) => stream[i] && cover[i] !== COVER.CRAG && !water[i] && flowTo[i] >= 0, (x, y, i, dd) => Math.min(dropAt(h, flowTo, i), 70) - 2.5 * dd);
-          if (fi >= 0) { fall = { x: fi % S, y: (fi / S) | 0, drop: dropAt(h, flowTo, fi) }; falls.push(fall); }
+          const fi = search(tx, ty, 38, (x, y, i) => acc[i] >= 90 && cover[i] !== COVER.CRAG && !water[i] && flowTo[i] >= 0, (x, y, i, dd) => Math.min(dropAt(h, flowTo, i), 70) - 2.5 * dd);
+          if (fi >= 0) { fall = { x: fi % S, y: (fi / S) | 0, drop: dropAt(h, flowTo, fi) }; falls.push(fall); burnify(fi); }
         }
         if (fall) {
           idx = search(fall.x, fall.y, 3, (x, y, i) => isLand(i) && sepOk(x, y, 8), (x, y, i, dd) => -dd - (stream[i] ? 1.5 : 0));
@@ -186,6 +213,13 @@ export function buildWorld(levelDef) {
     const x = idx % S, y = (idx / S) | 0;
     placed.push({ x, y });
     pois.push({ ...def, condition: { ...(def.condition || {}) }, x, y, elevation: +h[idx].toFixed(1) });
+  }
+
+  // ---- give burns a natural, meandering course; wide rivers become wadeable ----
+  {
+    const m = meanderStreams({ stream, flowTo, acc, water, cover, slope, falls, noise, riverThreshold: P.riverThreshold ?? 2400, crag: COVER.CRAG });
+    stream = m.stream;
+    for (let i = 0; i < N; i++) if (m.river[i] && cover[i] !== COVER.PATH && cover[i] !== COVER.CRAG) cover[i] = COVER.SHALLOW;
   }
 
   // ---- gate (on the map edge) ---------------------------------------

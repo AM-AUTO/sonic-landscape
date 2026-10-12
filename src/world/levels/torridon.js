@@ -73,12 +73,12 @@ export default {
     T.label(150, 232, 'Bealach na Bà', 'feature');
   },
 
-  cover: { treeline: 260, woodDensity: 0.45, woodSlope: 0.45, bogFlatness: 0.08, bogMax: 300, bogAmount: 0.5, snowline: null, rockline: 640, rockAmount: 0.85, cragSlope: 0.86, cragJitter: 0.14, cragGap: 0.3, screeMinH: 400, streamThreshold: 190, riverThreshold: 3000, fallDrop: 40 },
+  cover: { treeline: 260, woodDensity: 0.45, woodSlope: 0.45, bogFlatness: 0.08, bogMax: 300, bogAmount: 0.5, snowline: null, rockline: 640, rockAmount: 0.85, cragSlope: 0.75, cragStrata: 0.25, cragJitter: 0.14, cragGap: 0.3, screeMinH: 400, streamThreshold: 1300, riverThreshold: 3000, fallDrop: 40 },
 
   spawn: { x: 238, y: 160 },
   pois: [
-    { id: 'eas-dubh', type: 'waterfall', name: 'Eas Coire Dhuibh', x: 213, y: 110, condition: { approach: 'descending' }, hint: 'The dark corrie spills over a lip. Come down to it.' },
-    { id: 'crag-eighe', type: 'crag', name: 'Sgùrr Dubh Crags', x: 224, y: 134, condition: { speed: 'fast' }, hint: 'Red cliffs return the footsteps of runners.' },
+    { id: 'eas-dubh', type: 'waterfall', name: 'Eas Coire Dhuibh', x: 216, y: 100, condition: { approach: 'descending' }, hint: 'The dark corrie spills over a lip. Come down to it.' },
+    { id: 'crag-eighe', type: 'crag', name: 'Sgùrr Dubh Crags', x: 224, y: 142, condition: { speed: 'fast' }, hint: 'Red cliffs return the footsteps of runners.' },
     { id: 'summit-liathach', type: 'summit', name: 'Spidean a\' Choire Léith', x: 172, y: 144, condition: { climb: 3 }, hint: 'Climb the tiers, one after another.' },
     { id: 'torridon-bothy', type: 'bothy', name: 'Torridon Hut', x: 130, y: 192, condition: { dwell: 3 }, hint: 'A roof at the head of the sea loch; sit a while.' },
     { id: 'lochan-fhearchair', type: 'lochan', name: 'Coire Mhic Fhearchair', x: 232, y: 92, condition: { speed: 'slow' }, hint: 'The three buttresses mirror in still water.' },

@@ -44,6 +44,23 @@ export function densify(points, step = 2) {
   return { x: xs, y: ys, z: zs, u: us };
 }
 
+/** Displace a polyline sideways by smooth noise so straight spurs/glens gain organic bends. */
+function wiggle(points, amp, noise, wavelength = 22, salt = 0) {
+  if (!amp) return points;
+  const d = densify(points, 3);
+  const n = d.x.length, out = [];
+  for (let k = 0; k < n; k++) {
+    const k0 = Math.max(0, k - 1), k1 = Math.min(n - 1, k + 1);
+    let tx = d.x[k1] - d.x[k0], ty = d.y[k1] - d.y[k0];
+    const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    const edge = Math.min(1, k / 3, (n - 1 - k) / 3); // keep end points fixed
+    const off = amp * edge * (noise.noise2(d.u[k] / wavelength + salt * 3.7, salt * 1.9 + 0.5) + 0.35 * noise.noise2(d.u[k] / (wavelength * 0.4) + 7, salt));
+    const z = d.z[k];
+    out.push(Number.isNaN(z) ? [d.x[k] - ty * off, d.y[k] + tx * off] : [d.x[k] - ty * off, d.y[k] + tx * off, z]);
+  }
+  return out;
+}
+
 export function createSculptKit(levelDef) {
   const seed = levelDef.seed | 0;
   const noise = createNoise(seed);
@@ -183,7 +200,8 @@ export function createSculptKit(levelDef) {
      * depth: optional cap on how far below the existing ground the floor may cut.
      * profile 'U' (flat floor, steep walls) or 'V'.
      */
-    carveGlen({ points, width = 14, depth = null, floor = null, profile = 'U', flat = 0.35, wobble = 0.4, raise = false }) {
+    carveGlen({ points, width = 14, depth = null, floor = null, profile = 'U', flat = 0.35, wobble = 0.4, raise = false, meander = 0 }) {
+      points = wiggle(points, meander, noise, 30, points[0][0] * 0.7 + points[0][1]);
       const f = lineField(points, width * (1 + wobble * 0.5) + 2);
       for (let y = f.y0; y <= f.y1; y++) for (let x = f.x0; x <= f.x1; x++) {
         const i = y * S + x;
@@ -203,7 +221,8 @@ export function createSculptKit(levelDef) {
     },
 
     /** Raised spine. height (or per-point z) = crest height added; jagged 0..1+ adds teeth. */
-    ridge({ points, width = 8, height = 200, sharpness = 1, jagged = 0.3, wobble = 0.3 }) {
+    ridge({ points, width = 8, height = 200, sharpness = 1, jagged = 0.3, wobble = 0.3, meander = 0 }) {
+      points = wiggle(points, meander, noise, 24, points[0][0] + points[0][1]);
       const f = lineField(points, width * (1 + jagged * 0.6) + 3);
       const expo = 0.6 + sharpness * 0.9;
       for (let y = f.y0; y <= f.y1; y++) for (let x = f.x0; x <= f.x1; x++) {

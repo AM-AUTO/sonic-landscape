@@ -78,7 +78,7 @@ export default {
     T.label(60, 168, 'Allt Coire na Creiche', 'feature');
   },
 
-  cover: { treeline: 140, woodDensity: 0.12, woodSlope: 0.4, woodMin: 0, bogFlatness: 0.07, bogMax: 160, bogAmount: 0.5, snowline: null, rockline: 420, rockAmount: 0.9, cragSlope: 1.3, cragJitter: 0.22, cragGap: 0.3, screeSlope: 0.55, screeBand: 4, screeMinH: 120, streamThreshold: 170, riverThreshold: 2600, fallDrop: 36 },
+  cover: { treeline: 140, woodDensity: 0.12, woodSlope: 0.4, woodMin: 0, bogFlatness: 0.07, bogMax: 160, bogAmount: 0.5, snowline: null, rockline: 420, rockAmount: 0.9, cragSlope: 0.85, cragStrata: 0.2, cragJitter: 0.22, cragGap: 0.2, gullyT: 3.2, screeSlope: 0.55, screeBand: 4, screeMinH: 120, streamThreshold: 1300, riverThreshold: 2600, fallDrop: 36 },
 
   spawn: { x: 150, y: 6 },
   pois: [

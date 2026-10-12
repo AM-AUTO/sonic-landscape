@@ -66,7 +66,7 @@ export default {
     T.label(100, 226, 'Raineach Dhubh', 'feature');
   },
 
-  cover: { treeline: 380, woodDensity: 0.12, woodMin: 280, bogFlatness: 0.11, bogMax: 420, bogAmount: 0.7, snowline: null, rockline: 520, cragSlope: 0.9, screeMinH: 450, streamThreshold: 520 },
+  cover: { treeline: 380, woodDensity: 0.12, woodMin: 280, bogFlatness: 0.11, bogMax: 420, bogAmount: 0.7, snowline: null, rockline: 520, cragSlope: 0.9, screeMinH: 450, streamThreshold: 900 },
 
   spawn: { x: 126, y: 74 },
   pois: [

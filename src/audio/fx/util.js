@@ -132,6 +132,8 @@ export function glide(param, v, t, tc = 0.05) {
  */
 export class Scope {
   static live = 0;
+  static debug = false;           // when true, live scopes are tracked in Scope.all with their creation stack
+  static all = new Set();
   constructor(ctx) {
     this.ctx = ctx;
     this.nodes = [];
@@ -141,6 +143,7 @@ export class Scope {
     this.armed = false;
     this.disposed = false;
     Scope.live++;
+    if (Scope.debug) { this.stack = new Error().stack; Scope.all.add(this); }
   }
   /** register any node */
   add(node) { this.nodes.push(node); return node; }
@@ -196,6 +199,7 @@ export class Scope {
     if (this.disposed) return;
     this.disposed = true;
     Scope.live--;
+    Scope.all.delete(this);
     if (this.onDispose) { try { this.onDispose(); } catch (e) { /* ignore */ } }
     for (const [from, to] of this.links) { try { from.disconnect(to); } catch (e) { /* gone */ } }
     for (const n of this.nodes) { try { n.disconnect(); } catch (e) { /* gone */ } }

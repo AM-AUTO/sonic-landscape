@@ -51,36 +51,90 @@ export function assignCover({ h, slope, water, acc, noise, params }) {
   const screeBand = P.screeBand ?? 3;
   const screeMinH = P.screeMinH ?? treeline - 120;
   const riverThreshold = P.riverThreshold ?? 2400;
+  const cragBand = P.cragBand ?? 55;       // metres: vertical spacing of crag ledges
+  const cragStrata = P.cragStrata ?? 0.3;  // how strongly crag is confined to ledge bands
   const cragGap = P.cragGap ?? 0;   // 0..1: fraction of crag cells opened into gullies
   const adjust = P.adjust;
 
   const cover = new Uint8Array(N);
   const nz = noise.noise2;
 
-  // pass 1: crags
+  // pass 1: crags — organic bands on the steepest faces. Slope is lightly blurred so single steep
+  // cells don't speckle; concave cells (gullies running down the fall line) are carved out of the bands,
+  // leaving convex buttresses; tiny fragments are demoted to scree.
+  const slopeS = new Float32Array(N);
+  const conc = new Float32Array(N); // mean of a ring at r=3 minus centre: >0 where the ground is concave
+  const RX = [3, 2, 0, -2, -3, -2, 0, 2], RY = [0, 2, 3, 2, 0, -2, -3, -2];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = y * S + x;
+    let a = 0, c = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= S || yy >= S) continue;
+      a += slope[yy * S + xx] * (dx || dy ? 1 : 2); c += dx || dy ? 1 : 2;
+    }
+    slopeS[i] = a / c;
+    let r = 0;
+    for (let k = 0; k < 8; k++) {
+      const xx = Math.min(S - 1, Math.max(0, x + RX[k])), yy = Math.min(S - 1, Math.max(0, y + RY[k]));
+      r += h[yy * S + xx];
+    }
+    conc[i] = r / 8 - h[i];
+  }
+  const gullyT = P.gullyT ?? 2.2;   // metres of concavity above which a steep cell is a gully, not cliff
   const crag = new Uint8Array(N);
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const i = y * S + x;
     if (water[i]) continue;
     const hh = h[i];
     if (hh < cragMinH || hh > cragMaxH) continue;
-    const thr = cragSlope + cragJitter * nz(x * 0.11 + 40, y * 0.11 + 7);
-    if (slope[i] > thr) {
-      if (cragGap > 0 && nz(x * 0.09 + 21, y * 0.09 - 9) < (cragGap * 2 - 1) * 0.9) continue; // gully
-      crag[i] = 1;
+    // strata: crag forms ledges that follow the contours (alternating bands of cliff and scree/grass),
+    // with a slowly varying phase so the bands drift and break up
+    const strata = 0.5 + 0.5 * Math.sin(6.2832 * hh / cragBand + 2.2 * nz(x * 0.045 + 5, y * 0.045 - 17));
+    const thr = cragSlope + cragJitter * nz(x * 0.11 + 40, y * 0.11 + 7) + cragStrata * (1 - strata);
+    if (slopeS[i] <= thr) continue;
+    // gullies: concave ground, scaled with a noise so some faces are solid and others deeply cut
+    const gt = gullyT * (1.5 + 1.2 * nz(x * 0.06 + 21, y * 0.06 - 9)) * (1 - cragGap * 0.8);
+    if (conc[i] > gt) continue;
+    if (cragGap > 0 && nz(x * 0.09 + 21, y * 0.09 - 9) < (cragGap * 2 - 1) * 0.9) continue;
+    crag[i] = 1;
+  }
+  // closing: bridge 1-cell breaks so ledges read as continuous bands (only on genuinely steep ground)
+  {
+    const dil = new Uint8Array(N);
+    for (let y = 1; y < S - 1; y++) for (let x = 1; x < S - 1; x++) {
+      const i = y * S + x;
+      if (crag[i]) { dil[i] = 1; continue; }
+      if (water[i] || slopeS[i] < cragSlope * 0.7) continue;
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (crag[i + dy * S + dx]) n++;
+      if (n >= 3 && conc[i] <= gullyT * 1.5) dil[i] = 1;
+    }
+    for (let i = 0; i < N; i++) crag[i] = dil[i];
+  }
+  // demote fragments smaller than 12 cells (8-connected components) to scree
+  {
+    const seen = new Uint8Array(N), stack = new Int32Array(N);
+    for (let i0 = 0; i0 < N; i0++) {
+      if (!crag[i0] || seen[i0]) continue;
+      let sp = 0, cnt = 0;
+      const members = [];
+      stack[sp++] = i0; seen[i0] = 1;
+      while (sp) {
+        const c = stack[--sp]; cnt++; members.push(c);
+        const cx = c % S, cy = (c / S) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+          const ni = ny * S + nx;
+          if (crag[ni] && !seen[ni]) { seen[ni] = 1; stack[sp++] = ni; }
+        }
+      }
+      if (cnt < 12) for (const m of members) crag[m] = 0;
     }
   }
-  // drop speckle: a lone crag cell (no crag neighbour) becomes scree unless very steep
-  for (let y = 1; y < S - 1; y++) for (let x = 1; x < S - 1; x++) {
-    const i = y * S + x;
-    if (!crag[i]) continue;
-    let n = 0;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && crag[i + dy * S + dx]) n++;
-    if (n === 0 && slope[i] < cragSlope * 1.35) crag[i] = 2; // 2 = demoted
-  }
-  for (let i = 0; i < N; i++) if (crag[i] === 2) crag[i] = 0;
 
-  // distance (4-neighbour, capped) from crags, for scree aprons
+  // scree aprons: ground with crag directly uphill of it (along the fall line), plus a thin rim
   const cd = new Uint8Array(N).fill(255);
   const q = new Int32Array(N);
   let qh = 0, qt = 0;
@@ -88,12 +142,26 @@ export function assignCover({ h, slope, water, acc, noise, params }) {
   while (qh < qt) {
     const i = q[qh++];
     const d = cd[i] + 1;
-    if (d > screeBand) continue;
+    if (d > 1) continue;
     const x = i % S, y = (i / S) | 0;
     if (x > 0 && cd[i - 1] > d) { cd[i - 1] = d; q[qt++] = i - 1; }
     if (x < S - 1 && cd[i + 1] > d) { cd[i + 1] = d; q[qt++] = i + 1; }
     if (y > 0 && cd[i - S] > d) { cd[i - S] = d; q[qt++] = i - S; }
     if (y < S - 1 && cd[i + S] > d) { cd[i + S] = d; q[qt++] = i + S; }
+  }
+  const apron = new Uint8Array(N); // distance (1..) to crag measured uphill, 0 = none
+  for (let y = 1; y < S - 1; y++) for (let x = 1; x < S - 1; x++) {
+    const i = y * S + x;
+    if (crag[i] || slope[i] < 0.2) continue;
+    const gx = h[i + 1] - h[i - 1], gy = h[i + S] - h[i - S];
+    const gl = Math.hypot(gx, gy);
+    if (gl < 1e-6) continue;
+    const ux = gx / gl, uy = gy / gl; // uphill
+    for (let k = 1; k <= screeBand + 3; k++) {
+      const xx = Math.round(x + ux * k), yy = Math.round(y + uy * k);
+      if (xx < 0 || yy < 0 || xx >= S || yy >= S) break;
+      if (crag[yy * S + xx]) { apron[i] = k; break; }
+    }
   }
 
   const gxk = 1 / (2 * CELL_METERS);
@@ -117,7 +185,7 @@ export function assignCover({ h, slope, water, acc, noise, params }) {
           if (hh > snowline - 70 * north + n1 * 55 && sl < snowSlope) snowy = true;
         }
         if (snowy) c = COVER.SNOW;
-        else if (cd[i] <= screeBand && sl > 0.28 && n1 > -0.1 + 0.25 * (cd[i] - 1)) c = COVER.SCREE;
+        else if (((apron[i] && sl > 0.22 && n1 > -0.35 + 0.12 * apron[i]) || (cd[i] <= 1 && sl > 0.28))) c = COVER.SCREE;
         else if (sl > screeSlope && hh > screeMinH) c = COVER.SCREE;
         else if (hh > rockline + n1 * 70 && (sl > 0.14 || n1 > 1 - 2 * rockAmount)) c = COVER.ROCK;
         else {
@@ -140,10 +208,6 @@ export function assignCover({ h, slope, water, acc, noise, params }) {
     }
   }
   smoothSoft(cover, 2);
-  // wide rivers become wadeable water
-  for (let i = 0; i < N; i++) {
-    if (acc[i] >= riverThreshold && !water[i] && cover[i] !== COVER.CRAG) cover[i] = COVER.SHALLOW;
-  }
   return cover;
 }
 

@@ -332,6 +332,7 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
 
   const engine = {
     ctx, rng, seed, out, outFront, sends, bus, analyser,
+    masterNodes: { glue, glueMakeup, lowcut, highcut, drive: mDrive, clip, finalGain },
     fx: { reverb, delay, granular, master },
     channel, channels,
     param, record, auditReport, audit: auditReport,
