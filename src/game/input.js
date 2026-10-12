@@ -7,7 +7,7 @@
  *   input.touch      -> { stick:{active,cx,cy,x,y,radius}, buttons:[{id,x,y,w,h,held}], layout() }  (client px; nothing is drawn here)
  *   input.dispose()
  *
- * Keys: WASD/arrows move, Shift run, Space rest/listen, M map, L notes, Esc pause, Enter confirm,
+ * Keys: WASD/arrows move, Shift run, Space rest/listen (held while walking: tread softly), M map, L notes, Esc pause, Enter confirm,
  *       Backspace back. Arrows/WASD (and gamepad d-pad) also emit up/down/left/right actions for menus.
  * Touch: floating stick in the left 45 % of the target; buttons on the right: run (hold), rest (hold),
  *        map / notes / pause (tap). Any other tap emits 'confirm'.
@@ -23,6 +23,7 @@ const NAV_KEYS = {
 const MOVE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'Space']);
 const STICK_RADIUS = 56;
 const DEADZONE = 0.18;
+export const SOFT_TREAD = 0.35; // input magnitude while walking with listen held (≈1.5–1.8 cells/s)
 
 export function createInput(target) {
   const root = target || (typeof window !== 'undefined' ? window : null);
@@ -161,6 +162,9 @@ export function createInput(target) {
       x += g.x; y += g.y; run = run || g.run; rest = rest || g.rest;
       const m = Math.hypot(x, y);
       if (m > 1) { x /= m; y /= m; }
+      // Listen while walking = tread softly: a keyboard has no analogue magnitude, and some
+      // places only answer a slow approach. (Standing still with listen held rests instead.)
+      if (rest && !run && m > 0.05) { x *= SOFT_TREAD; y *= SOFT_TREAD; }
       return { x, y, run, rest };
     },
     consume() { if (!queue.length) return queue; const q = queue; queue = []; return q; },
