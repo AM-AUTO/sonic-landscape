@@ -218,6 +218,9 @@ function lastUnlocked() {
   return last;
 }
 
+let touchSeen = false;
+window.addEventListener('touchstart', () => { touchSeen = true; }, { passive: true, once: true });
+
 // ---------------------------------------------------------------- loop
 function frame(now) {
   requestAnimationFrame(frame);
@@ -258,6 +261,8 @@ function frame(now) {
   }
 
   ui.levels = LEVELS;
+  ui.touch = input.touch;
+  ui.touchVisible = touchSeen;
   ui.unlocked = game.progress.unlocked;
   ui.completed = game.progress.completed;
   renderer.draw(ui.screen === 'title' || ui.screen === 'select' ? null : game.state, ui);
