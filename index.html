@@ -2,46 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sonic Landscape</title>
-
-  <!-- Leaflet CSS -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
-
-  <link rel="stylesheet" href="src/styles.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#20263a" />
+  <title>CONTOURS — a playable album</title>
+  <meta name="description" content="A topographic map as a score. Eight Highland glens, one record. Walk the land; play the land." />
+  <style>
+    html, body { margin: 0; height: 100%; background: #20263a; overflow: hidden; }
+    body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+    #screen { position: absolute; image-rendering: pixelated; image-rendering: crisp-edges; outline: none; }
+    noscript { color: #f2ead3; font: 14px monospace; position: absolute; inset: 0; display: grid; place-items: center; }
+  </style>
 </head>
 <body>
-  <header class="app-header">
-    <h1>Sonic Landscape</h1>
-    <p class="app-subtitle">Explore acoustic environments around the world</p>
-  </header>
-
-  <main class="app-main">
-    <div id="map" role="application" aria-label="Interactive sound location map"></div>
-
-    <aside id="detail-panel" class="detail-panel detail-panel--hidden" aria-live="polite">
-      <button id="detail-close" class="detail-close" aria-label="Close details">&times;</button>
-      <div id="detail-content" class="detail-content">
-        <!-- populated dynamically -->
-      </div>
-    </aside>
-  </main>
-
-  <div id="zoom-hint" class="zoom-hint" role="status" aria-live="polite"></div>
-
-  <!-- Leaflet JS -->
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLEo="
-    crossorigin=""
-  ></script>
-
-  <script src="src/data.js"></script>
-  <script src="src/map.js"></script>
+  <canvas id="screen" width="384" height="216" tabindex="0" aria-label="CONTOURS — a topographic map you play by walking. Arrow keys or WASD to walk, Shift to run, Space to rest and listen, M for map, L for field notes, Escape to pause."></canvas>
+  <noscript>CONTOURS needs JavaScript and Web Audio.</noscript>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
