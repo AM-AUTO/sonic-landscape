@@ -4,8 +4,8 @@
  * Coire an Lochain, the Lairig Ghru trenching down the west, Loch Avon
  * and the Shelter Stone in the glacial trough to the south-east.
  */
-const approach = [[166, 4], [162, 20], [158, 38], [160, 56], [168, 70]];
-const crossing = [[168, 70], [150, 94], [128, 116], [108, 138], [90, 148], [68, 150], [60, 152]];
+const approach = [[166, 4], [168, 20], [174, 38], [178, 56], [172, 70]];
+const crossing = [[172, 70], [150, 94], [128, 116], [108, 138], [90, 148], [68, 150], [60, 152]];
 const ghru = [[60, 152], [58, 180], [55, 214], [52, 255]];
 
 export default {
@@ -63,7 +63,7 @@ export default {
     T.path(approach);
     T.path(crossing);
     T.path(ghru);
-    T.path([[160, 40], [140, 42], [122, 48]]);
+    T.path([[168, 36], [146, 40], [126, 46], [120, 52]]);
     T.path([[168, 72], [182, 108], [192, 146], [184, 176], [174, 192]]);
     T.path([[56, 205], [60, 190]]);
 

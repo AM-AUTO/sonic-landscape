@@ -54,7 +54,8 @@ export default {
     T.clampTo(0, 850);
 
     T.path(track);
-    T.path([[116, 160], [118, 140], [114, 124], [111, 112]]);                // the gully onto Suilven
+    T.path([[116, 160], [118, 140], [114, 124], [111, 112], [111, 109]]);                // the gully onto Suilven
+    T.path([[93, 140], [98, 128], [104, 118], [108, 111], [111, 109]]);                    // the lochan gully
     T.path([[48, 186], [46, 164], [48, 144]]);                              // to Stac Pollaidh
     T.path([[166, 160], [166, 184], [164, 204]]);                           // to Cùl Mòr
     T.path([[194, 160], [200, 136], [204, 112]]);                           // to Canisp

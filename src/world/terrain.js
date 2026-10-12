@@ -37,15 +37,23 @@ export function buildWorld(levelDef) {
   const pathCells = [];
   const featPaths = [];
   for (const pd of pathDefs) {
-    const d = densify(pd.points, 1);
+    const d = densify(chaikin(pd.points, 2), 1);
     let px = -1, py = -1;
     const line = [];
     for (let k = 0; k < d.x.length; k++) {
       const x = clamp(Math.round(d.x[k]), 0, S - 1), y = clamp(Math.round(d.y[k]), 0, S - 1);
-      if (px >= 0) bresenham(px, py, x, y, (cx, cy) => burn(cx, cy, pd.width));
+      if (px >= 0) {
+        let lx = px, ly = py;
+        bresenham(px, py, x, y, (cx, cy) => {
+          // keep paths 4-connected so a diagonal step can never squeeze between two crag cells
+          if (cx !== lx && cy !== ly) burn(cx, ly, pd.width);
+          burn(cx, cy, pd.width);
+          lx = cx; ly = cy;
+        });
+      }
       else burn(x, y, pd.width);
       px = x; py = y;
-      if (k % 3 === 0 || k === d.x.length - 1) line.push({ x: +clamp(d.x[k], 0, S - 1).toFixed(1), y: +clamp(d.y[k], 0, S - 1).toFixed(1) });
+      if (k % 2 === 0 || k === d.x.length - 1) line.push({ x: +clamp(d.x[k], 0, S - 1).toFixed(1), y: +clamp(d.y[k], 0, S - 1).toFixed(1) });
     }
     featPaths.push(line);
   }
@@ -293,6 +301,21 @@ export function buildWorld(levelDef) {
 }
 
 // ---------------------------------------------------------------------------
+
+/** Chaikin corner cutting (end points kept) so authored kinks become smooth bends. */
+function chaikin(pts, iters) {
+  let p = pts.map((q) => [q[0], q[1]]);
+  for (let it = 0; it < iters && p.length > 2; it++) {
+    const o = [p[0]];
+    for (let i = 0; i + 1 < p.length; i++) {
+      const a = p[i], b = p[i + 1];
+      o.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]], [0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
+    }
+    o.push(p[p.length - 1]);
+    p = o;
+  }
+  return p;
+}
 
 function bresenham(x0, y0, x1, y1, cb) {
   const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
