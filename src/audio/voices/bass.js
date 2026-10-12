@@ -15,8 +15,9 @@ export const BASS_DEFAULTS = Object.freeze({
   cutoff: 380,      // Hz base
   envAmt: 2.0,      // octaves filter opens on the attack
   filterDecay: 0.35,
-  resonance: 3.2,
+  resonance: 5,        // lowpass resonance, dB
   attack: 0.012, decay: 0.4, sustain: 0.7, release: 0.28,
+  tune: 0,          // cents
   glide: 0.07,      // portamento seconds
   drive: 0.35,      // soft saturation 0..1
   level: 0.19,
@@ -42,7 +43,7 @@ export class Bass {
     saw.detune.value = 4;
     const gSub = sc.gain(num(p.sub, 0.9, 0, 2)), gSaw = sc.gain(num(p.saw, 0.55, 0, 2)), gTri = sc.gain(num(p.tri, 0.25, 0, 2));
     const lp = sc.biquad('lowpass', p.cutoff, p.resonance);
-    const lp2 = sc.biquad('lowpass', p.cutoff * 1.3, 0.5);
+    const lp2 = sc.biquad('lowpass', p.cutoff * 1.3, -3);
     const sat = sc.add(new WaveShaperNode(ctx, { curve: this.curve }));
     const pre = sc.gain(1 + num(p.drive, 0.35, 0, 1) * 2.5);
     const post = sc.gain(1 / (1 + num(p.drive, 0.35, 0, 1) * 1.2));
@@ -61,7 +62,7 @@ export class Bass {
     midi = num(midi, 36, 12, 84); dur = Math.max(0.05, num(dur, 0.5)); vel = clamp(num(vel, 0.8), 0, 1.2);
     recordPatch(engine, 'bass', p);
     engine.record('bass.vel', vel); engine.record('bass.dur', dur); engine.record('bass.midi', midi);
-    const f = fclamp(midiToHz(midi), 20, 600);
+    const f = fclamp(midiToHz(midi + num(p.tune, 0, -1200, 1200) / 100), 20, 600);
     let g = this.cur;
     const legato = !!g && t < g.endAt - 0.05 && ctx.currentTime < g.endAt - 0.05 && t >= g.startAt;
     if (!legato) g = this.cur = this._build(t, f);
@@ -94,7 +95,7 @@ export class Bass {
     this.engine.record('bass.glideTo', midi);
     const g = this.cur;
     if (!g || t >= g.endAt) return this;
-    const f = fclamp(midiToHz(midi), 20, 600);
+    const f = fclamp(midiToHz(midi + num(this.p.tune, 0, -1200, 1200) / 100), 20, 600);
     const tc = Math.max(0.01, num(this.p.glide, 0.07) * 2) / 3;
     for (const [o, mul] of [[g.sub, 1], [g.saw, 1], [g.tri, 2]]) {
       o.frequency.cancelScheduledValues(t);

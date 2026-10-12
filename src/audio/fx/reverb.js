@@ -83,9 +83,9 @@ export function createReverb(ctx, hooks = {}, { seed = 1 } = {}) {
 
   const input = new GainNode(ctx, { gain: 1 });
   const output = new GainNode(ctx, { gain: 1 });
-  const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 120, Q: 0.6 });
+  const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 120, Q: -3 });
   const pre = new DelayNode(ctx, { maxDelayTime: 0.5, delayTime: 0.025 });
-  const damp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 7500, Q: 0.5 });
+  const damp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 7500, Q: -3 });
   const wet = new GainNode(ctx, { gain: 0.8 });
   input.connect(hp); hp.connect(pre); pre.connect(damp);
   wet.connect(output);
@@ -118,35 +118,39 @@ export function createReverb(ctx, hooks = {}, { seed = 1 } = {}) {
     ramp(q, rampSec, t);
     return q;
   }
+  let lastT = 0;
   function ramp(q, rampSec, t) {
     rampSec = Math.max(0.02, num(rampSec, 3));
-    // free up slots whose fade-out finished: drop their buffers to save CPU
+    const n = now();
+    t = Math.max(num(t, n), n, lastT);          // size changes are scheduled in time order
+    lastT = t;
+    // free buffers whose fade-out has finished (saves convolution CPU)
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i];
-      if (i !== active && s.has && s.offAt <= now()) { s.conv.buffer = null; s.has = false; s.size = 0; }
+      if (i !== active && s.has && s.offAt <= n) { s.conv.buffer = null; s.has = false; s.size = 0; }
     }
-    // choose the idle slot: not active, no buffer; else the one that went quiet earliest
+    // idle slot: silent already → silent by t → whichever goes quiet earliest
     let pick = -1;
-    for (let i = 0; i < slots.length; i++) if (i !== active && !slots[i].has) { pick = i; break; }
+    for (let i = 0; i < slots.length; i++) if (i !== active && slots[i].offAt <= n) { pick = i; break; }
+    if (pick < 0) for (let i = 0; i < slots.length; i++) if (i !== active && slots[i].offAt <= t) { pick = i; break; }
     if (pick < 0) {
       let best = Infinity;
       for (let i = 0; i < slots.length; i++) if (i !== active && slots[i].offAt < best) { best = slots[i].offAt; pick = i; }
     }
     const s = slots[pick];
     const first = active < 0;
-    s.g.gain.cancelScheduledValues(0);
-    s.g.gain.setValueAtTime(0, Math.max(0, now()));
-    s.conv.buffer = irFor(q);
-    s.size = q; s.has = true;
     const tc = first ? 0.01 : rampSec / 4;
     s.g.gain.cancelScheduledValues(t);
+    s.g.gain.setValueAtTime(0, t);
+    s.conv.buffer = irFor(q);
+    s.size = q; s.has = true; s.offAt = Infinity;
     s.g.gain.setTargetAtTime(1, t, tc);
     for (let i = 0; i < slots.length; i++) {
       if (i === pick || !slots[i].has) continue;
       const o = slots[i];
       o.g.gain.cancelScheduledValues(t);
       o.g.gain.setTargetAtTime(0, t, tc);
-      o.offAt = t + tc * 7;
+      o.offAt = Math.min(o.offAt, t + tc * 7);
     }
     active = pick; sizeNow = q;
   }

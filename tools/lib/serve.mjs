@@ -1,6 +1,6 @@
 // Tiny dependency-free static file server for the verification tools.
 // startServer(root, port, { routes }) -> { server, port, url, close() }
-//   routes: { '/path': async (req, res, body:Buffer) => void }   (any method; body is fully read)
+//   routes: { '/path': async (req, res, body:Buffer, url) => void }   (any method; body is fully read; a key ending in '*' matches a prefix)
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,10 +18,11 @@ export function startServer(root, port = 0, { routes = {}, quiet = true } = {}) 
     try {
       const url = new URL(req.url, 'http://localhost');
       const pathname = decodeURIComponent(url.pathname);
-      if (routes[pathname]) {
+      const key = routes[pathname] ? pathname : Object.keys(routes).find((k) => k.endsWith('*') && pathname.startsWith(k.slice(0, -1)));
+      if (key) {
         const chunks = [];
         for await (const c of req) chunks.push(c);
-        await routes[pathname](req, res, Buffer.concat(chunks), url);
+        await routes[key](req, res, Buffer.concat(chunks), url);
         if (!res.writableEnded) res.end();
         return;
       }

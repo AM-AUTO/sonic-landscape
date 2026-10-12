@@ -9,7 +9,10 @@ const SR = 44100;
 Scope.debug = true;
 window.__liveScopes = () => [...Scope.all].map((s) => ({ sources: s.sources.length, stopAt: s.stopAt, alive: s.alive, armed: s.armed, stack: (s.stack || '').split('\n').slice(2, 6).join(' | ') }));
 
+function resetScopes() { Scope.all.clear(); Scope.live = 0; }
+
 async function makeCtx(seconds) {
+  resetScopes();
   const ctx = new OfflineAudioContext(2, Math.ceil(seconds * SR), SR);
   const engine = await createEngine(ctx, { seed: 20241 });
   return { ctx, engine, rig: createRig(engine) };
@@ -55,12 +58,17 @@ window.renderDemo = async function renderDemo(opts = {}) {
   };
 };
 
-window.renderSolo = async function renderSolo(name) {
+window.renderSolo = async function renderSolo(name, upload = false) {
   const c = clips[name];
   const { ctx, engine, rig } = await makeCtx(c.dur + 1.5);
   c.play(rig, 0.1);
   const buf = await ctx.startRendering();
   const channels = [buf.getChannelData(0), buf.getChannelData(1)];
+  if (upload) {
+    const inter = new Float32Array(channels[0].length * 2);
+    for (let i = 0; i < channels[0].length; i++) { inter[2 * i] = channels[0][i]; inter[2 * i + 1] = channels[1][i]; }
+    await fetch('/__upload/solo/' + name + '.f32', { method: 'POST', body: inter.buffer });
+  }
   return { name, kind: c.kind, ...analyse(channels, SR, 0, buf.duration, { centroid: true }), liveScopes: Scope.live, audit: engine.auditReport() };
 };
 
@@ -81,6 +89,7 @@ import { Texture, TEXTURE_DEFAULTS, TEXTURE_KINDS } from '../../src/audio/voices
 import { Kit, KIT_DEFAULTS } from '../../src/audio/voices/kit.js';
 
 window.renderFuzz = async function renderFuzz() {
+  resetScopes();
   const fakeLen = 230;
   const ctx = new OfflineAudioContext(2, SR * fakeLen, SR);
   const engine = await createEngine(ctx, { seed: 77 });

@@ -16,10 +16,11 @@ export const DRONE_DEFAULTS = Object.freeze({
   lfoRate: 0.06,    // Hz base rate of the slow LFOs (each voice gets 0.5x-2x)
   cutoff: 820,      // Hz lowpass
   cutoffLfo: 0.45,  // octaves of cutoff movement
-  resonance: 1.3,   // Q
+  resonance: 2,     // lowpass resonance, dB (Web Audio Q for lowpass: -3 flat, +6 singing)
   level: 0.14,      // output level
   sub: 0.45,        // sub sine level relative to level
   stereo: 0.75,     // 0..1 pan spread
+  tune: 0,          // cents, global detune (e.g. -50 = quarter-tone flat)
   fadeIn: 5,        // s
   release: 6,       // s
 });
@@ -45,7 +46,7 @@ export class Drone {
 
     const mix = sc.gain(1);
     const f1 = sc.biquad('lowpass', p.cutoff, p.resonance);
-    const f2 = sc.biquad('lowpass', p.cutoff * 1.1, 0.5);
+    const f2 = sc.biquad('lowpass', p.cutoff * 1.1, -3);
     const env = sc.gain(0);
     const lvl = sc.gain(clamp(num(p.level, 0.14), 0, 1));
     mix.connect(f1); f1.connect(f2); f2.connect(env); env.connect(lvl); lvl.connect(this.dest);
@@ -68,7 +69,7 @@ export class Drone {
     const chord = this.chord;
     for (let i = 0; i < N; i++) {
       const type = (i % 3 === 2) ? 'triangle' : p.wave;
-      const o = sc.osc(type, midiToHz(this.noteFor(chord, i)), t);
+      const o = sc.osc(type, midiToHz(this.noteFor(chord, i) + num(p.tune, 0, -1200, 1200) / 100), t);
       const u = N > 1 ? (i / (N - 1)) * 2 - 1 : 0;
       o.detune.value = u * p.spread;
       const lfo = sc.osc('sine', p.lfoRate * (0.5 + 1.5 * engine.rng.float()), t);
@@ -80,7 +81,7 @@ export class Drone {
       this.voices.push({ o, lfo, lg, g, u });
     }
     // sub
-    const sub = sc.osc('sine', midiToHz(Math.max(24, chord[0] - 12)), t);
+    const sub = sc.osc('sine', midiToHz(Math.max(24, chord[0] - 12) + num(p.tune, 0, -1200, 1200) / 100), t);
     const subG = sc.gain(clamp(num(p.sub, 0.45), 0, 1.5));
     sub.connect(subG); subG.connect(mix);
     this.sub = { o: sub, g: subG };
@@ -90,7 +91,7 @@ export class Drone {
       cutoff1: engine.param('drone.cutoff', f1.frequency),
       cutoff2: engine.param('drone.cutoff2', f2.frequency),
       q: engine.param('drone.resonance', f1.Q),
-      sub: engine.param('drone.subLevel', subG.gain),
+      sub: engine.param('drone.sub', subG.gain),
     };
     this.running = true;
     sc.arm();
@@ -110,12 +111,13 @@ export class Drone {
     this.engine.record('drone.chordRoot', chord[0]);
     if (!this.running) return this;
     const tc = Math.max(0.01, num(glideSec, 4) / 3);
+    const tune = num(this.p.tune, 0, -1200, 1200) / 100;
     this.voices.forEach((v, i) => {
-      const f = fclamp(midiToHz(this.noteFor(chord, i)), 20, 4000);
+      const f = fclamp(midiToHz(this.noteFor(chord, i) + tune), 20, 4000);
       v.o.frequency.cancelScheduledValues(t);
       v.o.frequency.setTargetAtTime(f, t, tc);
     });
-    const fs = fclamp(midiToHz(Math.max(24, chord[0] - 12)), 15, 400);
+    const fs = fclamp(midiToHz(Math.max(24, chord[0] - 12) + tune), 15, 400);
     this.sub.o.frequency.cancelScheduledValues(t);
     this.sub.o.frequency.setTargetAtTime(fs, t, tc);
     return this;
@@ -126,12 +128,13 @@ export class Drone {
     recordPatch(this.engine, 'drone', patch);
     if (!this.running) return this;
     const p = this.p, tc = 0.8;
+    if (patch.tune !== undefined) this.setChord(this.chord, t, 0.3);
     if (patch.level !== undefined) this.h.level.set(clamp(num(p.level, 0.14), 0, 1), t, tc);
     if (patch.cutoff !== undefined) {
       this.h.cutoff1.set(fclamp(p.cutoff, 60, 12000), t, tc);
       this.h.cutoff2.set(fclamp(p.cutoff * 1.1, 60, 12000), t, tc);
     }
-    if (patch.resonance !== undefined) this.h.q.set(clamp(num(p.resonance, 1.3), 0.1, 14), t, tc);
+    if (patch.resonance !== undefined) this.h.q.set(clamp(num(p.resonance, 2), -6, 24), t, tc);
     if (patch.sub !== undefined) this.h.sub.set(clamp(num(p.sub, 0.45), 0, 1.5), t, tc);
     if (patch.cutoffLfo !== undefined) {
       const d = clamp(num(p.cutoffLfo, 0.45), 0, 3) * 600;

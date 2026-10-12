@@ -162,7 +162,7 @@ export class Texture {
         lfo(rate * 0.73, gv * 0.45, g.gain);      // bubbling amplitude
         bps.push([bp, f]);
       }
-      const hiss = sc.biquad('highpass', 3500, 0.6);
+      const hiss = sc.biquad('highpass', 3500, -3);
       const hg = sc.gain(0.07);
       const w = this._noise(sc, 'white', 3, t);
       w.connect(hiss); hiss.connect(hg); hg.connect(mixer);
@@ -174,13 +174,13 @@ export class Texture {
       };
     } else if (kind === 'rustle') {
       const src = this._noise(sc, 'pink', 6, t);
-      const hp = sc.biquad('highpass', 2200, 0.7);
+      const hp = sc.biquad('highpass', 2200, -3);
       const bp = sc.biquad('bandpass', 5000, 0.7);
       const amp = sc.gain(0);
       src.connect(hp); hp.connect(bp); bp.connect(amp); amp.connect(out);
       // random bursts: lowpassed noise → square → amplitude
       const mod = this._noise(sc, 'white', 5, t);
-      const mlp = sc.biquad('lowpass', 11 * m, 0.7);
+      const mlp = sc.biquad('lowpass', 11 * m, -3);
       const mg = sc.gain(16);
       const shaper = sc.add(new WaveShaperNode(ctx, { curve: Float32Array.from({ length: 1024 }, (_, i) => { const u = (i / 1023) * 2 - 1; return Math.min(1, u * u * 3.2); }) }));
       const mo = sc.gain(2.2);
@@ -194,7 +194,7 @@ export class Texture {
         this.crackleBufs = [buildCrackle(ctx, 7.3, 4242, 11), buildCrackle(ctx, 11.1, 2424, 7)];
       }
       const sum = sc.gain(1);
-      const hp = sc.biquad('highpass', 900, 0.6);
+      const hp = sc.biquad('highpass', 900, -3);
       const bp = sc.biquad('peaking', 3000, 0.8, 5);
       this.crackleBufs.forEach((b, i) => {
         const s = sc.buf(b, t, null, { loop: true, offset: rnd() * b.duration, rate: 1 });
@@ -212,8 +212,8 @@ export class Texture {
       };
     } else { // hiss
       const src = this._noise(sc, 'white', 4, t);
-      const hp = sc.biquad('highpass', 4200, 0.6);
-      const lp = sc.biquad('lowpass', 9000, 0.5);
+      const hp = sc.biquad('highpass', 4200, -3);
+      const lp = sc.biquad('lowpass', 9000, -3);
       const swell = sc.gain(0.7);
       src.connect(hp); hp.connect(lp); lp.connect(swell); swell.connect(out);
       lfo(0.083, 0.28, swell.gain);

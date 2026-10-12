@@ -3,7 +3,7 @@
 // Chromium, renders (a) every voice / kit hit solo and (b) a full demo sequence with an OfflineAudioContext
 // (44.1 kHz stereo), writes out/voices.wav and prints per-segment stats + the param-audit dead list.
 //
-//   node tools/render-voices.mjs [--no-solo] [--keep-open]
+//   node tools/render-voices.mjs [--no-solo] [--no-fuzz] [--dump-solo (writes out/solo/<name>.wav)] [--keep-open]
 //
 // Exit code 0 only if: no clipping (peak < -0.3 dBFS), no NaN, every voice audible (RMS > -45 dBFS), no console errors.
 import fs from 'node:fs';
@@ -42,6 +42,15 @@ const { server, url, close } = await (async () => {
   const s = await startServer(root, 0, {
     routes: {
       '/__upload/voices.f32': async (req, res, body) => { uploaded = Buffer.from(body); res.writeHead(200); res.end('ok'); },
+      '/__upload/solo/*': async (req, res, body, u) => {
+        const name = path.basename(u.pathname, '.f32');
+        const f32 = new Float32Array(body.buffer, body.byteOffset, body.byteLength / 4);
+        const n = f32.length / 2, L = new Float32Array(n), R = new Float32Array(n);
+        for (let i = 0; i < n; i++) { L[i] = f32[2 * i]; R[i] = f32[2 * i + 1]; }
+        fs.mkdirSync(path.join(outDir, 'solo'), { recursive: true });
+        fs.writeFileSync(path.join(outDir, 'solo', name + '.wav'), encodeWav([L, R], 44100, { bits: 16 }));
+        res.writeHead(200); res.end('ok');
+      },
     },
   });
   return s;
@@ -72,7 +81,7 @@ try {
     console.log('\nSOLO RENDERS (each voice/hit alone in a fresh engine; window = clip + 1.5 s tail)');
     console.log('name'.padEnd(22) + 'peak dB'.padStart(9) + 'rms dB'.padStart(9) + 'loud100ms'.padStart(11) + 'centroid'.padStart(10) + '  silence%  NaN');
     for (const n of names) {
-      const r = await page.evaluate((nm) => window.renderSolo(nm), n);
+      const r = await page.evaluate(([nm, up]) => window.renderSolo(nm, up), [n, args.has('--dump-solo')]);
       console.log(n.padEnd(22) + fmt(r.peakDb, 9) + fmt(r.rmsDb, 9) + fmt(r.maxWinRmsDb, 11) + String(Math.round(r.centroidHz)).padStart(10) + fmt(r.silencePct, 10) + String(r.nan).padStart(5));
       if (r.nan) failures.push(`${n}: ${r.nan} NaN samples`);
       // short hits have low whole-clip RMS: require the loudest 100 ms window (what you actually hear) > -45 dBFS
@@ -119,7 +128,7 @@ try {
       if (r.count > 0) { m.min = Math.min(m.min, r.min); m.max = Math.max(m.max, r.max); m.count += r.count; }
     }
   }
-  const dead = Object.entries(merged).filter(([, r]) => r.count < 2 || r.min === r.max).map(([k]) => k);
+  const dead = Object.entries(merged).filter(([k, r]) => !k.startsWith('ch.fz.') && (r.count < 2 || r.min === r.max)).map(([k]) => k);   // ch.fz.* = the fuzz harness's own channels
   console.log(`\nAUDIT: ${Object.keys(merged).length} params registered, ${dead.length} dead (demo alone: ${demo.audit.dead.length})`);
   if (dead.length) console.log('dead: ' + dead.join(', '));
   fs.writeFileSync(path.join(outDir, 'voices-audit.json'), JSON.stringify({ params: merged, dead }, null, 1));

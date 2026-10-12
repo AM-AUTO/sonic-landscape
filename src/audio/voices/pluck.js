@@ -25,6 +25,7 @@ export const PLUCK_DEFAULTS = Object.freeze({
   cutoff: 7000,       // Hz playback lowpass at full velocity
   level: 0.85,
   damp: 0.2,          // 0 = ring out after dur; 1 = mute at the end of dur
+  tune: 0,            // cents, global detune
   drift: 3,           // random cents of detune per note
 });
 
@@ -108,7 +109,8 @@ export class Pluck {
 
   note(midi, t = this.ctx.currentTime, dur = 1, vel = 0.8) {
     const { ctx, engine } = this, p = this.p;
-    midi = Math.round(num(midi, 69, 24, 108)); dur = Math.max(0.05, num(dur, 1)); vel = clamp(num(vel, 0.8), 0, 1.2);
+    const midiF = num(midi, 69, 24, 108) + num(p.tune, 0, -1200, 1200) / 100;
+    midi = Math.round(midiF); dur = Math.max(0.05, num(dur, 1)); vel = clamp(num(vel, 0.8), 0, 1.2);
     const kind = PLUCK_KINDS[p.kind] || PLUCK_KINDS.string;
     const kp = {
       damping: num(p.damping ?? kind.damping, 0.4, 0.02, 0.5 + 0.2),
@@ -125,9 +127,9 @@ export class Pluck {
     const drift = (engine.rng.float() * 2 - 1) * num(p.drift, 3, 0, 50);
     engine.record('pluck.driftUsed', drift);
     const src = sc.buf(buffer, t, t + buffer.duration + 0.05);
-    src.detune.value = drift;
+    src.detune.value = drift + (midiF - midi) * 100;
     const cut = fclamp(num(p.cutoff, 7000) * (0.18 + 0.82 * vel * vel) * Math.pow(midiToHz(midi) / 261.6, 0.25), 300, 16000);
-    const lp = sc.biquad('lowpass', cut, 0.6);
+    const lp = sc.biquad('lowpass', cut, -3);
     const amp = sc.gain(clamp(num(p.level, 0.85), 0, 1.5) * (0.2 + 0.8 * vel));
     src.connect(lp); lp.connect(amp); amp.connect(this.dest);
     const dmp = clamp(num(p.damp, 0.2), 0, 1);

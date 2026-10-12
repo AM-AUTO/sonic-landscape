@@ -16,9 +16,10 @@ export const PAD_DEFAULTS = Object.freeze({
   attack: 1.8, decay: 2.5, sustain: 0.75, release: 3.8,   // seconds / level
   cutoff: 1000,     // Hz base lowpass
   envAmt: 1.9,      // octaves the filter opens at the attack peak
-  resonance: 0.9,
+  resonance: 1.5,       // lowpass resonance, dB
   keytrack: 0.4,    // 0..1 cutoff follows tone pitch
   lfoRate: 0.11, lfoDepth: 0.25,   // cutoff drift (octaves)
+  tune: 0,          // cents, global detune (e.g. -50 = quarter-tone flat)
   width: 0.8,       // stereo spread of chord tones
   level: 0.17,
 });
@@ -52,7 +53,7 @@ export class Pad {
     const A = Math.max(0.01, num(p.attack, 1.8)), D = num(p.decay, 2.5), S = num(p.sustain, 0.75), R = Math.max(0.05, num(p.release, 3.8));
 
     // shared: highpass → amp env → level → dest
-    const hp = sc.biquad('highpass', 70, 0.5);
+    const hp = sc.biquad('highpass', 70, -3);
     const amp = sc.gain(0);
     const lvl = sc.gain(clamp(num(p.level, 0.17), 0, 1) * (0.35 + 0.65 * v) / Math.sqrt(tones.length / 3));
     hp.connect(amp); amp.connect(lvl); lvl.connect(this.dest);
@@ -66,10 +67,10 @@ export class Pad {
 
     const nSaw = Math.round(clamp(num(p.saws, 3), 1, 4));
     tones.forEach((m, k) => {
-      const f = fclamp(midiToHz(m), 20, 5000);
+      const f = fclamp(midiToHz(m + num(p.tune, 0, -1200, 1200) / 100), 20, 5000);
       // per-tone filter with envelope (keytracked)
       const base = clamp(num(p.cutoff, 1000) * Math.pow(f / 261.6, clamp(num(p.keytrack, 0.4), 0, 1)) * (0.5 + 0.5 * v), 80, 14000);
-      const lp = sc.biquad('lowpass', base, num(p.resonance, 0.9));
+      const lp = sc.biquad('lowpass', base, num(p.resonance, 1.5));
       const peak = fclamp(base * Math.pow(2, num(p.envAmt, 1.9)), 100, 16000);
       const sus = fclamp(base * Math.pow(2, num(p.envAmt, 1.9) * 0.35), 100, 16000);
       const fp = lp.frequency;

@@ -64,13 +64,13 @@ export function softClipCurve(n = 8192, { ceiling = 0.93, knee = 0.55, range = 2
   return c;
 }
 
-/** Gentle saturation (for filter feedback loops etc.): unity near zero, bounded at +-1. */
+/**
+ * Gentle saturation for feedback loops: tanh with unity slope at the origin and |out| < |in|, so a loop
+ * with gain g < 1 can never grow (small-signal loop gain stays <= g), while loud repeats are soft-limited.
+ */
 export function softSatCurve(n = 2048) {
   const c = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * 2 - 1;
-    c[i] = Math.tanh(1.2 * x) / Math.tanh(1.2);
-  }
+  for (let i = 0; i < n; i++) c[i] = Math.tanh((i / (n - 1)) * 2 - 1);
   return c;
 }
 
@@ -170,7 +170,10 @@ export class Scope {
   }
   gain(v = 1) { return this.add(new GainNode(this.ctx, { gain: v })); }
   biquad(type, frequency, Q = 1, gain = 0) {
-    return this.add(new BiquadFilterNode(this.ctx, { type, frequency: fclamp(frequency, 10, this.ctx.sampleRate * 0.45), Q: clamp(num(Q, 1), 0.0001, 60), gain }));
+    // NB: for lowpass/highpass Web Audio's Q is a *resonance in dB* (0 = no peak at the corner, -3 = Butterworth,
+    // +6 = clearly resonant); for the band types it is an ordinary Q.
+    const lh = type === 'lowpass' || type === 'highpass';
+    return this.add(new BiquadFilterNode(this.ctx, { type, frequency: fclamp(frequency, 10, this.ctx.sampleRate * 0.45), Q: lh ? clamp(num(Q, 0), -12, 30) : clamp(num(Q, 1), 0.0001, 60), gain }));
   }
   /** connect from→to and remember the link so an external persistent `from` is released */
   link(from, to) { from.connect(to); this.links.push([from, to]); return to; }

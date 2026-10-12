@@ -138,11 +138,11 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   };
 
   // ---------------------------------------------------------------- master chain
-  const bus = new GainNode(ctx, { gain: 0.66 });  // trim so a dense tutti sits around -13 dBFS RMS
+  const bus = new GainNode(ctx, { gain: 0.75 });  // trim so a dense tutti sits around -13 dBFS RMS
   const glue = new DynamicsCompressorNode(ctx, { threshold: -16, knee: 14, ratio: 2.4, attack: 0.025, release: 0.28 });
   const glueMakeup = new GainNode(ctx, { gain: 1.15 });
-  const lowcut = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 28, Q: 0.6 });
-  const highcut = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 17500, Q: 0.5 });
+  const lowcut = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 28, Q: -3 });
+  const highcut = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 17500, Q: -3 });
   const mDrive = new GainNode(ctx, { gain: 1 / 2.5 });       // 1/range → unity through softclip
   const clip = new WaveShaperNode(ctx, { curve: softClipCurve(8192, { ceiling: 0.9, knee: 0.55, range: 2.5 }), oversample: '2x' });
   const finalGain = new GainNode(ctx, { gain: 0.95 });
@@ -249,7 +249,7 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
     const crushDry = new GainNode(ctx, { gain: 1 });
     const crushWet = new GainNode(ctx, { gain: 0 });
     const crusher = new WaveShaperNode(ctx, { curve: crushCurve(8) });
-    const filter = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 18000, Q: 0.707 });
+    const filter = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 18000, Q: -3 });
     const cDry = new GainNode(ctx, { gain: 1 });
     const cDelay = new DelayNode(ctx, { maxDelayTime: 0.06, delayTime: 0.016 });
     const cLfo = new OscillatorNode(ctx, { type: 'sine', frequency: 0.43 });
@@ -292,7 +292,7 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
         if (v.delay !== undefined) H.delay.set(num(v.delay, 0, 0, 2), t, tc);
         if (v.grain !== undefined) H.grain.set(num(v.grain, 0, 0, 2), t, tc);
         if (v.cutoff !== undefined) H.cutoff.set(num(v.cutoff, 18000, 40, Math.min(20000, ctx.sampleRate * 0.45)), t, tc);
-        if (v.resonance !== undefined) H.resonance.set(num(v.resonance, 0.707, 0.1, 18), t, tc);
+        if (v.resonance !== undefined) H.resonance.set(num(v.resonance, -3, -12, 24), t, tc);
         if (v.drive !== undefined) {
           const d = num(v.drive, 0, 0, 1);
           H.drive.set(d, t, tc);
@@ -337,6 +337,10 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
     channel, channels,
     param, record, auditReport, audit: auditReport,
     noiseBuffer, ready,
+    /** release the master graph (voices should be stopped first) */
+    dispose() {
+      try { bus.disconnect(); analyser.disconnect(); out.disconnect(); outFront.disconnect(); } catch (e) { /* already gone */ }
+    },
     /** cached lookup of a bitcrush curve (shared by voices) */
     crushCurve,
     now,

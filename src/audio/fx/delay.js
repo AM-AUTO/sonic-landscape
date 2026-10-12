@@ -28,8 +28,8 @@ export function createDelay(ctx, hooks = {}) {
   const dL = new DelayNode(ctx, { maxDelayTime: 5, delayTime: 0.375 });
   const dR = new DelayNode(ctx, { maxDelayTime: 5, delayTime: 0.375 });
   const mk = () => ({
-    tone: new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 3200, Q: 0.5 }),
-    hp: new BiquadFilterNode(ctx, { type: 'highpass', frequency: 140, Q: 0.5 }),
+    tone: new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 3200, Q: -3 }),
+    hp: new BiquadFilterNode(ctx, { type: 'highpass', frequency: 140, Q: -3 }),
     sat: new WaveShaperNode(ctx, { curve: SAT }),
     fb: new GainNode(ctx, { gain: 1 }),
   });

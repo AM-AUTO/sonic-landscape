@@ -200,13 +200,13 @@ export function scheduleDemo(r, t0 = 0.2) {
     // remember each channel's settings so the segment can hand back an unchanged mixer
     const names = Object.keys(r.ch);
     const orig = {};
-    names.forEach((c) => { orig[c] = { cutoff: 18000, resonance: 0.707, crush: 0, chorus: 0, ...r.ch[c].state }; });
+    names.forEach((c) => { orig[c] = { cutoff: 18000, resonance: -3, crush: 0, chorus: 0, ...r.ch[c].state }; });
     r.pad.chord([50, 57, 62], tt, 8, 0.6);
     sweep.forEach(([c, a, b], i) => { r.ch[c].set(a, tt + 0.2, 0.05); r.ch[c].set(b, tt + 3.4, 0.2); });
     // every control on every channel moves at least once (audit coverage), then returns to a neutral value
     names.forEach((c, i) => {
       const f = (i + 1) / (names.length + 1);
-      r.ch[c].set({ gain: 0.6 + 0.2 * f, pan: (f - 0.5) * 0.6, reverb: 0.2 + 0.4 * f, delay: 0.1 + 0.3 * f, grain: 0.05 + 0.2 * f, cutoff: 3000 + 9000 * f, resonance: 0.6 + 1.5 * f, drive: 0.1 + 0.3 * f, crush: i === 0 ? 0.2 : 0, chorus: 0.1 + 0.3 * f }, tt + 6.0, 0.3);
+      r.ch[c].set({ gain: 0.6 + 0.2 * f, pan: (f - 0.5) * 0.6, reverb: 0.2 + 0.4 * f, delay: 0.1 + 0.3 * f, grain: 0.05 + 0.2 * f, cutoff: 3000 + 9000 * f, resonance: 0.6 + 1.5 * f, drive: 0.1 + 0.3 * f, crush: 0.1 + 0.04 * i, chorus: 0.1 + 0.3 * f }, tt + 6.0, 0.3);
       r.ch[c].set(orig[c], tt + 8.4, 0.2);
     });
     for (let b = 0; b < 16; b++) {
@@ -220,7 +220,7 @@ export function scheduleDemo(r, t0 = 0.2) {
     const M = E.fx.master;
     M.setDrive(0.8, tt); M.setLowCut(120, tt); M.setHighCut(9000, tt); M.setGain(0.9, tt);
     M.setDrive(0, tt + 7.5); M.setLowCut(28, tt + 7.5); M.setHighCut(17500, tt + 7.5); M.setGain(0.95, tt + 7.5);
-    E.fx.master.duck(0.5, 0.05, 0.5, 1.5, tt + 4);
+    M.duck(0.5, 0.05, 0.5, 1.5, tt + 4); M.duck(0.3, 0.1, 0.2, 1, tt + 6.5);
   });
     t += 0.2;
   // dense tutti

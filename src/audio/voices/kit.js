@@ -41,8 +41,8 @@ const ROUTE = {
 };
 // peak level of each hit into its channel at vel=1 (before kit.level)
 const LEVEL = {
-  kick: 0.6, snare: 0.9, rim: 0.9, clap: 2.1, hatC: 0.9, hatO: 0.62, ride: 0.55, crash: 0.7,
-  tomL: 0.5, tomM: 0.48, tomH: 0.46, timp: 0.55, gong: 0.5, click: 2.8, snap: 1.0,
+  kick: 0.52, snare: 0.9, rim: 0.9, clap: 2.1, hatC: 0.9, hatO: 0.62, ride: 0.55, crash: 0.7,
+  tomL: 0.5, tomM: 0.48, tomH: 0.46, timp: 0.46, gong: 0.5, click: 4.5, snap: 1.4,
   grainBurst: 0.55, breath: 0.6, reverseSwell: 0.5, metal: 0.32, shaker: 1.2,
 };
 
@@ -158,7 +158,7 @@ export class Kit {
     body.connect(env); tri.connect(tg); tg.connect(env); env.connect(out);
     // beater click
     const ck = this._noise(sc, 0.02, t);
-    const hp = sc.biquad('highpass', 1800, 0.7);
+    const hp = sc.biquad('highpass', 1800, -3);
     const cg = sc.gain(0);
     perc(cg.gain, t, amp * num(p.kickClick, 0.35, 0, 1) * (0.4 + 0.6 * vel), 0.0018, 0.0004);
     ck.connect(hp); hp.connect(cg); cg.connect(out);
@@ -176,17 +176,17 @@ export class Kit {
     const t2 = sc.osc('sine', f * 1.78, t);
     t2.frequency.setValueAtTime(f * 2.3, t); t2.frequency.setTargetAtTime(f * 1.78, t + 0.002, 0.018);
     const tenv = sc.gain(0);
-    perc(tenv.gain, t, amp * (0.45 + 0.4 * tone), 0.045, 0.001);
+    perc(tenv.gain, t, amp * (0.36 + 0.3 * tone), 0.045, 0.001);
     const t2g = sc.gain(0.4);
     t1.connect(tenv); t2.connect(t2g); t2g.connect(tenv); tenv.connect(out);
     const n = this._noise(sc, d * 2.2 + 0.1, t);
-    const hp = sc.biquad('highpass', 1200, 0.6);
+    const hp = sc.biquad('highpass', 1200, -3);
     const bp = sc.biquad('bandpass', 3600 * (0.8 + 0.4 * tone), 0.65);
     const nenv = sc.gain(0);
-    perc(nenv.gain, t, amp * num(p.snareNoise, 0.8, 0, 2) * 0.95, d / 4, 0.001);
+    perc(nenv.gain, t, amp * num(p.snareNoise, 0.8, 0, 2) * 1.5, d / 4, 0.001);
     n.connect(hp); hp.connect(bp); bp.connect(nenv); nenv.connect(out);
     const n2 = this._noise(sc, d * 1.2, t);
-    const hp2 = sc.biquad('highpass', 5200, 0.5);
+    const hp2 = sc.biquad('highpass', 5200, -3);
     const e2 = sc.gain(0);
     perc(e2.gain, t, amp * 0.25, d / 3, 0.001);
     n2.connect(hp2); hp2.connect(e2); e2.connect(out);
@@ -195,7 +195,7 @@ export class Kit {
 
   _rim({ t, vel, sc, out, amp, P }) {
     const a = sc.osc('sine', 1667 * P, t), b = sc.osc('triangle', 455 * P, t);
-    const hp = sc.biquad('highpass', 380, 0.7);
+    const hp = sc.biquad('highpass', 380, -3);
     const env = sc.gain(0);
     perc(env.gain, t, amp * 0.8, 0.0075, 0.0004);
     const bg = sc.gain(0.7);
@@ -211,7 +211,7 @@ export class Kit {
     const d = num(o.decay, 0.24, 0.05, 2);
     const tone = num(o.tone, 0.5, 0, 1);
     const n = this._noise(sc, d + 0.15, t);
-    const hp = sc.biquad('highpass', 700, 0.6);
+    const hp = sc.biquad('highpass', 700, -3);
     const bp = sc.biquad('bandpass', 1050 + tone * 700, 1.3);
     const env = sc.gain(0);
     const offs = [0, 0.0105, 0.0225, 0.037];
@@ -232,8 +232,8 @@ export class Kit {
     const tone = num(o.tone, 0.5, 0, 1);
     const bright = num(p.hatBright, 1, 0.3, 2);
     rec('decayUsed', d);
-    const bp = sc.biquad('bandpass', (8800 + tone * 3500) * bright * P, 0.8);
-    const hp = sc.biquad('highpass', 6800 * bright, 0.6);
+    const bp = sc.biquad('bandpass', (8200 + tone * 3000) * bright * P, 0.8);
+    const hp = sc.biquad('highpass', 6200 * bright, -3);
     const env = sc.gain(0);
     sc.link(this.hatBank.out, bp);
     const boost = sc.gain(8);                 // square-cluster energy above 7 kHz is tiny; make it up here
@@ -246,7 +246,7 @@ export class Kit {
     } else perc(env.gain, t, amp, d / 4, 0.0008);
     // noise sizzle
     const n = this._noise(sc, d * (open ? 6 : 5) + 0.05, t);
-    const nhp = sc.biquad('highpass', 8500 * bright, 0.5);
+    const nhp = sc.biquad('highpass', 8500 * bright, -3);
     const ng = sc.gain(0);
     perc(ng.gain, t, amp * 0.3, d / 4, 0.001);
     n.connect(nhp); nhp.connect(ng); ng.connect(out);
@@ -260,24 +260,24 @@ export class Kit {
     const d = num(o.decay, p.rideDecay, 0.2, 8);
     const tone = num(o.tone, 0.5, 0, 1);
     rec('decayUsed', d);
-    const bp = sc.biquad('bandpass', (5200 + tone * 2500) * P, 1.0);
-    const hp = sc.biquad('highpass', 3200, 0.6);
+    const bp = sc.biquad('bandpass', (6000 + tone * 2500) * P, 1.0);
+    const hp = sc.biquad('highpass', 3200, -3);
     const env = sc.gain(0);
     sc.link(this.cymBank.out, bp);
     bp.connect(hp); hp.connect(env); env.connect(out);
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(amp * 0.9, t + 0.0015);
-    env.gain.setTargetAtTime(amp * 0.38, t + 0.0015, 0.045);
+    env.gain.linearRampToValueAtTime(amp * 1.4, t + 0.0015);
+    env.gain.setTargetAtTime(amp * 0.55, t + 0.0015, 0.045);
     env.gain.setTargetAtTime(0, t + 0.12, d / 5.5);
     // stick/bell ping: inharmonic sine pair
-    for (const [fr, lv, tau] of [[2680, 0.5, 0.16], [3930, 0.28, 0.1], [5350, 0.14, 0.06]]) {
+    for (const [fr, lv, tau] of [[2680, 0.28, 0.16], [3930, 0.16, 0.1], [5350, 0.08, 0.06]]) {
       const s = sc.osc('sine', fr * P, t);
       const g = sc.gain(0);
       perc(g.gain, t, amp * lv, tau, 0.0005);
       s.connect(g); g.connect(out);
     }
     const n = this._noise(sc, 0.5, t);
-    const nh = sc.biquad('highpass', 7000, 0.5), ng = sc.gain(0);
+    const nh = sc.biquad('highpass', 7000, -3), ng = sc.gain(0);
     perc(ng.gain, t, amp * 0.18, 0.1, 0.001);
     n.connect(nh); nh.connect(ng); ng.connect(out);
     return t + 0.12 + d * 1.5 + 0.1;
@@ -295,17 +295,17 @@ export class Kit {
     env.gain.setTargetAtTime(0, t + 0.28, d / 5.2);
     env.connect(out);
     // metallic cluster
-    const mh = sc.biquad('highpass', 3600, 0.6), mb = sc.biquad('bandpass', 8800 * bright * P, 0.55), mg = sc.gain(0.75);
+    const mh = sc.biquad('highpass', 3000, -3), mb = sc.biquad('bandpass', 6800 * bright * P, 0.55), mg = sc.gain(0.75);
     sc.link(this.cymBank.out, mh);
     mh.connect(mb); mb.connect(mg); mg.connect(env);
     // noise wash, darkening over time
     const len = 0.28 + d * 1.5;
     const n = this._noise(sc, len, t);
-    const nh = sc.biquad('highpass', 2400, 0.6);
-    const lp = sc.biquad('lowpass', 17000 * Math.min(1, bright), 0.6);
-    lp.frequency.setValueAtTime(16000 * Math.min(1.2, bright), t);
-    lp.frequency.setTargetAtTime(4200, t + 0.02, d * 0.33);
-    const pk = sc.biquad('peaking', 7500, 0.7, 4);
+    const nh = sc.biquad('highpass', 1800, -3);
+    const lp = sc.biquad('lowpass', 12000, -3);
+    lp.frequency.setValueAtTime(11500 * Math.min(1.2, bright), t);
+    lp.frequency.setTargetAtTime(3200, t + 0.02, d * 0.33);
+    const pk = sc.biquad('peaking', 5200, 0.7, 4);
     const ng = sc.gain(0.85);
     n.connect(nh); nh.connect(lp); lp.connect(pk); pk.connect(ng); ng.connect(env);
     return t + len + 0.1;
@@ -352,7 +352,7 @@ export class Kit {
     });
     // soft mallet thud
     const n = this._noise(sc, 0.12, t);
-    const lp = sc.biquad('lowpass', 520 + 500 * vel, 0.7), ng = sc.gain(0);
+    const lp = sc.biquad('lowpass', 520 + 500 * vel, -3), ng = sc.gain(0);
     perc(ng.gain, t, amp * 0.5, 0.022, 0.002);
     n.connect(lp); lp.connect(ng); ng.connect(out);
     return t + d * 1.2 + 0.2;
@@ -372,7 +372,7 @@ export class Kit {
         const s = sc.osc('sine', fr, t);
         const g = sc.gain(0);
         const peak = amp * lv * (k ? 0.5 : 1) * 0.2;
-        const att = 0.03 + bloom * (i / partials.length) * 1.6 + this.engine.rng.float() * 0.1;   // upper partials bloom later
+        const att = 0.05 + bloom * (i / partials.length) * 3.2 + this.engine.rng.float() * 0.15;   // upper partials bloom later (up to ~2.5 s)
         const tau = (D / 5.5) * (1 - 0.55 * i / partials.length);
         g.gain.setValueAtTime(0, t);
         g.gain.linearRampToValueAtTime(peak, t + att);
@@ -390,7 +390,7 @@ export class Kit {
     n.connect(bp); bp.connect(ng); ng.connect(out);
     // mallet strike
     const k = this._noise(sc, 0.08, t);
-    const klp = sc.biquad('lowpass', 900, 0.7), kg = sc.gain(0);
+    const klp = sc.biquad('lowpass', 900, -3), kg = sc.gain(0);
     perc(kg.gain, t, amp * 0.35, 0.02, 0.002);
     k.connect(klp); klp.connect(kg); kg.connect(out);
     return t + D * 1.5 + 0.3;
@@ -407,7 +407,7 @@ export class Kit {
     perc(env.gain, t, amp * 1.4, num(o.decay, 0.0016, 0.0003, 0.05), 0.0002);
     n.connect(bp); bp.connect(env); env.connect(out);
     const th = sc.osc('sine', 160 * P, t), tg = sc.gain(0);
-    perc(tg.gain, t, amp * 0.25, 0.004, 0.0006);
+    perc(tg.gain, t, amp * 0.06, 0.004, 0.0006);
     th.connect(tg); tg.connect(out);
     return t + 0.12;
   }
@@ -417,13 +417,13 @@ export class Kit {
     const n = this._noise(sc, 0.06, t);
     const crush = sc.add(new WaveShaperNode(this.ctx, { curve: this.engine.crushCurve(3 + Math.round(tone * 2)) }));
     const pre = sc.gain(0.9);
-    const hp = sc.biquad('highpass', 1300 + tone * 1500, 0.8);
+    const hp = sc.biquad('highpass', 1300 + tone * 1500, -3);
     const env = sc.gain(0);
     perc(env.gain, t, amp * 1.0, num(o.decay, 0.012, 0.002, 0.2), 0.0004);
     n.connect(pre); pre.connect(crush); crush.connect(hp); hp.connect(env); env.connect(out);
     const s = sc.osc('square', 3200 * P, t);
     s.frequency.setValueAtTime(3200 * P, t); s.frequency.setTargetAtTime(700 * P, t, 0.004);
-    const sg = sc.gain(0), sh = sc.biquad('lowpass', 5000, 0.7);
+    const sg = sc.gain(0), sh = sc.biquad('lowpass', 5000, -3);
     perc(sg.gain, t, amp * 0.3, 0.006, 0.0004);
     s.connect(sh); sh.connect(sg); sg.connect(out);
     return t + 0.2;
@@ -478,20 +478,20 @@ export class Kit {
     rec('lengthUsed', len);
     const env = sc.gain(0.0001);
     // reversed exponential decay: grows exponentially, peaks exactly at t+len, then is cut
-    env.gain.setValueAtTime(0.0001, t);
+    env.gain.setValueAtTime(Math.max(0.0001, amp * 0.03), t);           // -30 dB start so the rise is audible early
     env.gain.exponentialRampToValueAtTime(Math.max(0.001, amp), t + len);
     env.gain.setTargetAtTime(0, t + len, 0.012);
     env.connect(out);
     const n = this._noise(sc, len + 0.15, t);
-    const lp = sc.biquad('lowpass', 900, 0.8);
+    const lp = sc.biquad('lowpass', 900, -3);
     lp.frequency.setValueAtTime(900, t);
-    lp.frequency.exponentialRampToValueAtTime(15000 * (0.7 + 0.3 * tone), t + len);
-    const hp = sc.biquad('highpass', 500, 0.6);
+    lp.frequency.exponentialRampToValueAtTime(11000 * (0.7 + 0.3 * tone), t + len);
+    const hp = sc.biquad('highpass', 500, -3);
     hp.frequency.setValueAtTime(400, t);
     hp.frequency.exponentialRampToValueAtTime(3500, t + len);
     const ng = sc.gain(0.9);
     n.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(env);
-    const mh = sc.biquad('highpass', 4000, 0.6), mg = sc.gain(0.45);
+    const mh = sc.biquad('highpass', 4000, -3), mg = sc.gain(0.45);
     sc.link(this.cymBank.out, mh);
     mh.connect(mg); mg.connect(env);
     return t + len + 0.15;
@@ -507,7 +507,7 @@ export class Kit {
     const car = sc.osc('sine', f, t);
     const car2 = sc.osc('sine', f * 2.76, t);
     const g2 = sc.gain(0.3);
-    const hp = sc.biquad('highpass', 260, 0.6);
+    const hp = sc.biquad('highpass', 260, -3);
     car.connect(hp); car2.connect(g2); g2.connect(hp); hp.connect(env); env.connect(out);
     for (const [ratio, idx, tau] of [[1.4142, 5.5, 0.14], [3.13, 3.2, 0.09]]) {
       const m = sc.osc('sine', f * ratio, t);
@@ -525,7 +525,7 @@ export class Kit {
     const tone = num(o.tone, 0.5, 0, 1);
     const n = this._noise(sc, d * 7 + 0.05, t);
     const bp = sc.biquad('bandpass', (5600 + tone * 2400) * P, 1.0);
-    const hp = sc.biquad('highpass', 2600, 0.6);
+    const hp = sc.biquad('highpass', 2600, -3);
     const env = sc.gain(0);
     env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(amp * 1.2, t + 0.012 + d * 0.2);

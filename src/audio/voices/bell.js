@@ -20,6 +20,7 @@ export const BELL_DEFAULTS = Object.freeze({
   ratio: null, index: null, indexEnd: null, decay: null, beat: null,   // null = take from kind
   indexDecay: 0.45,   // fraction of the amp decay over which the index falls
   attack: 0.002,
+  tune: 0,            // cents, global detune
   level: 0.3,
   brightness: 1,      // scales index with velocity response
   dampDur: 0,         // 0 = ring freely; >0 = fade quickly when dur is shorter (damped bell)
@@ -48,7 +49,7 @@ export class Bell {
     engine.record('bell.vel', vel); engine.record('bell.dur', dur); engine.record('bell.midi', midi);
     engine.record('bell.ratioUsed', ratio); engine.record('bell.indexUsed', idx0); engine.record('bell.decayUsed', decay);
 
-    const f = fclamp(midiToHz(midi), 30, 5000);
+    const f = fclamp(midiToHz(midi + num(p.tune, 0, -1200, 1200) / 100), 30, 5000);
     const sc = new Scope(ctx);
     const A = Math.max(0.0005, num(p.attack, 0.002));
     const tEnd = t + decay * 1.5 + 0.2;

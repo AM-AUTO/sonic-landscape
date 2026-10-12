@@ -14,6 +14,7 @@ export const LEAD_DEFAULTS = Object.freeze({
   wave1: 'sawtooth', wave2: 'triangle',
   detune: 7,          // cents (osc1 +, osc2 -)
   saw: 0.5, tri: 0.6, sub: 0.3,     // oscillator levels
+  tune: 0,            // cents, global detune
   glide: 0.09,        // portamento seconds (to 95%)
   vibRate: 5.2, vibDepth: 13, vibDelay: 0.4, vibRamp: 0.7,   // Hz / cents / s / s
   scoop: 22,          // cents the pitch rises from on attack
@@ -21,10 +22,10 @@ export const LEAD_DEFAULTS = Object.freeze({
   cutoff: 2300,       // base Hz
   envAmt: 1.3,        // octaves above base at the filter peak
   filterAttack: 0.11, filterDecay: 0.7, filterSustain: 0.35,   // sustain as fraction of envAmt
-  resonance: 2.2,
+  resonance: 4,          // lowpass resonance, dB
   keytrack: 0.55,
   attack: 0.05, decay: 0.35, sustain: 0.85, release: 0.55,
-  level: 0.5,
+  level: 0.6,
 });
 
 export class Lead {
@@ -43,11 +44,11 @@ export class Lead {
     const sc = new Scope(ctx);
     const o1 = sc.osc(p.wave1, f, t), o2 = sc.osc(p.wave2, f, t), os = sc.osc('sine', f * 0.5, t);
     const g1 = sc.gain(num(p.saw, 0.5, 0, 2)), g2 = sc.gain(num(p.tri, 0.6, 0, 2)), gs = sc.gain(num(p.sub, 0.3, 0, 2));
-    const hp = sc.biquad('highpass', 80, 0.5);
+    const hp = sc.biquad('highpass', 80, -3);
     const lp = sc.biquad('lowpass', p.cutoff, p.resonance);
-    const lp2 = sc.biquad('lowpass', p.cutoff, 0.6);
+    const lp2 = sc.biquad('lowpass', p.cutoff, -3);
     const amp = sc.gain(0);
-    const lvl = sc.gain(clamp(num(p.level, 0.5), 0, 1.5));
+    const lvl = sc.gain(clamp(num(p.level, 0.6), 0, 1.5));
     o1.connect(g1); o2.connect(g2); os.connect(gs);
     g1.connect(hp); g2.connect(hp); gs.connect(hp);
     hp.connect(lp); lp.connect(lp2); lp2.connect(amp); amp.connect(lvl); lvl.connect(this.dest);
@@ -70,7 +71,7 @@ export class Lead {
     midi = num(midi, 69, 28, 108); dur = Math.max(0.05, num(dur, 0.5)); vel = clamp(num(vel, 0.8), 0, 1.2);
     recordPatch(engine, 'lead', p);
     engine.record('lead.vel', vel); engine.record('lead.dur', dur); engine.record('lead.midi', midi);
-    const f = fclamp(midiToHz(midi), 40, 4200);
+    const f = fclamp(midiToHz(midi + num(p.tune, 0, -1200, 1200) / 100), 40, 4200);
     let g = this.cur;
     const legato = !!g && t < g.endAt - 0.05 && ctx.currentTime < g.endAt - 0.05 && t >= g.startAt;
     if (!legato) g = this.cur = this._build(t, f);
