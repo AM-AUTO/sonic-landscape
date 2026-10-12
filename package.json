@@ -1,18 +1,14 @@
 {
-  "name": "sonic-landscape",
-  "version": "1.0.0",
-  "description": "An interactive map visualization of sound environments and acoustic landmarks",
-  "main": "src/index.js",
+  "name": "contours",
+  "version": "2.0.0",
+  "description": "CONTOURS — a playable album. A topographic map as a score: walk the glens, play the land.",
+  "type": "module",
   "scripts": {
-    "start": "npx serve . -l 3000",
-    "test": "npx jest --coverage",
-    "lint": "npx eslint src/**/*.js"
+    "start": "npx http-server . -p 3000 -c-1",
+    "test": "node --test tests/",
+    "verify:play": "node tools/verify-play.mjs",
+    "verify:audio": "node tools/render-audio.mjs"
   },
-  "keywords": ["map", "sound", "visualization", "leaflet"],
-  "license": "MIT",
-  "devDependencies": {
-    "jest": "^29.0.0",
-    "jest-environment-jsdom": "^29.0.0",
-    "@jest/globals": "^29.0.0"
-  }
+  "keywords": ["generative", "ambient", "web-audio", "game", "topographic"],
+  "license": "MIT"
 }
