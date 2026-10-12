@@ -244,7 +244,7 @@ export function bakeMap(world, opts = {}) {
         const shade = sdir < 0 ? Math.min(1, -sdir / 4.5) : 0;
         const lit = sdir > 0 ? Math.min(1, sdir / 6) : 0;
         const en = (H[idx] - world.minH) * invSpan;
-        const d = 0.03 + 0.12 * en + 0.42 * shade - 0.1 * lit;
+        const d = 0.12 * en + 0.42 * shade - 0.1 * lit;
         col = th < d ? C.paper2 : C.paper;
       } else {
         const sdir = (gx + gy) * 0.7071;

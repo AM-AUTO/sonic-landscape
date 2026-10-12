@@ -173,11 +173,13 @@ export function tintAt(timeOfDay, levelTint) {
   for (const w of tb.wash) { const e = colors.get(w.color) || [0, 0]; e[1] = w.density; colors.set(w.color, e); }
   const wash = [];
   for (const [color, [da, db]] of colors) { const d = lerp(da, db, f); if (d > 0.004) wash.push({ color, density: d }); }
+  // drop faint tails so full day is perfectly clean (no stray lattice dots)
+  const clean = (v, th) => (v < th ? 0 : v);
   return {
     phase: f < 0.5 ? a : b,
-    night: lerp(ta.night, tb.night, f),
-    warm: lerp(ta.warm, tb.warm, f),
-    wash,
+    night: clean(lerp(ta.night, tb.night, f), 0.04),
+    warm: clean(lerp(ta.warm, tb.warm, f), 0.06),
+    wash: wash.filter((w2) => w2.density >= 0.035),
   };
 }
 

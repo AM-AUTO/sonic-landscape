@@ -167,7 +167,11 @@ function title(env) {
     drawText(ctx, '→', SW / 2 - w / 2 - 12 + (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
     drawText(ctx, '←', SW / 2 + w / 2 + 6 - (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
   }
-  drawText(ctx, 'EIGHT GLENS  ·  ONE RECORD  ·  THE MAP IS THE SCORE', SW / 2, 187, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
+  const how = ui.touchVisible
+    ? 'HEADPHONES \u00b7 TOUCH: DRAG TO WALK \u00b7 BUTTONS: RUN, LISTEN, MAP, NOTES'
+    : 'HEADPHONES \u00b7 ARROWS/WASD WALK \u00b7 SHIFT RUN \u00b7 SPACE LISTEN \u00b7 M MAP \u00b7 L NOTES';
+  drawText(ctx, how, SW / 2, 182, PAL.waterInk, { font: 'small', align: 'center' });
+  drawText(ctx, 'EIGHT GLENS  \u00b7  ONE RECORD  \u00b7  THE MAP IS THE SCORE', SW / 2, 191, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
   ruler(ctx, 12, 205, SW - 24, 4, PAL.grid, 3, 2, 4);
   hline(ctx, 12, 205, SW - 24, PAL.grid);
 }
@@ -302,7 +306,9 @@ function select(env) {
     drawText(ctx, 'LOCKED', tx + THUMB_W / 2, ty + THUMB_H / 2 + 3, PAL.ink, { font: 'small', align: 'center' });
   }
   const cx = rx + rw / 2;
-  drawText(ctx, String(lv.subtitle || '').toUpperCase(), cx, 118, unlocked ? PAL.magenta : PAL.rock, { align: 'center', font: 'main' });
+  const subT = String(lv.subtitle || '').toUpperCase();
+  const subFont = measureText(subT, {}) <= rw - 8 ? 'main' : 'small';
+  drawText(ctx, subT, cx, subFont === 'main' ? 118 : 120, unlocked ? PAL.magenta : PAL.rock, { align: 'center', font: subFont, spacing: subFont === 'small' ? 1 : 0 });
   drawText(ctx, String(lv.name).toUpperCase(), cx, 130, unlocked ? PAL.ink : PAL.rock, { align: 'center', font: 'small', spacing: 1 });
   hline(ctx, rx + 10, 141, rw - 20, PAL.grid);
   // gate chain

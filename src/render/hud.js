@@ -38,7 +38,7 @@ function compass(ctx, x, y, heading) {
   px(ctx, cx, cy, PAL.ink);
 }
 
-export function drawStrip(ctx, st, ui) {
+export function drawStrip(ctx, st, ui, R) {
   const w = st.world, p = st.player, lv = (w && w.level) || st.level || {};
   rect(ctx, 0, 0, SCREEN_W, STRIP_H, PAL.paper);
   hline(ctx, 0, STRIP_H - 1, SCREEN_W, PAL.ink);
@@ -51,24 +51,33 @@ export function drawStrip(ctx, st, ui) {
   x += drawText(ctx, name, x, 2, PAL.ink, {}) + 6;
   const sub = String(lv.subtitle || '').toUpperCase();
   if (sub) drawText(ctx, sub, x, 4, PAL.contourIdx, { font: 'small' });
-  // right cluster (right to left)
-  let rx = SCREEN_W - 4;
+  // right cluster: kept clear of touch buttons, dropping the least important items if space is short
+  let rEnd = SCREEN_W - 4;
+  if (R && R.touchLeft) rEnd = Math.min(rEnd, R.touchLeft - 4);
+  const limit = x + (sub ? measureText(sub, { font: 'small' }) : 0) + 8;
   const phase = st.phase || 'day';
-  blit(ctx, timeSprite(phase), rx - 9, 2);
-  rx -= 9 + 6;
-  const brg = String(bearingDeg(p.heading || 0)).padStart(3, '0') + '°';
-  const bw = measureText(brg, {});
-  drawText(ctx, brg, rx - bw, 3, PAL.ink, {});
-  rx -= bw + 2;
-  compass(ctx, rx - 9, 2, p.heading || 0);
-  rx -= 9 + 8;
+  const brg = String(bearingDeg(p.heading || 0)).padStart(3, '0') + '\u00b0';
   const alt = `ALT ${Math.round(p.elevation || 0)}m`;
-  const aw = measureText(alt, {});
-  drawText(ctx, alt, rx - aw, 3, PAL.ink, {});
-  rx -= aw + 8;
   const ref = gridRef(w, p.x, p.y);
-  const rw = measureText(ref, {});
-  drawText(ctx, ref, rx - rw, 3, PAL.waterInk, {});
+  const items = {
+    ref: { w: measureText(ref, {}), draw: (X) => drawText(ctx, ref, X, 3, PAL.waterInk, {}) },
+    alt: { w: measureText(alt, {}), draw: (X) => drawText(ctx, alt, X, 3, PAL.ink, {}) },
+    brg: { w: 9 + 2 + measureText(brg, {}), draw: (X) => { compass(ctx, X, 2, p.heading || 0); drawText(ctx, brg, X + 11, 3, PAL.ink, {}); } },
+    time: { w: 9, draw: (X) => blit(ctx, timeSprite(phase), X, 2) },
+  };
+  const gap = 8;
+  let avail = rEnd - limit, use = [];
+  for (const k of ['ref', 'alt', 'brg', 'time']) {
+    const need = items[k].w + (use.length ? gap : 0);
+    if (need <= avail) { use.push(k); avail -= need; }
+  }
+  let rx = rEnd;
+  for (const k of ['time', 'brg', 'alt', 'ref']) {
+    if (!use.includes(k)) continue;
+    rx -= items[k].w;
+    items[k].draw(rx);
+    rx -= gap;
+  }
 }
 
 function drawMinimap(ctx, st, R) {
@@ -208,7 +217,7 @@ function drawResting(ctx, st, R) {
   const p = st.player;
   if (!p || !p.resting) return;
   const clock = R.clock || 0;
-  const w = 88, h = 27;
+  const w = 98, h = 27;
   const x = Math.round(SCREEN_W / 2 - w / 2), y = SCREEN_H - 3 - h;
   panel(ctx, x, y, w, h, {});
   // sun / moon arc
@@ -228,7 +237,7 @@ function drawResting(ctx, st, R) {
   // label
   const dots = '.'.repeat(1 + (Math.floor(clock * 2) % 3));
   drawText(ctx, 'LISTENING', x + 50, y + 6, PAL.ink, { font: 'small', spacing: 0 });
-  drawText(ctx, dots, x + 50 + 9 * 4, y + 6, PAL.magenta, { font: 'small' });
+  drawText(ctx, dots, x + 50 + 9 * 5 + 1, y + 6, PAL.magenta, { font: 'small' });
   drawText(ctx, 'TIME X8', x + 50, y + 15, PAL.contourIdx, { font: 'small' });
   // small blinking ear tick
   if (Math.floor(clock * 3) % 2 === 0) px(ctx, x + w - 5, y + 5, PAL.magenta);
@@ -277,21 +286,25 @@ function drawTouch(ctx, ui, R) {
     const sc = Math.max(1, Math.min(3, Math.floor((Math.min(w, h) - 4) / 9)));
     const ic = touchIcon(b.id, held ? PAL.snow : PAL.ink);
     ctx.drawImage(ic, Math.round(x + (w - 9 * sc) / 2), Math.round(y + (h - 9 * sc) / 2), 9 * sc, 9 * sc);
-    if (h >= 22 && (b.id === 'run' || b.id === 'rest')) drawText(ctx, b.id === 'run' ? 'RUN' : 'LISTEN', x + w / 2, y + h - 7, held ? PAL.snow : PAL.contourIdx, { font: 'small', align: 'center' });
+    if (h >= 22 && (b.id === 'run' || b.id === 'rest') && measureText(b.id === 'run' ? 'RUN' : 'LISTEN', { font: 'small' }) <= w - 4) drawText(ctx, b.id === 'run' ? 'RUN' : 'LISTEN', x + w / 2, y + h - 7, held ? PAL.snow : PAL.contourIdx, { font: 'small', align: 'center' });
   }
 }
 
 /** Full HUD. R = { mini, clock } from the renderer. */
 export function drawHud(ctx, st, ui, R) {
-  R.miniY = 0;
+  R.miniY = 0; R.touchLeft = 0;
   if (ui && ui.touchVisible && ui.touch && ui.touch.buttons && R.canvas && R.canvas.getBoundingClientRect) {
     const rc = R.canvas.getBoundingClientRect();
     if (rc.height) for (const b of ui.touch.buttons) {
       const bot = ((b.y + b.h) - rc.top) * (SCREEN_H / rc.height);
-      if (bot < SCREEN_H * 0.4) R.miniY = Math.max(R.miniY, Math.ceil(bot) + 4);
+      if (bot < SCREEN_H * 0.4) {
+        R.miniY = Math.max(R.miniY, Math.ceil(bot) + 4);
+        const lx = (b.x - rc.left) * (SCREEN_W / rc.width);
+        if (bot > 2 && (!R.touchLeft || lx < R.touchLeft)) R.touchLeft = Math.floor(lx);
+      }
     }
   }
-  drawStrip(ctx, st, ui);
+  drawStrip(ctx, st, ui, R);
   if (!ui || ui.showMinimap !== false) drawMinimap(ctx, st, R);
   drawChain(ctx, st, R);
   drawResting(ctx, st, R);
