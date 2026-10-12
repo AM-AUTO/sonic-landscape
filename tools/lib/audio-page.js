@@ -18,7 +18,7 @@ import { analyse, fft, spectralCentroid } from './wav.mjs';
 const SR = 44100;
 const UPDATE = 0.05;
 const DT = 1 / 60;
-const CODA = 20;
+const CODA = 34;           // the level-complete finale (~13 s), then 20 s of standing-still Drift
 const TAIL = 5;
 
 // ---- node creation counter (per-note graphs go through Scope)
@@ -193,6 +193,11 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   const mid = perSec.slice(3, Math.max(4, perSec.length - TAIL)).filter((v) => v > -80).sort((a, b) => a - b);
   const q = (p) => mid[Math.min(mid.length - 1, Math.floor(p * mid.length))];
   const dyn = mid.length ? q(0.95) - q(0.05) : 0;
+  const dynP = mid.length ? q(0.9) - q(0.1) : 0;
+
+  // the Drift coda: standing still after the finale (complete + 14 s … complete + 34 s)
+  let codaDb = -99;
+  if (ps.completeT) { const c0 = ps.completeT + 14, c1 = Math.min(buf.duration, ps.completeT + CODA); codaDb = analyse(channels, SR, c0, c1).rmsDb; }
 
   // artefact consequence: 6 s after vs 6 s before each full POI event
   const arts = [];
@@ -206,7 +211,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
       const ca = spectralCentroid(mono, SR, Math.floor(b0 * SR), Math.floor(b1 * SR));
       const dRms = after.rmsDb - before.rmsDb;
       const dCent = cb > 0 ? (ca - cb) / cb : 1;
-      arts.push({ t: +t.toFixed(2), type: ev.poi.type, id: ev.poi.id, full: ev.full, beforeSec: +(a1 - a0).toFixed(1), rmsBefore: +before.rmsDb.toFixed(2), rmsAfter: +after.rmsDb.toFixed(2), dRmsDb: +dRms.toFixed(2), centroidBefore: Math.round(cb), centroidAfter: Math.round(ca), dCentroidPct: +(dCent * 100).toFixed(1), pass: !ev.full || dRms >= 2 || Math.abs(dCent) >= 0.15 });
+      arts.push({ t: +t.toFixed(2), type: ev.poi.type, id: ev.poi.id, full: ev.full, beforeSec: +(a1 - a0).toFixed(1), rmsBefore: +before.rmsDb.toFixed(2), rmsAfter: +after.rmsDb.toFixed(2), dRmsDb: +dRms.toFixed(2), centroidBefore: Math.round(cb), centroidAfter: Math.round(ca), dCentroidPct: +(dCent * 100).toFixed(1), pass: !ev.full || dRms >= 4 || (dRms >= 2 && Math.abs(dCent) >= 0.3) });
     }
   }
 
@@ -229,7 +234,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     duration: +buf.duration.toFixed(2), simSeconds: +ps.simSeconds.toFixed(2), completeAt: ps.completeT ? +ps.completeT.toFixed(2) : null,
     wrongApproach: ps.wrong, planWarnings: ps.warnings, renderMs: Math.round(renderMs),
     peakDb: +total.peakDb.toFixed(2), rmsDb: +total.rmsDb.toFixed(2), nan: total.nan, silentPct: +((100 * silent) / wins).toFixed(2),
-    dynRangeDb: +dyn.toFixed(1), centroidMean: Math.round(centroidMean),
+    dynRangeDb: +dyn.toFixed(1), dynP90P10: +dynP.toFixed(1), codaDb: ps.completeT ? +codaDb.toFixed(1) : null, centroidMean: Math.round(centroidMean),
     rmsCurve: perSec,
     chroma: Array.from(ch, (v) => +v.toFixed(4)), chromaTop: names[top], rootTriad: triad.map((p) => names[p]), chromaInTriad: triad.includes(top),
     artefacts: arts, gameEvents,

@@ -31,7 +31,7 @@ const NOMINAL_DB = { trig: -15.5, cairn: -19.5, lochan: -20, waterfall: -18, bot
 /** bloom and settle: the foreground enters at full level, then hangs ~5 dB lower, with a modest lift for the closing gesture */
 const settle = (rel, dur) => {
   const down = smoothstep((rel - 2.5) / 5);
-  let g = lerp(1.0, 0.45, down);
+  let g = lerp(1.0, 0.32, down);
   const up = smoothstep((rel - (dur - 10)) / 4) * (1 - smoothstep((rel - (dur - 3)) / 3));
   return g + (0.85 - g) * up * 0.6;
 };
@@ -109,7 +109,7 @@ export class Artefacts {
     this.pieces = this.pieces.filter((p) => { if (p.partial && !p.ended) this._end(p, t, true); return !p.ended; });
     const P = new Piece(this, type, t, { dur: 4.6, partial: true, kind: 'partial' });
     const b = S.beat(), M = S.motif();
-    S.duckBed(0.2, 0.05, 2.8, 1.2, t);
+    S.duckBed(0.3, 0.05, 2.8, 1.2, t);
     // quarter-tone flat, voices dark
     P.at(0, () => {
       V.aBell.p.tune = -50; V.aPluck.p.tune = -50; V.aLead.p.tune = -50; V.eBell.p.tune = -50; V.aPad.p.tune = -50;
@@ -343,7 +343,7 @@ export class Artefacts {
     const cl = tot + 1.2 * b, cycles = 4, shifts = [0, 2, 1, 0];
     P.dur = clamp(cycles * cl + 3 * b + 7, 22, 44);
     P.flags.pulseHold = true;
-    duck(0.6, 0.05, P.dur - 9, 3.2);
+    duck(0.72, 0.05, P.dur - 9, 3.2);
     this._entry(P, { vel: 1, low: 'timp' });
     const onset = cum(M);
     for (let c = 0; c < cycles; c++) {
@@ -386,7 +386,7 @@ export class Artefacts {
     const { S, V, b, cpad, pluck, bell, kit, duck, lm, M, rootLow } = this._ctx(P);
     P.dur = 29;
     P.flags.pulseHold = true;
-    duck(0.58, 0.05, 20, 4);
+    duck(0.72, 0.05, 20, 4);
     const holds = [];
     P.state.count = 0; P.state.last = -9;
     const add = (t) => {
@@ -444,7 +444,7 @@ export class Artefacts {
     const tot = R.durations.reduce((a, d) => a + d, 0) * b * 1.6;
     P.dur = clamp(2.2 + 2 * b + 2 * tot + 7 * b + 2, 24, 38);
     P.flags.pulseHold = true;
-    duck(0.6, 0.06, P.dur - 9, 4);
+    duck(0.72, 0.06, P.dur - 9, 4);
     this._entry(P, { vel: 0.9, low: 'gong', swell: 1.4 });
     const pass = (start, shift, vel) => {
       for (let i = 0; i < R.degrees.length; i++) {
@@ -482,7 +482,7 @@ export class Artefacts {
     const { S, V, b, lead, bell, kit, duck, lm, M, rootLow } = this._ctx(P);
     P.dur = 22;
     P.flags.pulseHold = true;
-    duck(0.6, 0.05, 13.5, 4.5);
+    duck(0.72, 0.05, 13.5, 4.5);
     this._entry(P, { vel: 0.9, low: 'timp', pad: false, bells: false, swell: 2.0 });
     P.at(0, (t) => { kit('tomL', t + 0.1, 0.85, { midi: S.rootNow() - 12 }); });
     // falling bells under the roll
@@ -536,7 +536,7 @@ export class Artefacts {
     const { S, V, b, pluck, bell, pad, kit, duck, M, lm, rootLow, prof } = this._ctx(P);
     P.dur = clamp(22 * b + 6, 22, 36);
     P.flags.pulseHold = true;
-    duck(0.55, 0.06, P.dur - 9, 4);
+    duck(0.72, 0.06, P.dur - 9, 4);
     const relR = relativeMajorRoot(S.rootNow(), S.modeNow()) + 12;
     const center = prof.pad.center + S.keyShift;
     const prog = [[0, [0, 2, 4, 6]], [5, [0, 2, 4, 6]], [3, [0, 2, 4, 6]], [4, [0, 2, 4, 8]]];
@@ -588,7 +588,7 @@ export class Artefacts {
     const { S, V, b, bell, kit, duck, rootLow, lm, M, lead } = this._ctx(P);
     P.dur = 38;
     P.flags.pulseHold = true;
-    duck(0.62, 0.06, 28, 5);
+    duck(0.72, 0.06, 28, 5);
     const oct = MODES.octatonic;
     P.at(0, () => {
       V.aBell.p.kind = 'bowl'; V.aBell.p.decay = 11; V.aBell.p.beat = 1.2; V.aBell.p.indexEnd = 0.1; V.aBell.p.ratio = 2.003;
@@ -631,7 +631,7 @@ export class Artefacts {
     const { S, V, b, kit, lead, bell, duck, lm, M, rootLow } = this._ctx(P);
     P.dur = 21;
     P.flags.pulseHold = true;
-    duck(0.55, 0.04, 14, 3);
+    duck(0.72, 0.04, 14, 3);
     const sd = S.cond.stepDur;   // a 16th; the break runs at half that: 32nds, i.e. twice the speed
     const rng = S.rng;
     let pats = {};
@@ -692,7 +692,7 @@ export class Artefacts {
     const { S, V, b, kit, lead, bell, bass, pad, cpad, duck, lm, M, rootLow, prof } = this._ctx(P);
     const tot = M.durations.reduce((a, d) => a + d, 0) * b;
     P.dur = clamp(8 + 3 * (tot + 2 * b) + 8, 32, 44);
-    duck(0.56, 0.05, P.dur - 10, 5);
+    duck(0.72, 0.05, P.dur - 10, 5);
     const lyd = prof.id === 'nevis';
     P.at(0, (t) => { kit('crash', t, 1.0, { tone: 0.8, decay: 7 }); kit('timp', t, 1.0, { midi: S.rootNow() - 12, decay: 5 }); kit('gong', t, 0.6, { midi: S.rootNow() - 12, decay: 11 }); });
     P.at(1.8, () => { S.setKeyShift(2, P.t0 + 1.8); if (lyd) S.setModeOverride(MODES.lydian, P.t0 + 1.8); });
@@ -779,7 +779,7 @@ export class Artefacts {
     const { V, b, kit, lead, bell, pad, duck, lm, M, rootLow, cum } = this._ctx(P);
     const A = transformMotif(M, 'augment');
     const onset = cum({ durations: A.durations });
-    duck(0.42, 0.05, 7, 4);
+    duck(0.55, 0.05, 7, 4);
     P.at(0, (tt) => {
       kit('crash', tt, 0.95, { tone: 0.6, decay: 7 }); kit('gong', tt, 0.85, { midi: S.rootNow() - 12, decay: 13, tone: 0.5 });
       // tonic chord (voice-led pad, drone home, bass tonic)
@@ -806,32 +806,32 @@ export class Artefacts {
 
   _build_finale(P) {
     const { S, V, b, kit, lead, bell, pluck, bass, pad, cpad, duck, lm, rootLow } = this._ctx(P);
-    P.dur = 20;
-    duck(0.55, 0.05, 13, 5);
-    P.at(0, (t) => { kit('reverseSwell', t, 0.8, { length: 2.4, tone: 0.8 }); kit('breath', t, 0.4, { length: 2.2, tone: 0.6, pitch: 1.2 }); kit('gong', t, 0.5, { midi: S.rootNow() - 12, decay: 10, tone: 0.5 }); });
-    P.at(2.4, (t) => {
-      kit('crash', t, 1.0, { tone: 0.8, decay: 8 }); kit('gong', t, 0.9, { midi: S.rootNow() - 12, decay: 14 });
-      kit('timp', t, 1.0, { midi: S.rootNow() - 12, decay: 5 });
+    P.dur = 13;
+    duck(0.6, 0.05, 8, 4);
+    P.at(0, (t) => { kit('reverseSwell', t, 0.8, { length: 1.8, tone: 0.8 }); kit('breath', t, 0.4, { length: 1.6, tone: 0.6, pitch: 1.2 }); kit('gong', t, 0.5, { midi: S.rootNow() - 12, decay: 10, tone: 0.5 }); });
+    P.at(1.8, (t) => {
+      kit('crash', t, 1.0, { tone: 0.8, decay: 6 }); kit('gong', t, 0.9, { midi: S.rootNow() - 12, decay: 12 });
+      kit('timp', t, 1.0, { midi: S.rootNow() - 12, decay: 4 });
       S._applyChord(S.profile.chords[0], t, { reason: 'finale' });
-      pad(S.chordTonesForPad(0, [0, 2, 4, 8]), t, 12, 0.85); bass(rootLow(), t, 10, 0.8);
+      pad(S.chordTonesForPad(0, [0, 2, 4, 8]), t, 8, 0.85); bass(rootLow(), t, 7, 0.8);
     });
     // rising arpeggio of the tonic chord across three octaves
     const arp = [0, 2, 4, 7, 9, 11, 14, 16];
     arp.forEach((d, i) => {
-      P.at(2.6 + i * 0.17, (t) => { pluck(lm(d, 0), t, 1.5, 0.55 + 0.04 * i); bell(lm(d, 1), t + 0.02, 4, 0.3 + 0.04 * i); });
+      P.at(2.0 + i * 0.17, (t) => { pluck(lm(d, 0), t, 1.5, 0.55 + 0.04 * i); bell(lm(d, 1), t + 0.02, 4, 0.3 + 0.04 * i); });
     });
     // the motif whole, in octaves
     const M = CONTOUR_MOTIF;
     M.forEach((d, i) => {
-      P.at(4.8 + i * b, (t) => { lead(lm(d, 0), t, b * 0.95, 0.88); bell(lm(d, 2), t, 3, 0.4); let bm = S.midi(d, -24); while (bm < 28) bm += 12; bass(bm, t, b * 0.95, 0.8); });
+      P.at(3.4 + i * b * 0.9, (t) => { lead(lm(d, 0), t, b * 0.85, 0.88); bell(lm(d, 2), t, 3, 0.4); let bm = S.midi(d, -24); while (bm < 28) bm += 12; bass(bm, t, b * 0.85, 0.8); });
     });
-    P.at(4.8 + 5 * b + 0.2, (t) => { lead(lm(0, 1), t, 8, 0.85); bell(lm(0, 2), t, 10, 0.5); cpad(S.chordTonesForPad(0, [0, 2, 4]).map((m) => m + 12), t, 10, 0.6); kit('crash', t, 0.7, { tone: 0.6, decay: 9 }); });
+    P.at(3.4 + 4.5 * b + 0.2, (t) => { lead(lm(0, 1), t, 5, 0.85); bell(lm(0, 2), t, 8, 0.5); cpad(S.chordTonesForPad(0, [0, 2, 4]).map((m) => m + 12), t, 6, 0.5); kit('crash', t, 0.6, { tone: 0.6, decay: 6 }); });
     P.mods((rel) => {
-      const w = env(rel, 3, 14, 6);
+      const w = env(rel, 2, 7, 5);
       return {
-        reverbSize: { v: 16, w }, reverbWet: 1 + 0.25 * w, delayFb: { v: 0.6, w }, freeze: rel > 8 && rel < 17,
-        gran: { pitch: { v: 12, w }, mix: { v: 1.2, w }, density: { v: 30, w }, size: { v: 0.4, w }, spray: { v: 5, w }, reverse: { v: 0.4, w }, feedback: { v: 0.4, w } },
-        energyFloor: 0.85 * ramp(rel, 1.8, 2.8) * (1 - ramp(rel, 8, 11)), masterDrive: 0.08 * w,
+        reverbSize: { v: 13.5, w }, reverbWet: 1 + 0.15 * w, delayFb: { v: 0.55, w }, freeze: rel > 5.5 && rel < 11,
+        gran: { pitch: { v: 12, w }, mix: { v: 0.9, w }, density: { v: 26, w }, size: { v: 0.4, w }, spray: { v: 5, w }, reverse: { v: 0.4, w }, feedback: { v: 0.36, w } },
+        energyFloor: 0.8 * ramp(rel, 1.2, 2.0) * (1 - ramp(rel, 5, 8)), masterDrive: 0.06 * w,
       };
     });
   }

@@ -9,9 +9,11 @@
 //                               [--stroll]  (diagnostic: walk instead of run between waypoints)
 //                               [--idle N]  (diagnostic: stand still for N s from the spawn instead of walking — Eno / Drift check)
 //
-// FAILS (exit 1) if: any NaN; peak > -0.3 dBFS; > 5 % silent 100 ms windows (< -60 dBFS); a full artefact changes
-// neither +2 dB RMS nor 15 % spectral centroid versus the preceding 6 s; the chroma's top pitch class is outside the
-// level's root triad; (full album only) the union parameter-audit dead list is not empty; or any console error.
+// FAILS (exit 1) if: any NaN; peak > -0.3 dBFS; > 5 % silent 100 ms windows (< -60 dBFS); a full artefact rises < +4 dB RMS
+// versus the preceding 6 s AND is not (>= +2 dB with >= 30 % spectral-centroid change); P90 - P10 of the 1 s RMS curve < 14 dB;
+// the Drift coda (20 s of standing still after the finale) is above -24 dBFS; assynt's mean RMS is above -21 dBFS; the chroma's
+// top pitch class is outside the level's root triad; (full album) the union parameter-audit dead list is not empty; the level
+// hand-over glitches; or any console error.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +31,7 @@ const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : nu
 
 const IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
 const switchOnly = flag('--switch-only');
+const idleRun = !!val('--idle') || flag('--stems');
 const levels = switchOnly ? [] : (val('--level') ? val('--level').split(',') : IDS);
 const seconds = val('--seconds') ? Number(val('--seconds')) : null;
 const tag = val('--tag') ? '.' + val('--tag') : '';                       // file-name suffix for diagnostic renders
@@ -127,6 +130,11 @@ try {
     if (!(r.peakDb <= -0.3)) failures.push(`${id}: peak ${r.peakDb} dBFS > -0.3`);
     if (r.silentPct > 5) failures.push(`${id}: ${r.silentPct}% silent 100 ms windows (> 5%)`);
     for (const a of r.artefacts) if (a.full && !a.pass) failures.push(`${id}: artefact ${a.type}@${a.t}s weak (dRMS ${a.dRmsDb} dB, dCentroid ${a.dCentroidPct}%)`);
+    if (!idleRun) {
+      if (r.dynP90P10 < 14) failures.push(`${id}: dynamics P90-P10 of 1 s RMS is ${r.dynP90P10} dB (< 14)`);
+      if (r.codaDb !== null && r.codaDb > -24) failures.push(`${id}: Drift coda ${r.codaDb} dBFS (> -24)`);
+      if (id === 'assynt' && r.rmsDb > -21) failures.push(`assynt: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
+    }
     if (!r.chromaInTriad) failures.push(`${id}: chroma top ${r.chromaTop} not in root triad ${r.rootTriad.join('-')}`);
   }
 
@@ -143,11 +151,11 @@ try {
   // ---- summary
   const f = (v, w, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : String(v)).padStart(w);
   console.log('\nALBUM RENDER');
-  console.log('level'.padEnd(10) + 'key'.padEnd(10) + 'bpm'.padStart(4) + 'dur'.padStart(6) + 'peak'.padStart(7) + 'rms'.padStart(7) + 'dyn'.padStart(6) + 'sil%'.padStart(6) + 'cent'.padStart(6) + '  chroma(top|triad)'.padEnd(22) + 'nodes/s'.padStart(10) + ' art(min dRMS/dCent)');
+  console.log('level'.padEnd(10) + 'key'.padEnd(10) + 'bpm'.padStart(4) + 'dur'.padStart(6) + 'peak'.padStart(7) + 'rms'.padStart(7) + 'p90-10'.padStart(7) + 'coda'.padStart(6) + 'sil%'.padStart(6) + 'cent'.padStart(6) + '  chroma(top|triad)'.padEnd(22) + 'nodes/s'.padStart(10) + ' art(min dRMS/dCent)');
   for (const r of results) {
     const fulls = r.artefacts.filter((a) => a.full);
     const minA = fulls.length ? fulls.map((a) => `${a.type}:${a.dRmsDb >= 0 ? '+' : ''}${a.dRmsDb.toFixed(1)}dB/${a.dCentroidPct >= 0 ? '+' : ''}${a.dCentroidPct.toFixed(0)}%`).join(' ') : '-';
-    console.log(r.id.padEnd(10) + (r.root + ' ' + r.mode).padEnd(10) + f(r.bpm, 4, 0) + f(r.duration, 6, 0) + f(r.peakDb, 7) + f(r.rmsDb, 7) + f(r.dynRangeDb, 6) + f(r.silentPct, 6) + f(r.centroidMean, 6, 0) + ('  ' + r.chromaTop + '|' + r.rootTriad.join('-')).padEnd(22) + (f(r.nodes.perSecMean, 4, 0) + '/' + String(r.nodes.perSecMedian).padStart(3)).padStart(10) + ' ' + minA);
+    console.log(r.id.padEnd(10) + (r.root + ' ' + r.mode).padEnd(10) + f(r.bpm, 4, 0) + f(r.duration, 6, 0) + f(r.peakDb, 7) + f(r.rmsDb, 7) + f(r.dynP90P10, 7) + f(r.codaDb ?? NaN, 6) + f(r.silentPct, 6) + f(r.centroidMean, 6, 0) + ('  ' + r.chromaTop + '|' + r.rootTriad.join('-')).padEnd(22) + (f(r.nodes.perSecMean, 4, 0) + '/' + String(r.nodes.perSecMedian).padStart(3)).padStart(10) + ' ' + minA);
   }
 
   // ---- audit (union over levels)

@@ -27,6 +27,15 @@ import { Artefacts } from './artefacts.js';
 
 const GRID_CELLS = 25;
 const TAU = Math.PI * 2;
+const CEILING_DB = -13.5;      // sustained long-term level the leveler will not let the mix exceed
+/** the bed's own level against its section: ebb is a whisper, flow sits back, only swell is full (dB, vs the swell reference) */
+const BED_CURVE = [[0, -12], [0.25, -9], [0.45, -5], [0.7, -1.5], [1, 0]];
+function bedCurveDb(e) {
+  for (let i = 1; i < BED_CURVE.length; i++) {
+    if (e <= BED_CURVE[i][0]) { const [x0, y0] = BED_CURVE[i - 1], [x1, y1] = BED_CURVE[i]; return y0 + (y1 - y0) * ((e - x0) / (x1 - x0)); }
+  }
+  return 0;
+}
 const BUDGET_RATE = 30, BUDGET_MAX = 80;
 const HIT_COST = { kick: 15, snare: 22, rim: 9, clap: 16, hatC: 12, hatO: 14, ride: 18, crash: 20, tomL: 12, tomM: 12, tomH: 12, timp: 18, gong: 40, click: 7, snap: 9, grainBurst: 35, breath: 7, reverseSwell: 12, metal: 10, shaker: 6 };
 const STRUCTURAL = new Set(['crash', 'gong', 'timp', 'reverseSwell']);          // always sound
@@ -81,7 +90,7 @@ export class Score {
     this.prox = {};      // type → closeness 0..1
     this.proxMax = 0;
     this.heardPow = 1e-3; this.heardDb = -30; this.rawPow = 0; this.levelHoldUntil = 0;
-    this.lvPow = Math.pow(10, -18.5 / 10); this.trimDb = 0; this._lvBuf = null; this.gainNow = 1; this.gainNom = 1;
+    this.lvPow = Math.pow(10, -24 / 10); this.trimDb = 0; this._lvBuf = null; this.gainNow = 1; this.gainNom = 1;
     this.lastNow = null; this.lastCtl = -1; this.lastFxSlow = -99; this.lastReverbT = -99; this.lastReverbSize = 0; this.lastDelayTime = 0;
     this.lastPingPong = null; this.lastScaleKey = ''; this.frozen = false;
     this.fragments = []; this.resonance = []; this.state = null;
@@ -191,7 +200,7 @@ export class Score {
     this.cond.snapTempo(prof.bpm, prof.swing, prof.phraseBars);
     this.cond.reset();
     this.gens = kitGens(prof).map((spec) => new PatternGen(spec, this.rng));
-    this.bassGen = new PatternGen({ h: 'bass', flow: { p: 0.85, k: [3, 4], rot: [0, 3, 6] }, swell: { p: 0.9, k: [5, 6, 7], rot: [0, 2] } }, this.rng);
+    this.bassGen = new PatternGen({ h: 'bass', flow: { p: 0.5, k: [2, 3], rot: [0, 3, 6] }, swell: { p: 0.9, k: [5, 6, 7], rot: [0, 2] } }, this.rng);
     this.terraced = !!prof.terraced;
     this.markov = new MelodyMarkov(this.rng, { center: Math.floor(prof.lead.span / 2), span: prof.lead.span });
     const dens = prof.ticks.density;
@@ -204,7 +213,7 @@ export class Score {
     this.padPrev = null; this.lastPadBar = -99; this.altOct = 0;
     this.ghostIdx = 0; this.nextGhostPhrase = 2;
     this.lastLeadT = -99;
-    this.lvPow = Math.pow(10, (-18.5 + (prof.loud || 0)) / 10);
+    this.lvPow = Math.pow(10, -24 / 10);
     this.initChord = true;
     this.lastScaleKey = '';
     this.art.reset();
@@ -348,13 +357,13 @@ export class Score {
     const q = this.cond.quantise(now + 0.02);
     const sec = this.cond.section;
     // rate-limit by section and a leaky bucket so a steep descent doesn't machine-gun
-    this.tickBudget = Math.min(3, this.tickBudget + (now - (this._lastTickBudgetT ?? now)) * (sec === 'ebb' ? 1.2 : sec === 'flow' ? 1.8 : 2.6));
+    this.tickBudget = Math.min(3, this.tickBudget + (now - (this._lastTickBudgetT ?? now)) * (sec === 'ebb' ? 0.35 : sec === 'flow' ? 0.8 : 2.0));
     this._lastTickBudgetT = now;
     const dens = this.profile.ticks.density;
     const slot = this.pendingTicks.get(q.step);
     if (slot) { slot.bright = Math.min(1, slot.bright + 0.3); return; }
     if (q.step === this.lastTickStep) { this.carryBright = Math.min(1, this.carryBright + 0.25); return; }
-    if (this.tickBudget < 1 || this.rng.float() > (0.35 + 0.65 * dens) * (this.C.d > 0.5 ? 0.3 : 1) * (this.art.activeCount ? 0.3 : 1)) { this.carryBright = Math.min(1, this.carryBright + 0.1); return; }
+    if (this.tickBudget < 1 || this.rng.float() > (0.2 + 0.5 * dens) * (this.C.d > 0.5 ? 0.25 : 1) * (this.art.activeCount ? 0.3 : 1)) { this.carryBright = Math.min(1, this.carryBright + 0.1); return; }
     this.tickBudget -= 1;
     const item = { idx: ev.index, speed: ev.speed, bright: this.carryBright, t: q.t };
     this.carryBright = 0;
@@ -400,6 +409,8 @@ export class Score {
 
   _leadFromContour(ev, now) {
     const L = this.profile.lead, C = this.C;
+    // leave air: one bed-lead phrase per ~1.5 bars at most; crossings in between become quiet bell ticks
+    if (now - this.lastLeadT < this.cond.barDur * 1.5) { this._queueTick(ev, now); return; }
     const h = Math.round(ev.index / 5);
     const span = L.span;
     const deg = ((h % span) + span) % span;
@@ -420,7 +431,7 @@ export class Score {
     // ascent bookkeeping: arm the Markov continuation
     this.ascentCount = (now - this.lastMajorT < 10 ? this.ascentCount : 0) + 1;
     this.lastMajorT = now;
-    this.cont = { left: ev.dir > 0 ? 3 : 2, dir: ev.dir, notBefore: t + b * 1.5 };
+    this.cont = { left: ev.dir > 0 ? 2 : 1, dir: ev.dir, notBefore: t + b * 3 };
   }
 
   // -------- grid → chord
@@ -521,15 +532,17 @@ export class Score {
 
   // -------- ground sounds
   _footstep(ev, now) {
-    if (this.C.d > 0.3) return;
+    if (this.C.d > 0.3 || this.cond.section === 'ebb') return;
     if (now - this.lastFootT < 0.2) return;
+    this._stepN = (this._stepN || 0) + 1;
+    if (this._stepN % 3 !== 0) return;                                  // every third step: a trace of ground, not a metronome
     this.lastFootT = now;
     const ck = this.cov.key;
     const run = this.C.v > 0.6;
     if (ev.foot === 1 && (run || this.rng.chance(0.5))) return;      // thin the steps: mostly the left foot
     const q = this.cond.quantise(now + 0.01);
     const t = (q.t - now) < 0.04 ? q.t : now + 0.01;
-    const vel = 0.09 + 0.09 * this.C.v + 0.04 * this.rng.float();
+    const vel = 0.06 + 0.06 * this.C.v + 0.03 * this.rng.float();
     if (ck === 'scree' || ck === 'snow') {
       this.hit('snap', t, vel * 1.4, { tone: ck === 'snow' ? 0.8 : 0.35, decay: 0.01 + 0.008 * this.rng.float(), pitch: ck === 'snow' ? 1.3 : 0.9 });
     } else if (ck === 'shallow' || ck === 'deep') {
@@ -664,14 +677,14 @@ export class Score {
 
     // ---- melodic continuation while ascending/descending
     if (this.cont.left > 0 && s.t >= this.cont.notBefore && (s.i16 & 1) === 0 && C.d < 0.5 && !this.art.activeCount) {
-      if (rng.chance(0.55)) {
+      if (rng.chance(0.4)) {
         const deg = this.markov.next({ dir: this.cont.dir * 0.8, isChord: (d) => this.isChordTone(this._leadMidi(d)) });
         const midi = this._leadMidi(deg);
         const b = this.beat();
         this.stage.v.lead.note(midi, this.at(humanise(s.t, sd, rng, 0.05, this.now)), b * (0.7 + 0.6 * rng.float()), 0.42 + 0.15 * rng.float());
         this.count('notes', 'lead');
         this.cont.left--;
-        this.cont.notBefore = s.t + b * (1 + rng.float());
+        this.cont.notBefore = s.t + b * (2 + 2 * rng.float());
       }
     }
 
@@ -682,7 +695,7 @@ export class Score {
     this.art.onStep(s, this.prox);
 
     // ---- autonomous motif quote at long phrase boundaries (the album's binding thread)
-    if (s.isPhraseStart && s.phrase % 4 === 3 && sec !== 'swell' && rng.chance(0.4 + 0.4 * C.d)) this._quoteMotif(s);
+    if (s.isPhraseStart && s.phrase % 4 === 3 && sec !== 'swell' && rng.chance(0.25 + 0.4 * C.d)) this._quoteMotif(s);
   }
 
   _kitStep(s, pulse) {
@@ -704,7 +717,7 @@ export class Score {
         continue;
       }
       if (spec.hats && !running && (s.i16 & 1)) continue;                     // running doubles the hat grid
-      p = cfg.p * spec.favour * dens;
+      p = cfg.p * spec.favour * dens * (sec === 'swell' ? 1 : sec === 'flow' ? 0.5 : 0.45);
       if (spec.slope) p *= 1 + spec.slope * (C.s * 1.6 - 0.3);
       if (spec.speed) p *= 1 + spec.speed * (C.v - 0.4);
       if (spec.scree) p *= 1 + spec.scree * C.scree * 1.5 * (1 + C.slide);
@@ -781,10 +794,10 @@ export class Score {
 
   _loops(s) {
     const prof = this.profile, rng = this.rng, C = this.C, sec = s.section, V = this.stage.v;
-    const pOn = { ebb: 0.9, flow: 0.55, swell: 0.25 }[sec] * (1 + 0.5 * C.d);
+    const pOn = { ebb: 0.55, flow: 0.3, swell: 0.12 }[sec] * (1 + 0.6 * C.d);
     for (const lp of this.loops) {
       if (s.t < lp.next) continue;
-      const per = lp.period * (C.d > 0.4 ? 0.62 : 1) * (0.8 + 0.45 * rng.float());
+      const per = lp.period * 1.4 * (C.d > 0.4 ? 0.8 : 1) * (0.8 + 0.45 * rng.float());
       lp.next = s.t + per;
       if (rng.float() > Math.min(1, pOn)) continue;
       const pcs = this.chordPcs();
@@ -857,7 +870,7 @@ export class Score {
     const tc = A.fast ? 0.25 : 0.6;
 
     // --- channels: all ten parameters, baseline from the level's colouring
-    const bedMul = Math.pow(10, (prof.bedDb || 0) / 20);
+    const bedMul = Math.pow(10, ((prof.bedDb || 0) + bedCurveDb(C.e)) / 20);
     for (const name of CHANNEL_NAMES) {
       const o = applyChannelMods(channelTarget(name, this.base[name], C, prof), name, A);
       if (bedMul !== 1 && !FRONT_CHANNELS.includes(name)) o.gain *= bedMul;
@@ -875,7 +888,7 @@ export class Score {
 
     // --- voices: altitude / drift / cover → drone & texture
     const dp = prof.drone;
-    const dCut = lerp(dp.cut[0], dp.cut[1], C.a) * (1 + 1.6 * C.d) * (1 - 0.35 * C.bog) * (1 + 0.25 * C.w - 0.25 * C.n) * ((A.drone && A.drone.cutMul) || 1);
+    const dCut = lerp(dp.cut[0], dp.cut[1], C.a) * (1 + 0.7 * C.d) * (1 - 0.35 * C.bog) * (1 + 0.25 * C.w - 0.25 * C.n) * ((A.drone && A.drone.cutMul) || 1);
     if (this.drone && this.drone.running) {
       // the foundation breathes: two slow incommensurate swells (≈41 s and ≈17 s), deeper while the land plays itself
       const breath = 1 + (0.22 + 0.22 * C.d) * Math.sin((TAU * now) / 41) + 0.1 * Math.sin((TAU * now) / 17 + 1);
@@ -893,8 +906,8 @@ export class Score {
       let tx = textureFor(prof, this.cov.key);
       let kind = tx.kind, level = tx.level, tone = tx.tone;
       if (A.texture) { kind = A.texture.kind ?? kind; level = ovr(level, A.texture.level); tone = ovr(tone, A.texture.tone); }
-      level *= (0.85 + 0.5 * C.d) * (1 - 0.35 * C.sw) * (1 + 0.5 * C.slide);
-      tone = clamp(tone + 0.15 * C.w - 0.15 * C.n, 0, 1);
+      level *= (0.6 + 0.3 * C.d) * (1 - 0.35 * C.sw) * (1 + 0.5 * C.slide) * (1 + 0.45 * Math.sin((TAU * now) / 13) + 0.25 * Math.sin((TAU * now) / 7.3 + 1));   // quiet, and always moving
+      tone = clamp(tone + 0.15 * C.w - 0.15 * C.n + 0.18 * Math.sin((TAU * now) / 19 + 2), 0, 1);
       const patch = { level: clamp(level, 0, 1.4), tone };
       if (kind !== tex.p.kind && now - this.cov.lastTexChange > (A.texture && A.texture.kind ? 0.3 : 6)) { patch.kind = kind; this.cov.lastTexChange = now; }
       tex.set(patch, now);
@@ -946,11 +959,12 @@ export class Score {
     const p = e / buf.length / (g * g);
     if (Number.isFinite(p)) this.lvPow += (p - this.lvPow) * (1 - Math.exp(-dt / (p > this.lvPow ? 9 : 16)));
     const db = 10 * Math.log10(this.lvPow + 1e-12) + 20 * Math.log10(this.gainNom || 1);
-    const target = -18.5 + (this.profile.loud || 0);
+    const target = CEILING_DB + (this.profile.loud || 0);
     this.measuredDb = db;
+    // a ceiling, never a lift: only sustained loudness above the target is eased down, and not while an artefact sounds
     let want = now - this.levelStartT > 5 ? clamp(target - db, -7, 0) : 0;
-    if (now < this.levelHoldUntil && want < this.trimDb) want = this.trimDb;          // an artefact's entry is not to be leveled away
-    this.trimDb += (want - this.trimDb) * (1 - Math.exp(-dt / (want < this.trimDb ? 5 : 8)));
+    if ((this.art.activeCount || now < this.levelHoldUntil) && want < this.trimDb) want = this.trimDb;
+    this.trimDb += (want - this.trimDb) * (1 - Math.exp(-dt / (want < this.trimDb ? 5 : 6)));
     return this.trimDb;
   }
 

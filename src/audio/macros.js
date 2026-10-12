@@ -213,6 +213,8 @@ export function applyChannelMods(o, name, A) {
 }
 
 const ease = (x) => x * x * (3 - 2 * x);
+/** how much of the top end the mix lets through: dark in ebb and drift, open in swell */
+const smoothAir = (e, d) => ease(clamp(e / 0.6, 0, 1)) * (1 - 0.7 * d);
 
 /** reverb sizes are quantised to a coarse ladder: each new size costs a convolver rebuild, so the room changes in few, deliberate steps */
 const SIZE_LADDER = [1.5, 2.5, 4, 6, 8.5, 11, 13.5, 16];
@@ -284,7 +286,7 @@ export function fxTargets(fx, C, A, beatSec, section) {
   const master = {
     drive: Math.min(0.3, lerp(m.drive[0], m.drive[1], sw) + (A.masterDrive || 0)),
     lowCut: lerp(lerp(m.lowCut[0], m.lowCut[1], clamp(e * 0.6 + 0.2, 0, 1)), m.lowCut[0], d),
-    highCut: ovr(lerp(m.highCut[0], m.highCut[1], clamp(0.3 + a * 0.35 + w * 0.25 - n * 0.25 + snow * 0.1 - bog * 0.2, 0, 1)), A.highCut),
+    highCut: ovr(lerp(m.highCut[0], m.highCut[1], clamp(0.3 + a * 0.35 + w * 0.25 - n * 0.25 + snow * 0.1 - bog * 0.2, 0, 1)) * lerp(m.dark ?? 0.5, 1, smoothAir(e, d)), A.highCut),
     gain: (1 + 0.05 * e - 0.1 * d) * (A.gain ?? 1),
   };
   master.lowCut = ovr(master.lowCut, A.lowCut);

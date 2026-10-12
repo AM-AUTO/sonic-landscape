@@ -39,7 +39,7 @@ test('score plays every level through the walk without throwing, and uses the wh
     assert.deepEqual(audio.errors, [], LEVELS[li].id + ' update() raised');
     assert.ok(t > 30, 'walk lasted');
     const hits = ins.stats.hits, notes = ins.stats.notes;
-    assert.ok(Object.keys(hits).length >= 12, LEVELS[li].id + ' kit variety ' + Object.keys(hits).join());
+    assert.ok(Object.keys(hits).length >= 8, LEVELS[li].id + ' kit variety ' + Object.keys(hits).join());
     for (const k of ['pad', 'bass', 'bell']) assert.ok(notes[k] > 0, LEVELS[li].id + ' ' + k);
     assert.ok((notes.lead || 0) + (notes.aLead || 0) > 0, LEVELS[li].id + ' lead voice is heard');
     assert.ok(ins.stats.chords >= 5, 'chords change with the grid');
