@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CONTOURS render preview</title>
+<style>
+  html, body { margin: 0; background: #20263a; color: #f2ead3; font: 12px monospace; }
+  canvas { image-rendering: pixelated; display: block; }
+  #log { padding: 6px; white-space: pre; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="384" height="216"></canvas>
+<div id="log">render-preview: drive me with window.P (see tools/render-preview.mjs)</div>
+<script type="module">
+import { COVER, CELL_PX, MAP_SIZE, dayPhase } from '/src/world/codes.js';
+import { buildMockWorld } from '/tools/mock-world.js';
+
+const log = (...a) => { document.getElementById('log').textContent += '\n' + a.join(' '); };
+const canvas = document.getElementById('screen');
+let renderer = null;
+let world = null;
+let real = null;
+
+async function loadReal() {
+  if (real !== null) return real;
+  try {
+    const t = await import('/src/world/terrain.js');
+    const l = await import('/src/world/levels/index.js');
+    real = { buildWorld: t.buildWorld, LEVELS: l.LEVELS };
+  } catch (e) { real = false; log('real world unavailable:', e.message); }
+  return real;
+}
+
+function scaled(src, sx, sy, sw, sh, scale) {
+  const c = document.createElement('canvas');
+  c.width = sw * scale; c.height = sh * scale;
+  const x = c.getContext('2d');
+  x.imageSmoothingEnabled = false;
+  x.drawImage(src, sx, sy, sw, sh, 0, 0, sw * scale, sh * scale);
+  return c.toDataURL('image/png');
+}
+
+function makeState(w, o = {}) {
+  let pos = o.pos || { x: w.spawn.x, y: w.spawn.y };
+  if (o.at) {
+    const poi = w.pois.find((q) => q.type === o.at);
+    if (poi) pos = { x: poi.x + (o.dx || 0), y: poi.y + (o.dy || 0) };
+  }
+  const tod = o.tod ?? 0.3;
+  const hdg = o.heading ?? 0;
+  if (o.onCover) {
+    const want = COVER[o.onCover];
+    let best = null, bd = 1e9;
+    for (let y = 2; y < w.size - 2; y++) for (let x = 2; x < w.size - 2; x++) {
+      if (w.cover[y * w.size + x] !== want) continue;
+      // want a spot whose 5x5 neighbourhood is mostly the same cover (not a sliver)
+      let n = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (w.cover[(y + dy) * w.size + x + dx] === want) n++;
+      if (n < 20) continue;
+      const d = Math.hypot(x - pos.x, y - pos.y);
+      if (d < bd) { bd = d; best = { x: x + 0.5, y: y + 0.5 }; }
+    }
+    if (best) pos = best;
+  }
+  const cover = w.coverAt(pos.x, pos.y);
+  const speed = o.speed ?? 0;
+  const st = {
+    t: o.t ?? 12, dt: 1 / 60, levelIndex: w.level.index || 0, level: w.level, world: w,
+    player: {
+      x: pos.x, y: pos.y, vx: Math.cos(hdg) * speed, vy: Math.sin(hdg) * speed, speed, heading: hdg,
+      elevation: w.heightAt(pos.x, pos.y), vz: 0, slope: w.slopeAt(pos.x, pos.y), cover,
+      moving: speed > 0.3, still: speed > 0.3 ? 0 : 3, running: speed > 6, resting: false, sliding: !!o.sliding,
+      contourIndex: Math.floor(w.heightAt(pos.x, pos.y) / w.contourInterval),
+    },
+    timeOfDay: tod, phase: dayPhase(tod), events: [],
+    proximity: (o.proximity || []).map((id) => { const poi = w.pois.find((p) => p.id === id || p.type === id); return { poi, dist: Math.hypot(poi.x - pos.x, poi.y - pos.y) }; }),
+    resonance: (o.resonance || []).map((type, i) => ({ poiId: 'r' + i, type, t0: 0, strength: 1 - i * 0.28 })),
+    gateOpen: !!o.gateOpen,
+    chainProgress: w.gate.chain.map((type, i) => ({ type, resonating: i < (o.chainLit ?? 0) })),
+    fragments: o.fragments || [], discovered: (o.discovered || []).map((t) => (w.pois.find((p) => p.type === t) || {}).id).filter(Boolean),
+    levelComplete: false,
+  };
+  return st;
+}
+
+window.P = {
+  async setWorld(spec) {
+    const [src, key] = spec.split(':');
+    if (src === 'real') {
+      const r = await loadReal();
+      if (!r) return { error: 'no real world' };
+      const t0 = performance.now();
+      world = r.buildWorld(r.LEVELS[+key]);
+      log('buildWorld', key, Math.round(performance.now() - t0), 'ms');
+    } else world = buildMockWorld(key);
+    window.world = world;
+    return { name: world.level.name, minH: world.minH, maxH: world.maxH, levels: real ? real.LEVELS.length : 0 };
+  },
+  async realLevels() { const r = await loadReal(); return r ? r.LEVELS.length : 0; },
+  async bake() {
+    const m = await import('/src/render/mapbake.js');
+    const t0 = performance.now();
+    const c = m.bakeMap(world);
+    window.baked = c;
+    return { ms: performance.now() - t0, bakeMs: c.bakeMs, prof: c.bakeProfile };
+  },
+  bakeCrop(x, y, w, h, scale) { return scaled(window.baked, x, y, w, h, scale); },
+  async overview(n, grid) {
+    const m = await import('/src/render/mapbake.js');
+    const c = m.bakeOverview(world, n, { grid });
+    return scaled(c, 0, 0, n, n, Math.max(1, Math.floor(432 / n)));
+  },
+  async initRenderer() {
+    const m = await import('/src/render/renderer.js');
+    renderer = m.createRenderer(canvas);
+    window.renderer = renderer;
+    return true;
+  },
+  async useWorldInRenderer() {
+    const t0 = performance.now();
+    renderer.setWorld(world);
+    return performance.now() - t0;
+  },
+  /** draw one frame and return it scaled up */
+  frame(spec, scale = 3) {
+    const { state, ui, pre = [] } = spec;
+    const st = state === null ? null : makeState(world, state || {});
+    if (spec.fresh !== false) { const R = renderer._R; R.cam.ready = false; R.flashes.length = 0; R.ripples.length = 0; R.pulses.length = 0; R.trail.length = 0; R.lastNow = null; }
+    for (const p of pre) {
+      if (p.op === 'flash') renderer.flashContour(p.index != null ? p.index : st.player.contourIndex, 0);
+      if (p.op === 'rippleAtPlayer') renderer.ripple(st.player.x, st.player.y, 0, p.color);
+      if (p.op === 'ripple') renderer.ripple(p.x, p.y, 0, p.color);
+      if (p.op === 'pulse') renderer.pulse(p.type);
+    }
+    // warm the camera and animation clock so smoothing has settled
+    const steps = spec.warm ?? 3;
+    for (let i = 0; i < steps; i++) { if (st) st.t += 1 / 60; renderer.draw(st, { screen: 'play', ...ui, time: (ui && ui.time != null ? ui.time : 5) + i / 60 }); }
+    if (spec.advance) {
+      for (let i = 0; i < spec.advance * 60; i++) { if (st) st.t += 1 / 60; renderer.draw(st, { screen: 'play', ...ui, time: (ui && ui.time != null ? ui.time : 5) + (steps + i) / 60 }); }
+    }
+    return scaled(canvas, 0, 0, 384, 216, scale);
+  },
+  /** like frame() but returns only a crop (screen px) at a larger scale: for art review */
+  crop(spec, x, y, w, h, scale = 8) {
+    this.frame(spec, 1);
+    return scaled(canvas, x, y, w, h, scale);
+  },
+  perf(n = 120, stateSpec = {}) {
+    const st = makeState(world, stateSpec);
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) { st.t += 1 / 60; st.player.x += 0.05; renderer.draw(st, { screen: 'play' }); }
+    return (performance.now() - t0) / n;
+  },
+  poi(type) { return world.pois.find((p) => p.type === type); },
+  world() { return world; },
+};
+window.__ready = true;
+</script>
+</body>
+</html>
