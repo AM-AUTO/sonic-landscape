@@ -97,7 +97,7 @@ try {
   if (demo.total.nan) failures.push('NaN in demo output');
   if (!(demo.total.peakDb < -0.3)) failures.push(`demo peak ${demo.total.peakDb.toFixed(2)} dBFS >= -0.3`);
 
-  if (demo.liveScopes !== 0) failures.push(`${demo.liveScopes} per-note graphs still alive after the tail (node leak?)`);
+  if (demo.liveScopes !== 0) { failures.push(`${demo.liveScopes} per-note graphs still alive after the tail (node leak?)`); console.log(JSON.stringify(demo.liveInfo, null, 1)); }
 
   // ---------------------------------------------------------------- patch fuzz (every numeric patch param at 0.5x / 1.6x)
   let fuzz = null;
@@ -108,7 +108,7 @@ try {
     for (const e of fuzz.errors) failures.push('fuzz: ' + e);
     if (fuzz.nan) failures.push('fuzz: NaN in output');
     if (!(fuzz.peakDb < -0.3)) failures.push(`fuzz peak ${fuzz.peakDb.toFixed(2)} dBFS`);
-    if (fuzz.liveScopes !== 0) failures.push(`fuzz: ${fuzz.liveScopes} graphs still alive (leak?)`);
+    if (fuzz.liveScopes !== 0) { failures.push(`fuzz: ${fuzz.liveScopes} graphs still alive (leak?)`); console.log(JSON.stringify(fuzz.liveInfo, null, 1)); }
   }
 
   // merged audit: a param is dead only if it never moved in either render

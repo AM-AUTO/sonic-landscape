@@ -444,17 +444,17 @@ export function bakeMap(world, opts = {}) {
   const canvas = makeCanvas(W, W);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = false;
-  ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.buffer), W, W), 0, 0);
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.buffer), W, W), 0, 0); mark('put');
   const occ = [];
   const free = (r) => !occ.some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) && r.x >= 4 && r.y >= 4 && r.x + r.w <= W - 4 && r.y + r.h <= W - 4;
   const reserve = (r) => { occ.push(r); return r; };
 
   drawGate(ctx, world, W, occ, free);
-  drawPois(ctx, world, W, occ, free, cls);
-  drawFeatureLabels(ctx, world, W, occ, free, cls);
-  drawSpotHeights(ctx, world, W, occ, free);
-  drawContourLabels(ctx, world, W, lvl, lvlKind, cls, occ, free, interval, seed);
-  drawGridLabels(ctx, world, W, level);
+  drawPois(ctx, world, W, occ, free, cls); mark('pois');
+  drawFeatureLabels(ctx, world, W, occ, free, cls); mark('labels');
+  drawSpotHeights(ctx, world, W, occ, free); mark('spots');
+  drawContourLabels(ctx, world, W, lvl, lvlKind, cls, occ, free, interval, seed); mark('clabels');
+  drawGridLabels(ctx, world, W, level); mark('grid');
 
   const img = ctx.getImageData(0, 0, W, W);
   canvas.pixels = new Uint32Array(img.data.buffer);
@@ -472,6 +472,7 @@ export function bakeMap(world, opts = {}) {
 function drawStreams(world, buf, cls, W, warp, C) {
   const N = world.size, P = CELL_PX;
   const st = world.stream;
+  if (!st) return;
   const cells = [];
   for (let i = 0; i < N * N; i++) if (st[i]) cells.push(i);
   if (!cells.length) return;
@@ -691,7 +692,7 @@ function drawContourLabels(ctx, world, W, lvl, lvlKind, cls, occ, free, interval
       if ((hash2(bx, by, seed + 77) & 7) < 3) continue;
       let best = null, bestScore = -1;
       for (let Y = by; Y < Math.min(W - 14, by + BLOCK); Y += 2) {
-        for (let X = bx; X < Math.min(W - 40, bx + BLOCK); X++) {
+        for (let X = bx; X < Math.min(W - 40, bx + BLOCK); X += 2) {
           const i = Y * W + X;
           if (lvlKind[i] !== 2) continue;
           const lv = lvl[i];

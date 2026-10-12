@@ -197,12 +197,13 @@ export function scheduleDemo(r, t0 = 0.2) {
       ['ktex', { crush: 0.5 }, { crush: 0 }], ['drone', { cutoff: 700 }, { cutoff: 9000 }],
       ['bass', { drive: 0.8 }, { drive: 0.1 }], ['pluck', { grain: 0.8 }, { grain: 0.1 }], ['texture', { pan: -0.7 }, { pan: 0.7 }],
     ];
-    r.pad.chord([50, 57, 62], tt, 8, 0.6);
-    sweep.forEach(([c, a, b], i) => { r.ch[c].set(a, tt + 0.2, 0.05); r.ch[c].set(b, tt + 3.4, 0.2); });
-    // every control on every channel moves at least once (audit coverage), then returns to a neutral value
+    // remember each channel's settings so the segment can hand back an unchanged mixer
     const names = Object.keys(r.ch);
     const orig = {};
     names.forEach((c) => { orig[c] = { cutoff: 18000, resonance: 0.707, crush: 0, chorus: 0, ...r.ch[c].state }; });
+    r.pad.chord([50, 57, 62], tt, 8, 0.6);
+    sweep.forEach(([c, a, b], i) => { r.ch[c].set(a, tt + 0.2, 0.05); r.ch[c].set(b, tt + 3.4, 0.2); });
+    // every control on every channel moves at least once (audit coverage), then returns to a neutral value
     names.forEach((c, i) => {
       const f = (i + 1) / (names.length + 1);
       r.ch[c].set({ gain: 0.6 + 0.2 * f, pan: (f - 0.5) * 0.6, reverb: 0.2 + 0.4 * f, delay: 0.1 + 0.3 * f, grain: 0.05 + 0.2 * f, cutoff: 3000 + 9000 * f, resonance: 0.6 + 1.5 * f, drive: 0.1 + 0.3 * f, crush: i === 0 ? 0.2 : 0, chorus: 0.1 + 0.3 * f }, tt + 6.0, 0.3);
@@ -216,8 +217,6 @@ export function scheduleDemo(r, t0 = 0.2) {
       if (b % 3 === 0) r.kit.hit('click', bt, 0.7);
     }
     r.lead.note(74, tt + 1, 2.5, 0.8); r.bell.note(86, tt + 4, 2, 0.8); r.pluck.note(69, tt + 5, 1, 0.8); r.bass.note(38, tt + 2, 1.5, 0.8);
-    r.ch.drone.set({ cutoff: 700 }, tt + 0.2);
-    r.ch.drone.set({ cutoff: 9000 }, tt + 8);
     E.fx.master.setDrive(0.8); E.fx.master.setLowCut(120); E.fx.master.setHighCut(9000);
     act(tt + 7.5, () => { E.fx.master.setDrive(0); E.fx.master.setLowCut(28); E.fx.master.setHighCut(17500); E.fx.master.setGain(0.95); });
     E.fx.master.duck(0.5, 0.05, 0.5, 1.5, tt + 4);
@@ -226,6 +225,6 @@ export function scheduleDemo(r, t0 = 0.2) {
   // dense tutti
   const tut = t;
   add('tutti', 10, 'tutti', (tt) => playTutti(r, tt));
-  t += 9; // tail: lets every long decay finish so the leak check is meaningful
+  t += 14; // tail: lets every long decay finish so the leak check is meaningful
   return { segments: segs, duration: t, tuttiStart: tut };
 }

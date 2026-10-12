@@ -22,7 +22,7 @@ async function loadServer() {
     const m = await import(serve);
     if (m.startServer) return m.startServer;
   }
-  return (await import('./lib/static.mjs')).startServer;
+  throw new Error('tools/lib/serve.mjs (startServer) is required');
 }
 
 const args = process.argv.slice(2);
@@ -63,9 +63,10 @@ console.log('real levels available:', nReal);
 const first = worlds[0];
 await page.evaluate((w) => window.P.setWorld(w), first);
 await page.evaluate(() => window.P.useWorldInRenderer());
+const levelDefs = await page.evaluate(() => window.P.levelDefs());
 save('title', await frame({ state: null, ui: { screen: 'title', time: 2.0 }, warm: 1 }));
-save('select', await frame({ state: null, ui: { screen: 'select', selected: 2, time: 1.1, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch'] }, warm: 1 }));
-save('select-locked', await frame({ state: null, ui: { screen: 'select', selected: 5, time: 1.4, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch', 'affric'] }, warm: 1 }));
+save('select', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 2, time: 1.1, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch'] }, warm: 1 }));
+save('select-locked', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 5, time: 1.4, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch', 'affric'] }, warm: 1 }));
 
 for (const w of worlds) {
   const key = w.replace(':', '-');

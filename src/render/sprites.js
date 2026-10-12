@@ -309,8 +309,8 @@ const GATE_OPEN_ART = [
   'mwwwwwwwwwm',
   'mmmwwwwwmmm',
 ];
-export function gateSprite(open = false) {
-  return artCanvas(open ? 'gate-open' : 'gate', open ? GATE_OPEN_ART : GATE_ART);
+export function gateSprite(open = false, mono = null) {
+  return artCanvas(open ? 'gate-open' : 'gate', open ? GATE_OPEN_ART : GATE_ART, mono ? { mono } : {});
 }
 export const GATE_SIZE = [11, 10];
 

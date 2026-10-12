@@ -311,11 +311,9 @@ export function drawText(ctx, text, x, y, color, opts = {}) {
   ctx.imageSmoothingEnabled = false;
   if (opts.halo) {
     const d = scale;
-    for (let oy = -1; oy <= 1; oy++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        if (ox || oy) drawRun(ctx, text, px + ox * d, py + oy * d, opts.halo, fontName, scale, spacing, !!opts.italic);
-      }
-    }
+    const offs = opts.italic ? [[-1, 0], [1, 0], [0, -1], [0, 1]]
+      : [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+    for (const [ox, oy] of offs) drawRun(ctx, text, px + ox * d, py + oy * d, opts.halo, fontName, scale, spacing, !!opts.italic);
   }
   if (opts.shadow) drawRun(ctx, text, px + scale, py + scale, opts.shadow, fontName, scale, spacing, !!opts.italic);
   drawRun(ctx, text, px, py, color, fontName, scale, spacing, !!opts.italic);

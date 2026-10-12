@@ -317,10 +317,21 @@ export function createRenderer(canvas) {
             const rr = 9 + Math.sin(t * 3 + i) * 2;
             px(ctx, Math.round(gx + gp.w / 2 + Math.cos(ang) * rr * 1.2), Math.round(gy + gp.h / 2 + Math.sin(ang) * rr), i % 2 ? PAL.snow : PAL.magenta);
           }
-          // rising motes
-          for (let i = 0; i < 6; i++) {
-            const ph = (t * 0.6 + i / 6) % 1;
-            px(ctx, Math.round(gx + 2 + ((i * 5) % 8)), Math.round(gy + gp.h - ph * 22), ph < 0.8 ? PAL.snow : PAL.magenta);
+          // light shaft rising into the map from the arch (dithered, drifting)
+          const side = w.gate && w.gate.side;
+          const vx = side === 'E' ? -1 : side === 'W' ? 1 : 0, vy = side === 'N' ? 1 : side === 'S' || !side ? -1 : 0;
+          const cx0 = gx + gp.w / 2, cy0 = gy + gp.h / 2;
+          for (let k = 2; k < 46; k++) {
+            const dens = 1 - k / 46;
+            for (let d = -5; d <= 5; d++) {
+              const f = dens * (1 - Math.abs(d) / 6.5);
+              if (f <= 0) continue;
+              const th = (BAYER8[(((k + Math.floor(t * 18)) & 7) << 3) | ((d + 8) & 7)] + 0.5) / 64;
+              if (th < f * 1.0) {
+                const X = Math.round(cx0 + (vx ? vx * k : d)), Y = Math.round(cy0 + (vy ? vy * k : d));
+                px(ctx, X, Y, th < f * 0.28 ? PAL.snow : PAL.magenta);
+              }
+            }
           }
         } else if ((state.chainProgress || []).some((c) => c.resonating)) {
           // faint pulse hint once part of the chain sings

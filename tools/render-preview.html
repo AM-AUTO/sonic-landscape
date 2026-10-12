@@ -96,6 +96,10 @@ window.P = {
     window.world = world;
     return { name: world.level.name, minH: world.minH, maxH: world.maxH, levels: real ? real.LEVELS.length : 0 };
   },
+  async levelDefs() {
+    const r = await loadReal();
+    return r ? r.LEVELS.map((l) => ({ id: l.id, index: l.index, name: l.name, gaelic: l.gaelic, gridLetters: l.gridLetters, subtitle: l.subtitle, gate: { chain: l.gate.chain } })) : null;
+  },
   async realLevels() { const r = await loadReal(); return r ? r.LEVELS.length : 0; },
   async bake() {
     const m = await import('/src/render/mapbake.js');
@@ -125,7 +129,7 @@ window.P = {
   frame(spec, scale = 3) {
     const { state, ui, pre = [] } = spec;
     const st = state === null ? null : makeState(world, state || {});
-    if (spec.fresh !== false) { const R = renderer._R; R.cam.ready = false; R.flashes.length = 0; R.ripples.length = 0; R.pulses.length = 0; R.trail.length = 0; R.lastNow = null; }
+    if (spec.fresh !== false) { const R = renderer._R; R.cam.ready = false; R.flashes.length = 0; R.ripples.length = 0; R.pulses.length = 0; R.trail.length = 0; R.lastNow = null; R.clock = (ui && ui.time != null ? ui.time : 5); }
     for (const p of pre) {
       if (p.op === 'flash') renderer.flashContour(p.index != null ? p.index : st.player.contourIndex, 0);
       if (p.op === 'rippleAtPlayer') renderer.ripple(st.player.x, st.player.y, 0, p.color);

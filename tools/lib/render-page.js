@@ -6,6 +6,8 @@ import { clips, scheduleDemo } from './demo.js';
 import { analyse, perSecond } from './wav.mjs';
 
 const SR = 44100;
+Scope.debug = true;
+window.__liveScopes = () => [...Scope.all].map((s) => ({ sources: s.sources.length, stopAt: s.stopAt, alive: s.alive, armed: s.armed, stack: (s.stack || '').split('\n').slice(2, 6).join(' | ') }));
 
 async function makeCtx(seconds) {
   const ctx = new OfflineAudioContext(2, Math.ceil(seconds * SR), SR);
@@ -49,7 +51,7 @@ window.renderDemo = async function renderDemo(opts = {}) {
   }
   return {
     sampleRate: SR, duration: buf.duration, renderMs, segments, total, tutti,
-    audit: engine.auditReport(), liveScopes: Scope.live, perSecond: perSecond(channels, SR),
+    audit: engine.auditReport(), liveScopes: Scope.live, liveInfo: window.__liveScopes(), perSecond: perSecond(channels, SR),
   };
 };
 
@@ -164,5 +166,5 @@ window.renderFuzz = async function renderFuzz() {
   const buf = await ctx.startRendering();
   const channels = [buf.getChannelData(0), buf.getChannelData(1)];
   const a = analyse(channels, SR, 0, end + 6);
-  return { steps: steps.length, duration: end, errors, peakDb: a.peakDb, rmsDb: a.rmsDb, nan: a.nan, audit: engine.auditReport(), liveScopes: Scope.live };
+  return { steps: steps.length, duration: end, errors, peakDb: a.peakDb, rmsDb: a.rmsDb, nan: a.nan, audit: engine.auditReport(), liveScopes: Scope.live, liveInfo: window.__liveScopes() };
 };

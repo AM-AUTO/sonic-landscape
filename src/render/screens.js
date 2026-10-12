@@ -296,8 +296,8 @@ function select(env) {
   rect(ctx, tx, ty, 14, 9, PAL.paper);
   drawText(ctx, lv.gridLetters || '', tx + 2, ty + 2, PAL.ink, { font: 'small', spacing: 1 });
   if (!unlocked) {
-    rect(ctx, tx + THUMB_W / 2 - 13, ty + THUMB_H / 2 - 14, 26, 28, PAL.paper);
-    frame(ctx, tx + THUMB_W / 2 - 13, ty + THUMB_H / 2 - 14, 26, 28, PAL.ink);
+    rect(ctx, tx + THUMB_W / 2 - 18, ty + THUMB_H / 2 - 14, 36, 28, PAL.paper);
+    frame(ctx, tx + THUMB_W / 2 - 18, ty + THUMB_H / 2 - 14, 36, 28, PAL.ink);
     ctx.drawImage(padlockSprite(PAL.ink), tx + THUMB_W / 2 - 3, ty + THUMB_H / 2 - 8);
     drawText(ctx, 'LOCKED', tx + THUMB_W / 2, ty + THUMB_H / 2 + 3, PAL.ink, { font: 'small', align: 'center' });
   }
@@ -315,7 +315,7 @@ function select(env) {
     ctx.drawImage(iconSprite(type, unlocked), ix, 155);
     ix += 13;
   });
-  ctx.drawImage(gateSprite(false), ix + 1, 153);
+  ctx.drawImage(gateSprite(false, unlocked ? null : PAL.rock), ix + 1, 153);
   const status = !unlocked ? 'LOCKED' : isCompleted(ui, levels, sel) ? 'COMPLETE' : 'OPEN';
   drawText(ctx, status, rx + 10, 172, unlocked ? PAL.waterInk : PAL.rock, { font: 'small', spacing: 1 });
   if (isCompleted(ui, levels, sel)) check(ctx, rx + 10 + measureText(status, { font: 'small', spacing: 1 }) + 4, 171, PAL.magenta);
