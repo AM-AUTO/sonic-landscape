@@ -95,14 +95,18 @@ export class Pluck {
   set(patch = {}) { Object.assign(this.p, patch); recordPatch(this.engine, 'pluck', patch); return this; }
 
   _buffer(midi, kp) {
-    const key = [this.p.kind, midi, kp.damping.toFixed(2), kp.decay.toFixed(1), kp.pos.toFixed(2), kp.bright.toFixed(2)].join('|');
+    // Synthesising a KS buffer costs milliseconds of main thread, so the timbre params are
+    // quantised coarsely: continuous modulation then reuses a small set of cached buffers.
+    const q = (v, step) => Math.round(v / step) * step;
+    kp = { ...kp, damping: q(kp.damping, 0.05), decay: Math.max(0.5, q(kp.decay, 0.5)), pos: q(kp.pos, 0.05), bright: q(kp.bright, 0.1) };
+    const key = [this.p.kind, midi, kp.damping.toFixed(2), kp.decay.toFixed(1), kp.pos.toFixed(2), kp.bright.toFixed(1)].join('|');
     let b = this.cache.get(key);
     if (b) return b;
     const sr = this.ctx.sampleRate;
     const data = renderKS(sr, fclamp(midiToHz(midi), 30, 6000), kp, (midi * 7919 + 13) ^ Math.round(kp.decay * 100));
     b = this.ctx.createBuffer(1, data.length, sr);
     b.getChannelData(0).set(data);
-    if (this.cache.size > 120) this.cache.delete(this.cache.keys().next().value);
+    if (this.cache.size > 240) this.cache.delete(this.cache.keys().next().value);
     this.cache.set(key, b);
     return b;
   }

@@ -9,7 +9,7 @@
  *  2. Menu flow with audio on: title → tracklist → play, walk with the keyboard, check the
  *     AudioContext is running and the master analyser carries signal.
  *
- * Usage: node tools/verify-play.mjs [--level id|index] [--speed 6] [--out out/play] [--no-audio] [--menu-only]
+ * Usage: node tools/verify-play.mjs [--level id|index] [--speed 6] [--out out/play] [--no-audio] [--menu-only] [--perf]
  */
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
@@ -144,11 +144,52 @@ if (doAudio && only == null) {
   await page.close();
 }
 
+// --- real-time performance with live audio: autopilot at normal speed, time every audio.update + frame
+let perf = null;
+if (doAudio && (only == null || args.includes('--perf'))) {
+  const lvl = only != null ? (LEVELS.findIndex((l) => l.id === only || String(LEVELS.indexOf(l)) === only)) : 2;
+  const page = await browser.newPage({ viewport: { width: 1152, height: 648 } });
+  const errors = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${base}/index.html?level=${lvl}&autopilot=1&fresh=1`);
+  await page.waitForFunction(() => window.__contours && window.__contours.game.state, null, { timeout: 15000 });
+  await page.mouse.click(400, 300); // user gesture → audio
+  await page.waitForFunction(() => window.__contours.audio, null, { timeout: 15000 });
+  await page.evaluate(() => {
+    const c = window.__contours, a = c.audio;
+    c.__upd = []; c.__frames = [];
+    const orig = a.update.bind(a);
+    a.update = (s) => { const t0 = performance.now(); const r = orig(s); c.__upd.push(performance.now() - t0); return r; };
+    let last = performance.now();
+    const tick = () => { const n = performance.now(); c.__frames.push(n - last); last = n; requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  });
+  await page.waitForTimeout(60000);
+  perf = await page.evaluate(() => {
+    const c = window.__contours;
+    const q = (arr, p) => { const s = arr.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))] || 0; };
+    const u = c.__upd, f = c.__frames.slice(30);
+    return {
+      level: c.game.level.id, simT: +c.game.state.t.toFixed(1), fires: c.game.state.discovered.length,
+      updates: u.length, updP50: +q(u, 0.5).toFixed(2), updP99: +q(u, 0.99).toFixed(2), updMax: +Math.max(...u).toFixed(1),
+      frameP50: +q(f, 0.5).toFixed(1), frameP99: +q(f, 0.99).toFixed(1), longFrames: f.filter((x) => x > 50).length,
+      ctx: c.audio.ctx.state, audioErrors: (c.audio.errors || []).length,
+    };
+  });
+  perf.errors = errors.slice(0, 5);
+  perf.ok = perf.ctx === 'running' && perf.updP99 < 8 && perf.audioErrors === 0 && errors.length === 0;
+  if (!perf.ok) failed = true;
+  await page.screenshot({ path: path.join(outDir, 'perf-final.png') });
+  await page.close();
+}
+
 await browser.close();
 srv.close();
 
 console.table(results.map((r) => ({ ...r, errors: r.errors.join(' | ').slice(0, 80) })));
 if (audioCheck) console.log('audio/menu flow:', JSON.stringify(audioCheck));
-fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({ results, audioCheck }, null, 2));
+if (perf) console.log('realtime perf:', JSON.stringify(perf));
+fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({ results, audioCheck, perf }, null, 2));
 console.log(failed ? 'VERIFY-PLAY: FAIL' : 'VERIFY-PLAY: PASS');
 process.exit(failed ? 1 : 0);

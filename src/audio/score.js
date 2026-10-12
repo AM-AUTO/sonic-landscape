@@ -906,9 +906,8 @@ export class Score {
     const F = fxTargets(prof.fx, C, A, this.beat(), this.cond.section);
     const rv = fx.reverb, dl = fx.delay, gr = fx.granular, ms = fx.master;
     const ts = now;
-    // reverb size changes are costly (a new impulse response is synthesised the first time a size is used): at most
-    // every 3.5–6 s and only for >1.5–2 s differences (about one rebuild per 8 s at most), so a bloom is one deliberate step
-    if (now - this.lastReverbT > (A.fast ? 3.5 : 6.0) && Math.abs(F.reverb.size - this.lastReverbSize) > (A.fast ? 2.0 : 1.5)) {
+    // reverb size is a crossfade over a fixed convolver bank (cheap); re-aim it when the target has moved noticeably
+    if (now - this.lastReverbT > (A.fast ? 0.5 : 1.5) && Math.abs(F.reverb.size - this.lastReverbSize) > Math.max(0.4, this.lastReverbSize * 0.08)) {
       rv.setSize(F.reverb.size, A.fast ? 4 : 6, ts); this.lastReverbT = now; this.lastReverbSize = F.reverb.size;
     }
     rv.setWet(F.reverb.wet, ts); rv.setDamp(F.reverb.damp, ts); rv.setPreDelay(F.reverb.pre, ts);

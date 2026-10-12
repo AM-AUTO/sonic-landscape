@@ -1,8 +1,8 @@
 /**
  * Procedural stereo convolution reverb. Impulse responses are synthesised in JS (decorrelated
- * exponentially-decaying noise + early reflections, progressively darkened), cached by quantised
- * size, and played through a pool of three ConvolverNodes that are crossfaded whenever the size
- * changes so a size change never clicks.
+ * exponentially-decaying noise + early reflections, progressively darkened) once, for a fixed
+ * bank of sizes; a size change crossfades the bank, so it never clicks and never stalls the
+ * main thread.
  *
  * Signal path:  input → highpass → predelay → damping lowpass → [convolvers → xfade gains] → wet → output
  * Output is wet-only (it is used as a send return).
@@ -12,6 +12,8 @@ import { clamp, num } from './util.js';
 
 export const REVERB_MIN = 0.8;
 export const REVERB_MAX = 16;
+/** Convolver bank sizes (s). Sizes between are equal-power crossfades of neighbours. */
+export const BANK = [1.5, 3.5, 7, 15];
 
 export function quantizeSize(s) {
   s = clamp(num(s, 4), REVERB_MIN, REVERB_MAX);
@@ -90,69 +92,63 @@ export function createReverb(ctx, hooks = {}, { seed = 1 } = {}) {
   input.connect(hp); hp.connect(pre); pre.connect(damp);
   wet.connect(output);
 
-  const slots = [0, 1, 2].map(() => {
+  // A fixed bank of convolvers, one per size on a log ladder. IRs are generated and assigned
+  // exactly once, here. Assigning ConvolverNode.buffer is expensive (Chromium partitions the IR
+  // on the main thread), so a size change only crossfades the bank (equal-power, between the two
+  // neighbouring sizes) and never touches a buffer. Slots that are faded out are disconnected
+  // from the input so they cost no convolution CPU while idle.
+  const slots = BANK.map((size) => {
     const conv = new ConvolverNode(ctx, { disableNormalization: false });
+    conv.buffer = generateIR(ctx, size, seed);
     const g = new GainNode(ctx, { gain: 0 });
-    damp.connect(conv); conv.connect(g); g.connect(wet);
-    return { conv, g, size: 0, offAt: 0, has: false };
+    conv.connect(g); g.connect(wet);
+    return { conv, g, size, target: 0, connected: false, offAt: 0 };
   });
-
-  const cache = new Map();
-  function irFor(q) {
-    let b = cache.get(q);
-    if (!b) { b = generateIR(ctx, q, seed); cache.set(q, b); }
-    return b;
-  }
+  const connect = (s) => { if (!s.connected) { damp.connect(s.conv); s.connected = true; } };
+  const disconnect = (s) => { if (s.connected) { try { damp.disconnect(s.conv); } catch { /* already */ } s.connected = false; } };
 
   const hWet = param('reverb.wet', wet.gain);
   const hDamp = param('reverb.damp', damp.frequency);
   const hPre = param('reverb.preDelay', pre.delayTime);
 
-  let active = -1;
   let sizeNow = 0;
+  let lastT = 0;
+
+  /** Equal-power weights over the bank for a size (log-interpolated between neighbours). */
+  function weights(q) {
+    const w = BANK.map(() => 0);
+    if (q <= BANK[0]) { w[0] = 1; return w; }
+    if (q >= BANK[BANK.length - 1]) { w[BANK.length - 1] = 1; return w; }
+    let i = 0;
+    while (q > BANK[i + 1]) i++;
+    const f = Math.log(q / BANK[i]) / Math.log(BANK[i + 1] / BANK[i]);
+    w[i] = Math.cos(f * Math.PI / 2);
+    w[i + 1] = Math.sin(f * Math.PI / 2);
+    return w;
+  }
 
   function setSize(seconds, rampSec = 3, t = now()) {
-    const q = quantizeSize(seconds);
-    record('reverb.size', num(seconds, 4));
-    if (active >= 0 && slots[active].size === q) { sizeNow = q; return q; }
-    ramp(q, rampSec, t);
-    return q;
-  }
-  let lastT = 0;
-  function ramp(q, rampSec, t) {
-    rampSec = Math.max(0.02, num(rampSec, 3));
+    const q = clamp(num(seconds, 4), REVERB_MIN, REVERB_MAX);
+    record('reverb.size', q);
     const n = now();
-    t = Math.max(num(t, n), n, lastT);          // size changes are scheduled in time order
+    t = Math.max(num(t, n), n, lastT);           // size changes are scheduled in time order
     lastT = t;
-    // free buffers whose fade-out has finished (saves convolution CPU)
+    const first = sizeNow === 0;
+    const tc = first ? 0.01 : Math.max(0.02, num(rampSec, 3)) / 4;
+    const w = weights(q);
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i];
-      if (i !== active && s.has && s.offAt <= n) { s.conv.buffer = null; s.has = false; s.size = 0; }
+      // release slots whose fade-out finished
+      if (s.target === 0 && s.connected && s.offAt <= n) disconnect(s);
+      if (Math.abs(w[i] - s.target) < 1e-4) continue;
+      if (w[i] > 0) { connect(s); s.offAt = Infinity; }
+      else s.offAt = t + tc * 8;
+      s.g.gain.cancelScheduledValues(t);
+      s.g.gain.setTargetAtTime(w[i], t, tc);
+      s.target = w[i];
     }
-    // idle slot: silent already → silent by t → whichever goes quiet earliest
-    let pick = -1;
-    for (let i = 0; i < slots.length; i++) if (i !== active && slots[i].offAt <= n) { pick = i; break; }
-    if (pick < 0) for (let i = 0; i < slots.length; i++) if (i !== active && slots[i].offAt <= t) { pick = i; break; }
-    if (pick < 0) {
-      let best = Infinity;
-      for (let i = 0; i < slots.length; i++) if (i !== active && slots[i].offAt < best) { best = slots[i].offAt; pick = i; }
-    }
-    const s = slots[pick];
-    const first = active < 0;
-    const tc = first ? 0.01 : rampSec / 4;
-    s.g.gain.cancelScheduledValues(t);
-    s.g.gain.setValueAtTime(0, t);
-    s.conv.buffer = irFor(q);
-    s.size = q; s.has = true; s.offAt = Infinity;
-    s.g.gain.setTargetAtTime(1, t, tc);
-    for (let i = 0; i < slots.length; i++) {
-      if (i === pick || !slots[i].has) continue;
-      const o = slots[i];
-      o.g.gain.cancelScheduledValues(t);
-      o.g.gain.setTargetAtTime(0, t, tc);
-      o.offAt = Math.min(o.offAt, t + tc * 7);
-    }
-    active = pick; sizeNow = q;
+    sizeNow = q;
+    return q;
   }
 
   setSize(4, 0.01, 0);
@@ -164,7 +160,7 @@ export function createReverb(ctx, hooks = {}, { seed = 1 } = {}) {
     setWet(v, t = now()) { v = num(v, 0.8, 0, 2); hWet.set(v, t, 0.15); },
     setDamp(hz, t = now()) { hz = num(hz, 7500, 300, 20000); hDamp.set(hz, t, 0.2); },
     setPreDelay(sec, t = now()) { sec = num(sec, 0.025, 0, 0.45); hPre.set(sec, t, 0.1); },
-    /** debug: number of cached IRs */
-    get cached() { return cache.size; },
+    /** debug: number of convolvers currently processing */
+    get active() { return slots.filter((x) => x.connected).length; },
   };
 }
