@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "npx http-server . -p 3000 -c-1",
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "verify:play": "node tools/verify-play.mjs",
     "verify:audio": "node tools/render-audio.mjs"
   },
