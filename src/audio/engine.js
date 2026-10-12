@@ -138,7 +138,7 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   };
 
   // ---------------------------------------------------------------- master chain
-  const bus = new GainNode(ctx, { gain: 0.5 });   // -6 dB trim: a dense tutti then sits near -12 dBFS RMS
+  const bus = new GainNode(ctx, { gain: 0.66 });  // trim so a dense tutti sits around -13 dBFS RMS
   const glue = new DynamicsCompressorNode(ctx, { threshold: -16, knee: 14, ratio: 2.4, attack: 0.025, release: 0.28 });
   const glueMakeup = new GainNode(ctx, { gain: 1.15 });
   const lowcut = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 28, Q: 0.6 });
