@@ -70,6 +70,7 @@ export function voiceChord(prev, tones, lo, hi, { inversion = 0, maxTones = 6 } 
     out = pcsIn.map((p) => fold(p + 12 * Math.ceil((lo - p) / 12), lo, hi));
   }
   out = [...new Set(out)].sort((a, b) => a - b);
+  if (out.length === 2) out.push(out[0] + 12);            // open fifth: double the root so the pad stays full
   let inv = Math.round(inversion);
   while (inv > 0 && out.length > 2) { out.push(out.shift() + 12); inv--; }
   while (inv < 0 && out.length > 2) { out.unshift(out.pop() - 12); inv++; }
@@ -95,22 +96,20 @@ export function nearestTone(midi, pcs) {
 }
 
 /**
- * Drone pedal notes: the tonic stays; the chord's root and fifth are added a register apart, so the
- * foundation always carries the key while the harmony breathes above. Returns ascending midis.
+ * Drone pedal notes: the tonic and its fifth stay; the chord's root moves under them, so the foundation always
+ * carries the key while the harmony breathes above. Returns ascending midis.
  */
 export function droneNotes(root, mode, entry, low = -24) {
   const tonic = root + low;
   const cr = degreeToMidi(root, mode, entry.d) + low;
-  const cf = degreeToMidi(root, mode, entry.d + 4) + low;
   const set = new Map();
   const add = (m) => {
     while (m < tonic) m += 12;
     while (m > tonic + 14) m -= 12;
     set.set(pc(m), m);
   };
-  add(tonic); add(tonic + 7); add(cr); add(cf);
-  const arr = [...set.values()].sort((a, b) => a - b);
-  return arr.length > 3 ? [arr[0], arr[Math.floor(arr.length / 2)], arr[arr.length - 1]] : arr;
+  add(tonic); add(tonic + 7); add(cr);                 // tonic, its fifth, and the chord's root: the key never leaves the floor
+  return [...set.values()].sort((a, b) => a - b);
 }
 
 /** Union of degree-derived pitch classes (for the concord pad and the granular scale). */
@@ -118,10 +117,10 @@ export function combinedSet(root, mode, degrees) {
   return [...new Set(degrees.map((d) => pc(degreeToMidi(root, mode, d))))].sort((a, b) => a - b);
 }
 
-/** Root of the relative major of a (minor-ish) mode, else a warm neighbour (the vi of a major mode). */
+/** Root of the relative major of a minor-ish mode (b3 present); a major-ish mode stays on its own root. */
 export function relativeMajorRoot(root, mode) {
   const third = mode[2] ?? 4;
-  return third === 3 ? root + 3 : root + 9 - 12;
+  return third === 3 ? root + 3 : root;
 }
 
 /** Major-scale-ish mode array used for the Hearth's relative-major pad. */

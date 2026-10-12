@@ -220,7 +220,7 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
       hDrive.set((1 + v * 1.8) / 2.5, t, 0.1);
     },
     setLowCut(hz, t = now()) { hLow.set(num(hz, 28, 10, 400), t, 0.1); },
-    setHighCut(hz, t = now()) { hHigh.set(num(hz, 17500, 1000, 20000), t, 0.1); },
+    setHighCut(hz, t = now()) { hHigh.set(num(hz, 17500, 200, 20000), t, 0.1); },
     setGain(v, t = now()) { hMasterGain.set(num(v, 0.95, 0, 1.5), t, 0.05); },
     /**
      * Duck the bed (everything routed through `out`, i.e. all channels with duck:true) by

@@ -9,7 +9,7 @@
  *  2. Menu flow with audio on: title → tracklist → play, walk with the keyboard, check the
  *     AudioContext is running and the master analyser carries signal.
  *
- * Usage: node tools/verify-play.mjs [--level id|index] [--speed 6] [--out out/play] [--no-audio]
+ * Usage: node tools/verify-play.mjs [--level id|index] [--speed 6] [--out out/play] [--no-audio] [--menu-only]
  */
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
@@ -43,7 +43,8 @@ const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gestur
 const results = [];
 let failed = false;
 
-const indices = LEVELS.map((_, i) => i).filter((i) => only == null || String(i) === only || LEVELS[i].id === only);
+const menuOnly = args.includes('--menu-only');
+const indices = menuOnly ? [] : LEVELS.map((_, i) => i).filter((i) => only == null || String(i) === only || LEVELS[i].id === only);
 
 for (const i of indices) {
   const lvl = LEVELS[i];
