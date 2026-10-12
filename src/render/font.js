@@ -152,25 +152,32 @@ const GRAVE_LOW = { 'à': 'a', 'è': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u' };
 function parseMain() {
   const g = {};
   for (const ch of Object.keys(MAIN_HEX)) {
-    g[ch] = { rows: MAIN_HEX[ch].split(' ').map((h) => parseInt(h, 16)), above: null };
+    g[ch] = { rows: MAIN_HEX[ch].split(' ').map((h) => parseInt(h, 16)), above: null, w: 5 };
   }
   // lower-case accented: grave in rows 0-1 (x-height starts at row 2)
   for (const [ch, base] of Object.entries(GRAVE_LOW)) {
     const rows = g[base].rows.slice();
     rows[0] = 0x08; rows[1] = 0x04;
-    g[ch] = { rows, above: null };
+    g[ch] = { rows, above: null, w: 5 };
   }
   // capitals: grave sits two rows above the cap line
   for (const [ch, base] of Object.entries(GRAVE_UP)) {
-    g[ch] = { rows: g[base].rows.slice(), above: [0x08, 0x04] };
+    g[ch] = { rows: g[base].rows.slice(), above: [0x08, 0x04], w: 5 };
   }
   return g;
 }
+// M and W get a real 5px-wide glyph so they never read as n / u.
+const SMALL_WIDE = {
+  M: [0x11, 0x1b, 0x15, 0x11, 0x11],
+  W: [0x11, 0x11, 0x15, 0x1b, 0x11],
+};
 function parseSmall() {
   const g = {};
-  for (const ch of Object.keys(SMALL_ROWS)) g[ch] = { rows: SMALL_ROWS[ch], above: null };
+  for (const ch of Object.keys(SMALL_ROWS)) g[ch] = { rows: SMALL_ROWS[ch].map((r) => r << 2), above: null, w: 3 };
+  g.M = { rows: SMALL_WIDE.M, above: null, w: 5 };
+  g.W = { rows: SMALL_WIDE.W, above: null, w: 5 };
   for (const [ch, base] of Object.entries({ ...GRAVE_UP, ...GRAVE_LOW })) {
-    g[ch] = { rows: SMALL_ROWS[base.toUpperCase()], above: [4] };
+    g[ch] = { rows: g[base.toUpperCase()].rows, above: [0x10], w: g[base.toUpperCase()].w };
   }
   for (let c = 97; c <= 122; c++) g[String.fromCharCode(c)] = g[String.fromCharCode(c - 32)];
   return g;
@@ -178,7 +185,7 @@ function parseSmall() {
 
 export const FONTS = {
   main: { w: 5, h: 7, rowsN: 8, above: 2, adv: 6, lh: 9, glyphs: parseMain(), bits: 5 },
-  small: { w: 3, h: 5, rowsN: 5, above: 1, adv: 4, lh: 7, glyphs: parseSmall(), bits: 3 },
+  small: { w: 5, h: 5, rowsN: 5, above: 1, adv: 4, lh: 7, glyphs: parseSmall(), bits: 5 },
 };
 export const FONT_METRICS = {
   main: { glyphW: 5, capH: 7, advance: 6, lineHeight: 9 },
@@ -190,6 +197,11 @@ function glyphOf(font, ch) {
   if (g) return g;
   const up = font.glyphs[ch.toUpperCase()];
   return up || font.glyphs['?'];
+}
+
+function advOf(font, ch) {
+  const g = glyphOf(font, ch);
+  return (g ? g.w : font.w) + 1;
 }
 
 function makeCanvas(w, h) {
@@ -248,9 +260,12 @@ export function measureText(text, opts = {}) {
   const f = FONTS[opts.font || 'main'];
   const scale = opts.scale || 1;
   const spacing = opts.spacing || 0;
-  const n = [...String(text)].length;
+  const chars = [...String(text)];
+  const n = chars.length;
   if (n === 0) return 0;
-  return (n * f.adv - 1 + (n - 1) * spacing) * scale + (opts.italic && (opts.font || 'main') === 'main' ? 2 * scale : 0);
+  let w = 0;
+  for (const c of chars) w += advOf(f, c);
+  return (w - 1 + (n - 1) * spacing) * scale + (opts.italic && (opts.font || 'main') === 'main' ? 2 * scale : 0);
 }
 
 /** Greedy word wrap -> array of lines. */
@@ -288,7 +303,7 @@ function drawRun(ctx, text, x, y, color, fontName, scale, spacing, italic) {
     let ci = charIndex.get(chr);
     if (ci === undefined) ci = charIndex.get('?');
     if (chr !== ' ') blit(ctx, atlas, ci, cx, y, scale, italic ? fontName : null);
-    cx += (f.adv + spacing) * scale;
+    cx += (advOf(f, chr) + spacing) * scale;
   }
 }
 

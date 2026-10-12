@@ -113,7 +113,7 @@ function drawEmblem(ctx, x0, y0, t) {
 
 // ================================================================== title
 function title(env) {
-  const { ctx, t, SW, SH } = env;
+  const { ctx, t, SW, SH, ui } = env;
   rect(ctx, 0, 0, SW, SH, PAL.paper);
   // faint 1km-style grid over the whole cover
   ctx.fillStyle = PAL.grid;
@@ -162,14 +162,14 @@ function title(env) {
   // prompt
   const ph = blink(t, 1.2, 0.65);
   if (ph) {
-    drawText(ctx, 'PRESS ENTER / TAP TO BEGIN', SW / 2, 170, PAL.ink, { spacing: 1, align: 'center' });
+    drawText(ctx, 'PRESS ENTER / TAP TO BEGIN', SW / 2, 168, PAL.ink, { spacing: 1, align: 'center' });
     const w = measureText('PRESS ENTER / TAP TO BEGIN', { spacing: 1 });
-    drawText(ctx, '→', SW / 2 - w / 2 - 12 + (Math.floor(t * 3) & 1), 170, PAL.magenta, {});
-    drawText(ctx, '←', SW / 2 + w / 2 + 6 - (Math.floor(t * 3) & 1), 170, PAL.magenta, {});
+    drawText(ctx, '→', SW / 2 - w / 2 - 12 + (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
+    drawText(ctx, '←', SW / 2 + w / 2 + 6 - (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
   }
   drawText(ctx, 'EIGHT GLENS  ·  ONE RECORD  ·  THE MAP IS THE SCORE', SW / 2, 187, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
-  ruler(ctx, 12, 204, SW - 24, 4, PAL.grid, 3, 2, 4);
-  hline(ctx, 12, 204, SW - 24, PAL.grid);
+  ruler(ctx, 12, 205, SW - 24, 4, PAL.grid, 3, 2, 4);
+  hline(ctx, 12, 205, SW - 24, PAL.grid);
 }
 
 // ================================================================== select

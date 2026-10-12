@@ -377,6 +377,66 @@ export function timeSprite(phase) {
   return artCanvas('t-day', SUN);
 }
 
+// ------------------------------------------------------------ touch icons
+export const TOUCH_ICONS = {
+  run: [
+    '.........',
+    '.k..k....',
+    '..k..k...',
+    '...k..k..',
+    '....k..k.',
+    '...k..k..',
+    '..k..k...',
+    '.k..k....',
+    '.........',
+  ],
+  rest: [
+    '..kkkkk..',
+    '.k.....k.',
+    'k.......k',
+    'k.......k',
+    'kkk...kkk',
+    'kkk...kkk',
+    'kkk...kkk',
+    '.........',
+    '.........',
+  ],
+  map: [
+    '.........',
+    'kkkkkkkkk',
+    'k..k...kk',
+    'k.k.k.k.k',
+    'kk.k.k.kk',
+    'k...k..kk',
+    'kkkkkkkkk',
+    '.........',
+    '.........',
+  ],
+  notes: [
+    '.kkkkkkk.',
+    '.k.....k.',
+    '.k.kkk.k.',
+    '.k.....k.',
+    '.k.kkk.k.',
+    '.k.....k.',
+    '.k.kk..k.',
+    '.kkkkkkk.',
+    '.........',
+  ],
+  pause: [
+    '.........',
+    '..kk.kk..',
+    '..kk.kk..',
+    '..kk.kk..',
+    '..kk.kk..',
+    '..kk.kk..',
+    '..kk.kk..',
+    '..kk.kk..',
+    '.........',
+  ],
+};
+export function touchIcon(id, color) { return artCanvas('touch-' + id, TOUCH_ICONS[id] || TOUCH_ICONS.pause, { mono: color }); }
+
 // ----------------------------------------------------------- map symbols
 // p = paper knockout, b = waterInk, k = ink, m = magenta, h = water
 export const MAP_SYMBOLS = {

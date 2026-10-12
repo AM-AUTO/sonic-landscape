@@ -127,8 +127,19 @@ window.P = {
   },
   /** draw one frame and return it scaled up */
   frame(spec, scale = 3) {
-    const { state, ui, pre = [] } = spec;
+    const { state, pre = [] } = spec;
+    let ui = spec.ui;
+    if (spec.touch) {
+      const r = canvas.getBoundingClientRect();
+      const sz = Math.max(44, Math.min(72, Math.min(r.width, r.height) * 0.13)), g = sz * 0.25, R = r.left + r.width, B = r.top + r.height;
+      const btn = (id, x, y, w = sz, h = sz, held = false) => ({ id, x, y, w, h, held });
+      ui = { ...ui, touchVisible: true, touch: {
+        stick: spec.touch === 'active' ? { active: true, cx: r.left + r.width * 0.16, cy: r.top + r.height * 0.74, x: 0.55, y: -0.4, radius: 56 } : { active: false, cx: 0, cy: 0, x: 0, y: 0, radius: 56 },
+        buttons: [btn('run', R - sz - g, B - sz - g, sz, sz, spec.touch === 'active'), btn('rest', R - 2 * sz - 2 * g, B - sz - g), btn('map', R - sz - g, r.top + g, sz * 0.8, sz * 0.6), btn('notes', R - 2 * sz * 0.8 - 2 * g, r.top + g, sz * 0.8, sz * 0.6), btn('pause', R - 3 * sz * 0.8 - 3 * g, r.top + g, sz * 0.8, sz * 0.6)],
+      } };
+    }
     const st = state === null ? null : makeState(world, state || {});
+    if (st && state && state.resting) st.player.resting = true;
     if (spec.fresh !== false) { const R = renderer._R; R.cam.ready = false; R.flashes.length = 0; R.ripples.length = 0; R.pulses.length = 0; R.trail.length = 0; R.lastNow = null; R.clock = (ui && ui.time != null ? ui.time : 5); }
     for (const p of pre) {
       if (p.op === 'flash') renderer.flashContour(p.index != null ? p.index : st.player.contourIndex, 0);

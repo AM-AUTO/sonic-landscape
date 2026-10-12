@@ -15,7 +15,7 @@
 import { COVER, CELL_PX, SCREEN_W, SCREEN_H, dayPhase } from '../world/codes.js';
 import { PAL, PAL_U32 as U, applyTint, tintAt, BAYER8 } from './palette.js';
 import { LVL_OFF, bakeMap, bakeOverview, gatePlacement } from './mapbake.js';
-import { walkerSprite, iconSprite, gateSprite, blit } from './sprites.js';
+import { walkerSprite, iconSprite, gateSprite, blit, symbolArt } from './sprites.js';
 import { drawText } from './font.js';
 import { rect, px, resolveColor, clamp, ditherRect } from './draw.js';
 import { drawHud, STRIP_H } from './hud.js';
@@ -276,32 +276,34 @@ export function createRenderer(canvas) {
         ctx.fillRect(x + sx * r, y + sy * r - (sy > 0 ? 2 : 0), 1, 3);
       }
     }
-    // proximity shimmer
+    // proximity: a gentle 2px halo round the map symbol (pixels flip every few frames) plus a few motes
     for (const pr of state.proximity || []) {
       const poi = pr.poi;
-      if (!poi || pr.dist >= 25) continue;
+      if (!poi || !(pr.dist < 25)) continue;
       const k = 1 - pr.dist / 25;
-      const x = poi.x * CELL_PX + CELL_PX / 2 - camX, y = poi.y * CELL_PX + CELL_PX / 2 - camY;
+      const x = Math.round(poi.x * CELL_PX + CELL_PX / 2 - camX), y = Math.round(poi.y * CELL_PX + CELL_PX / 2 - camY);
       if (x < -20 || y < -20 || x > SW + 20 || y > SH + 20) continue;
-      const n = 4 + Math.round(k * 12);
-      for (let i = 0; i < n; i++) {
-        const ph = (R.clock * (0.7 + (i % 3) * 0.25) + i * 0.37) % 1;
-        const ang = i * 2.399 + R.clock * 0.8 * (i % 2 ? 1 : -1);
-        const rad = 5 + ph * (6 + k * 8);
-        const vis = ph < 0.85;
-        if (!vis) continue;
-        const X = Math.round(x + Math.cos(ang) * rad), Y = Math.round(y + Math.sin(ang) * rad * 0.8);
-        px(ctx, X, Y, (i + Math.floor(R.clock * 4)) % 3 === 0 ? PAL.snow : PAL.magenta);
-      }
-      if (k > 0.45) {
-        // sonar ring: dithered
-        const rr = ((R.clock * 10) % 14) + 4;
-        ctx.fillStyle = PAL.magenta;
-        for (let a = 0; a < 24; a++) {
-          if (a & 1) continue;
-          const ang = (a / 24) * Math.PI * 2;
-          ctx.fillRect(Math.round(x + Math.cos(ang) * rr), Math.round(y + Math.sin(ang) * rr), 1, 1);
+      const art = symbolArt(poi.type);
+      const hw = (art[0].length >> 1) + 3, hh = (art.length >> 1) + 3;
+      const phase = Math.floor(R.clock * 3) & 1;
+      const dens = 0.25 + k * 0.5;                       // fraction of halo pixels lit
+      for (let ring = 0; ring < 2; ring++) {
+        const rw = hw + ring, rh = hh + ring;
+        for (let i = -rw; i <= rw; i++) {
+          for (let j = -rh; j <= rh; j++) {
+            if (Math.abs(i) !== rw && Math.abs(j) !== rh) continue;
+            if (((i + j + phase + ring) & 1) !== 0) continue;
+            const th = (BAYER8[(((y + j) & 7) << 3) | ((x + i) & 7)] + 0.5) / 64;
+            if (th > dens) continue;
+            px(ctx, x + i, y + j, ring === 0 ? PAL.snow : PAL.magenta);
+          }
         }
+      }
+      const n = 2 + Math.round(k * 4);
+      for (let i = 0; i < n; i++) {
+        const ph = (R.clock * 0.6 + i * 0.37) % 1;
+        const ang = i * 2.399 + R.clock * 0.5;
+        px(ctx, Math.round(x + Math.cos(ang) * (hw + 3 + ph * 5)), Math.round(y + Math.sin(ang) * (hh + 3 + ph * 5)), ph < 0.7 ? PAL.magenta : PAL.snow);
       }
     }
     // gate: open glow

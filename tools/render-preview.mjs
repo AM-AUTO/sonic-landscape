@@ -65,6 +65,7 @@ await page.evaluate((w) => window.P.setWorld(w), first);
 await page.evaluate(() => window.P.useWorldInRenderer());
 const levelDefs = await page.evaluate(() => window.P.levelDefs());
 save('title', await frame({ state: null, ui: { screen: 'title', time: 2.0 }, warm: 1 }));
+save('title-touch', await frame({ state: null, ui: { screen: 'title', time: 2.0 }, touch: 'idle', warm: 1 }));
 save('select', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 2, time: 1.1, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch'] }, warm: 1 }));
 save('select-locked', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 5, time: 1.4, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch', 'affric'] }, warm: 1 }));
 
@@ -87,6 +88,9 @@ for (const w of worlds) {
   save(`${key}-play-wade`, await frame({ state: { ...base, tod: 0.3, at: has('lochan') ? 'lochan' : poiTypes[0], dx: 0, dy: 0, speed: 2, heading: 0.2, onCover: 'SHALLOW' } }));
   save(`${key}-play-slide`, await frame({ state: { ...base, tod: 0.3, at: has('crag') ? 'crag' : poiTypes[0], dx: 0, dy: 0, speed: 5, heading: 1.2, onCover: 'SCREE', sliding: true } }));
   save(`${key}-play-gateopen`, await frame({ state: { ...base, tod: 0.35, pos: await page.evaluate(() => ({ x: window.P.world().gate.x, y: window.P.world().gate.y - 14 })), gateOpen: true, chainLit: 3, heading: 1.57, discovered: ['lochan', 'cairn', 'summit'] }, advance: 0.2 }));
+  save(`${key}-play-resting`, await frame({ state: { ...base, tod: 0.3, at: has('bothy') ? 'bothy' : poiTypes[0], dx: 6, dy: 3, speed: 0, resting: true }, ui: {} }));
+  save(`${key}-play-touch`, await frame({ state: { ...base, tod: 0.3, at: has('cairn') ? 'cairn' : poiTypes[0], dx: 7, dy: 3, speed: 3, proximity: ['cairn'] }, ui: {}, touch: 'active' }));
+  save(`${key}-play-touch-idle`, await frame({ state: { ...base, tod: 0.3, speed: 0 }, ui: {}, touch: 'idle' }));
   save(`${key}-map`, await frame({ state: { ...base, tod: 0.3, ...sp, chainLit: 1, discovered: ['lochan', 'cairn', 'trig', 'summit', 'bothy'] }, ui: { screen: 'map', time: 3 } }));
   save(`${key}-notes`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'notes', time: 3, notes: ['Where the water stands still, listen from above.', 'Stones remember those who wait.', 'The cairn grows when you climb past it, slowly.', 'At dusk the lochan answers the trig.'] } }));
   save(`${key}-pause`, await frame({ state: { ...base, tod: 0.3, ...sp }, ui: { screen: 'pause', time: 3, selected: 1 } }));

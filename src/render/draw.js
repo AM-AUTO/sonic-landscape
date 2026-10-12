@@ -49,6 +49,30 @@ export function pcircle(ctx, cx, cy, r, color) {
   }
 }
 
+/** Filled pixel disc. */
+export function pdisc(ctx, cx, cy, r, color) {
+  ctx.fillStyle = color;
+  for (let y = -r; y <= r; y++) {
+    const w = Math.floor(Math.sqrt(r * r + r * 0.6 - y * y));
+    ctx.fillRect(cx - w, cy + y, w * 2 + 1, 1);
+  }
+}
+
+/** Dotted pixel circle (every other step), no AA. */
+export function pcircleDotted(ctx, cx, cy, r, color, phase = 0) {
+  ctx.fillStyle = color;
+  const n = Math.max(12, Math.round(r * 6.28 * 1.2));
+  let last = '';
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
+    const k = x + ',' + y;
+    if (k === last) continue;
+    last = k;
+    if (((i + phase) % 4) < 2) ctx.fillRect(x, y, 1, 1);
+  }
+}
+
 /** Ordered-dither fill: density 0..1 of `color` over the rect (pattern anchored to screen coords). */
 export function ditherRect(ctx, x, y, w, h, color, density, ox = 0, oy = 0) {
   if (density <= 0) return;

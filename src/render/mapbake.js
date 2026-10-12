@@ -244,7 +244,7 @@ export function bakeMap(world, opts = {}) {
         const shade = sdir < 0 ? Math.min(1, -sdir / 4.5) : 0;
         const lit = sdir > 0 ? Math.min(1, sdir / 6) : 0;
         const en = (H[idx] - world.minH) * invSpan;
-        const d = 0.05 + 0.2 * en + 0.5 * shade - 0.12 * lit;
+        const d = 0.03 + 0.12 * en + 0.42 * shade - 0.1 * lit;
         col = th < d ? C.paper2 : C.paper;
       } else {
         const sdir = (gx + gy) * 0.7071;
@@ -254,7 +254,7 @@ export function bakeMap(world, opts = {}) {
           case COVER.DEEP: col = C.water; break;
           case COVER.WOOD: col = (shade > 0.55 && th < shade * 0.28) ? C.woodDark : C.wood; break;
           case COVER.SNOW: col = (shade > 0.5 && th < (shade - 0.35) * 0.3) ? C.paper2 : C.snow; break;
-          case COVER.BOG: col = th < 0.30 ? C.bog : (th < 0.42 + ((H[idx] - world.minH) * invSpan) * 0.1 ? C.paper2 : C.paper); break;
+          case COVER.BOG: col = th < 0.04 + ((H[idx] - world.minH) * invSpan) * 0.08 ? C.paper2 : C.paper; break;
           case COVER.ROCK: col = ((X + Y) & 1) === 0 && th < 0.8 ? C.rock : C.paper2; break;
           case COVER.CRAG: col = th < 0.34 ? C.rock : C.paper2; break;
           default: col = C.paper;
@@ -294,21 +294,21 @@ export function bakeMap(world, opts = {}) {
   mark('prev');
   // ---- pass 3: ground detail (trees, tufts, scree, rock) -----------------
   // conifers on a jittered 6px lattice
-  for (let ty = 0; ty < W; ty += 6) {
-    for (let tx = 0; tx < W; tx += 6) {
+  for (let ty = 0; ty < W; ty += 7) {
+    for (let tx = 0; tx < W; tx += 7) {
       const h1 = hash2(tx, ty, seed + 3);
-      if ((h1 & 15) < 2) continue;
+      if ((h1 & 15) < 3) continue;
       const cx = tx + (h1 >>> 4) % 5, cy = ty + (h1 >>> 9) % 5;
       if (cx < 3 || cy < 6 || cx > W - 4 || cy > W - 2) continue;
       if (cls[cy * W + cx] !== COVER.WOOD || cls[(cy - 4) * W + cx] !== COVER.WOOD || cls[cy * W + cx - 3] !== COVER.WOOD || cls[cy * W + cx + 3] !== COVER.WOOD) continue;
       stamp(buf, W, TREE_ART, cx - 2, cy - 5, C.woodDark, (X, Y) => cls[Y * W + X] === COVER.WOOD);
     }
   }
-  // marsh tufts on a 9px lattice
-  for (let ty = 0; ty < W; ty += 9) {
-    for (let tx = 0; tx < W; tx += 9) {
+  // marsh: sparse blue tufts on plain paper, jittered 8px lattice
+  for (let ty = 0; ty < W; ty += 8) {
+    for (let tx = 0; tx < W; tx += 8) {
       const h1 = hash2(tx, ty, seed + 5);
-      if ((h1 & 7) < 4) continue;
+      if ((h1 & 7) < 3) continue;
       const cx = tx + (h1 >>> 4) % 6, cy = ty + (h1 >>> 9) % 6;
       if (cx < 3 || cy < 3 || cx > W - 4 || cy > W - 3) continue;
       if (cls[cy * W + cx] !== COVER.BOG || cls[cy * W + cx + 4] !== COVER.BOG || cls[(cy + 2) * W + cx] !== COVER.BOG) continue;
@@ -781,7 +781,7 @@ export function bakeOverview(world, n, opts = {}) {
       if (c === COVER.SHALLOW || c === COVER.DEEP) col = U.water;
       else if (c === COVER.WOOD) col = U.wood;
       else if (c === COVER.SNOW) col = U.snow;
-      else if (c === COVER.BOG) col = th < 0.4 ? U.bog : col;
+      else if (c === COVER.BOG && th < 0.12) col = U.waterInk;
       else if (c === COVER.CRAG) col = th < 0.6 ? U.ink : U.rock;
       else if (c === COVER.SCREE || c === COVER.ROCK) col = th < 0.5 ? U.rock : col;
       buf[i] = col;

@@ -3,8 +3,8 @@
  */
 import { PAL } from './palette.js';
 import { drawText, measureText, wrapText } from './font.js';
-import { rect, frame, hline, vline, pline, panel, px, clamp } from './draw.js';
-import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas } from './sprites.js';
+import { rect, frame, hline, vline, pline, panel, px, clamp, pdisc, pcircle, pcircleDotted } from './draw.js';
+import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas, touchIcon } from './sprites.js';
 import { CELL_PX, SCREEN_W, SCREEN_H, ARTEFACT_NAMES } from '../world/codes.js';
 
 export const STRIP_H = 13;
@@ -74,7 +74,7 @@ export function drawStrip(ctx, st, ui) {
 function drawMinimap(ctx, st, R) {
   const mini = R.mini;
   if (!mini) return;
-  const x = SCREEN_W - MINI - 4, y = STRIP_H + 3;
+  const x = SCREEN_W - MINI - 4, y = Math.max(STRIP_H + 3, R.miniY || 0);
   rect(ctx, x - 1, y - 1, MINI + 2, MINI + 2, PAL.paper);
   frame(ctx, x - 2, y - 2, MINI + 4, MINI + 4, PAL.ink);
   ctx.drawImage(mini, x, y);
@@ -204,10 +204,97 @@ function drawMessage(ctx, ui, R) {
   }
 }
 
+function drawResting(ctx, st, R) {
+  const p = st.player;
+  if (!p || !p.resting) return;
+  const clock = R.clock || 0;
+  const w = 88, h = 27;
+  const x = Math.round(SCREEN_W / 2 - w / 2), y = SCREEN_H - 3 - h;
+  panel(ctx, x, y, w, h, {});
+  // sun / moon arc
+  const tod = ((st.timeOfDay || 0) % 1 + 1) % 1;
+  const cx = x + 25, base = y + 20, rx = 19, ry = 11;
+  hline(ctx, cx - rx - 1, base, rx * 2 + 3, PAL.rock);
+  ctx.fillStyle = PAL.grid;
+  for (let i = 0; i <= 20; i++) {
+    const a = (i / 20) * Math.PI;
+    if (i % 2 === 0) ctx.fillRect(Math.round(cx - Math.cos(a) * rx), Math.round(base - Math.sin(a) * ry), 1, 1);
+  }
+  const day = tod < 0.5;
+  const f = day ? tod * 2 : (tod - 0.5) * 2;
+  const a = clamp(f, 0.03, 0.97) * Math.PI;
+  const sx = Math.round(cx - Math.cos(a) * rx), sy = Math.round(base - Math.sin(a) * ry);
+  ctx.drawImage(timeSprite(day ? 'day' : 'night'), sx - 4, sy - 5);
+  // label
+  const dots = '.'.repeat(1 + (Math.floor(clock * 2) % 3));
+  drawText(ctx, 'LISTENING', x + 50, y + 6, PAL.ink, { font: 'small', spacing: 0 });
+  drawText(ctx, dots, x + 50 + 9 * 4, y + 6, PAL.magenta, { font: 'small' });
+  drawText(ctx, 'TIME X8', x + 50, y + 15, PAL.contourIdx, { font: 'small' });
+  // small blinking ear tick
+  if (Math.floor(clock * 3) % 2 === 0) px(ctx, x + w - 5, y + 5, PAL.magenta);
+}
+
+/** Virtual stick + buttons. Client-pixel input rects are mapped to framebuffer px via the canvas rect. */
+function drawTouch(ctx, ui, R) {
+  const t = ui && ui.touch;
+  if (!t || !ui.touchVisible || !R.canvas || !R.canvas.getBoundingClientRect) return;
+  const rc = R.canvas.getBoundingClientRect();
+  if (!rc.width || !rc.height) return;
+  const kx = SCREEN_W / rc.width, ky = SCREEN_H / rc.height;
+  const fx = (v) => (v - rc.left) * kx, fy = (v) => (v - rc.top) * ky;
+  const s = t.stick;
+  if (s) {
+    const rad = Math.max(10, Math.round(s.radius * kx));
+    if (s.active) {
+      const cx = Math.round(fx(s.cx)), cy = Math.round(fy(s.cy));
+      pcircle(ctx, cx, cy, rad, PAL.ink);
+      pcircle(ctx, cx, cy, rad - 1, PAL.paper);
+      pcircleDotted(ctx, cx, cy, Math.round(rad * 0.55), PAL.grid);
+      const kn = Math.max(4, Math.round(rad * 0.36));
+      const kxp = Math.round(cx + s.x * rad), kyp = Math.round(cy + s.y * rad);
+      pdisc(ctx, kxp, kyp, kn + 1, PAL.ink);
+      pdisc(ctx, kxp, kyp, kn, PAL.magenta);
+      px(ctx, kxp - 1, kyp - 2, PAL.snow);
+      // N/E/S/W ticks
+      ctx.fillStyle = PAL.ink;
+      ctx.fillRect(cx, cy - rad - 3, 1, 2); ctx.fillRect(cx, cy + rad + 2, 1, 2); ctx.fillRect(cx - rad - 3, cy, 2, 1); ctx.fillRect(cx + rad + 2, cy, 2, 1);
+    } else {
+      // faint idle hint, bottom-left
+      const cx = Math.round(rad + 18), cy = SCREEN_H - rad - 18;
+      const ph = Math.floor((R.clock || 0) * 4);
+      pcircleDotted(ctx, cx, cy, rad, PAL.rock, ph);
+      pcircleDotted(ctx, cx, cy, Math.round(rad * 0.5), PAL.rock, -ph);
+      pdisc(ctx, cx, cy, 2, PAL.rock);
+      drawText(ctx, 'DRAG', cx, cy + rad + 4, PAL.rock, { font: 'small', align: 'center' });
+    }
+  }
+  for (const b of t.buttons || []) {
+    const x = Math.round(fx(b.x)), y = Math.round(fy(b.y)), w = Math.max(14, Math.round(b.w * kx)), h = Math.max(12, Math.round(b.h * ky));
+    const held = !!b.held;
+    rect(ctx, x + 1, y + 1, w, h, PAL.night);
+    rect(ctx, x, y, w, h, held ? PAL.magenta : PAL.paper);
+    frame(ctx, x, y, w, h, PAL.ink);
+    const sc = Math.max(1, Math.min(3, Math.floor((Math.min(w, h) - 4) / 9)));
+    const ic = touchIcon(b.id, held ? PAL.snow : PAL.ink);
+    ctx.drawImage(ic, Math.round(x + (w - 9 * sc) / 2), Math.round(y + (h - 9 * sc) / 2), 9 * sc, 9 * sc);
+    if (h >= 22 && (b.id === 'run' || b.id === 'rest')) drawText(ctx, b.id === 'run' ? 'RUN' : 'LISTEN', x + w / 2, y + h - 7, held ? PAL.snow : PAL.contourIdx, { font: 'small', align: 'center' });
+  }
+}
+
 /** Full HUD. R = { mini, clock } from the renderer. */
 export function drawHud(ctx, st, ui, R) {
+  R.miniY = 0;
+  if (ui && ui.touchVisible && ui.touch && ui.touch.buttons && R.canvas && R.canvas.getBoundingClientRect) {
+    const rc = R.canvas.getBoundingClientRect();
+    if (rc.height) for (const b of ui.touch.buttons) {
+      const bot = ((b.y + b.h) - rc.top) * (SCREEN_H / rc.height);
+      if (bot < SCREEN_H * 0.4) R.miniY = Math.max(R.miniY, Math.ceil(bot) + 4);
+    }
+  }
   drawStrip(ctx, st, ui);
   if (!ui || ui.showMinimap !== false) drawMinimap(ctx, st, R);
   drawChain(ctx, st, R);
+  drawResting(ctx, st, R);
   drawMessage(ctx, ui, R);
+  drawTouch(ctx, ui, R);
 }
