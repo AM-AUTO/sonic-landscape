@@ -13,7 +13,7 @@
 import { LEVELS } from './world/levels/index.js';
 import { ARTEFACT_NAMES } from './world/codes.js';
 import { Game } from './game/sim.js';
-import { serialize, deserialize } from './game/progression.js';
+import { serialize, deserialize, revealNote } from './game/progression.js';
 import { Autopilot, planChainRoute } from './game/autopilot.js';
 import { createInput } from './game/input.js';
 import { createRenderer } from './render/renderer.js';
@@ -82,10 +82,26 @@ let pendingEvents = [];
 let accumulator = 0;
 let lastFrame = null;
 
-function say(text, { kind = 'note', sub = '', dur = 4.5 } = {}) {
-  ui.message = text; ui.messageKind = kind; ui.messageSub = sub;
-  ui.messageDur = dur; ui.messageT = dur;
+// Messages are queued and shown one after another. Artefact banners pre-empt whatever is showing
+// (the queued lines resume afterwards), so a field note is never lost under an artefact.
+const messageQueue = [];
+function show(m) {
+  ui.message = m.text; ui.messageKind = m.kind; ui.messageSub = m.sub;
+  ui.messageDur = m.dur; ui.messageT = m.dur;
 }
+function say(text, { kind = 'note', sub = '', dur = 4.5, now = false } = {}) {
+  const m = { text, kind, sub, dur };
+  if (now || ui.messageT <= 0) show(m);
+  else messageQueue.push(m);
+}
+function clearMessages() { messageQueue.length = 0; ui.messageT = 0; }
+
+const INTRO = [
+  'THE MAP IS THE SCORE. WALK, AND LISTEN.',
+  'CLIMB AND THE MELODY CLIMBS. CROSS THE GRID AND THE HARMONY TURNS.',
+  'THE SYMBOLS AT THE FOOT OF THE SHEET ARE THE BEALACH\'S KEY. WAKE THEM ALL AT ONCE.',
+  'SPACE: LISTEN, AND LET TIME PASS.   M: THE SHEET.   L: FIELD NOTES.',
+];
 
 function unlockedIndex(i) {
   const id = LEVELS[i] && LEVELS[i].id;
@@ -100,7 +116,15 @@ function enterLevel(index) {
   ui.screen = 'play';
   ui.selected = index;
   const lvl = game.level;
-  say(lvl.name.toUpperCase(), { kind: 'artefact', sub: lvl.subtitle || '', dur: 5 });
+  clearMessages();
+  say(lvl.name.toUpperCase(), { kind: 'artefact', sub: lvl.subtitle || '', dur: 5, now: true });
+  if (index === 0 && !game.progress.completed.includes(lvl.id)) for (const line of INTRO) say(line, { dur: 5.5 });
+  // every sheet arrives with one field note already in the walker's pocket
+  const hasNote = (lvl.fieldNotes || []).some((n) => game.progress.notes.includes(n));
+  if (!hasNote) {
+    const n = revealNote(game.progress, lvl);
+    if (n) { say('FIELD NOTE: ' + n, { dur: 7 }); saveProgress(); }
+  }
   if (audio) audio.setLevel(lvl);
   autopilot = null;
   if (params.has('autopilot')) {
@@ -121,25 +145,25 @@ function handleEvents(events) {
         if (ev.full) {
           renderer.pulse(p.type);
           renderer.ripple(p.x + 0.5, p.y + 0.5, game.state.t, 'magenta');
-          say(ARTEFACT_NAMES[p.type].toUpperCase(), { kind: 'artefact', sub: p.name || '', dur: 5 });
+          say(ARTEFACT_NAMES[p.type].toUpperCase(), { kind: 'artefact', sub: p.name || '', dur: 5, now: true });
         } else {
           renderer.ripple(p.x + 0.5, p.y + 0.5, game.state.t, 'contour');
-          if (ev.hint) say(ev.hint, { dur: 5 });
+          if (ev.hint) say(ev.hint, { dur: 5, now: !ui.messageT || ui.messageKind !== 'artefact' });
         }
         if (ev.note) {
-          // field note found at a bothy — shown after the artefact banner
-          setTimeout(() => say('FIELD NOTE: ' + ev.note, { dur: 7 }), ev.full ? 4500 : 0);
+          // field note found at a bothy — queued behind the artefact banner
+          say('FIELD NOTE: ' + ev.note, { dur: 7 });
           saveProgress();
         }
         break;
       }
       case 'chain':
-        if (ev.types && ev.types.length >= 2) say('CONCORD', { kind: 'artefact', sub: ev.types.map((t) => ARTEFACT_NAMES[t]).join(' · '), dur: 3.5 });
+        if (ev.types && ev.types.length >= 2) say('CONCORD', { kind: 'artefact', sub: ev.types.map((t) => ARTEFACT_NAMES[t]).join(' · '), dur: 3.5, now: true });
         break;
       case 'gate-open': {
         const g = game.world.gate;
         renderer.ripple(g.x + 0.5, g.y + 0.5, game.state.t, 'magenta');
-        say('THE BEALACH OPENS', { kind: 'artefact', sub: g.name || '', dur: 6 });
+        say('THE BEALACH OPENS', { kind: 'artefact', sub: (g.name || '') + ' — walk through it', dur: 6, now: true });
         break;
       }
       case 'level-complete': {
@@ -250,6 +274,7 @@ function frame(now) {
   }
 
   if (ui.messageT > 0) ui.messageT = Math.max(0, ui.messageT - dtReal);
+  if (ui.messageT <= 0 && messageQueue.length && ui.screen === 'play') show(messageQueue.shift());
 
   if (audio && game.state && ui.screen !== 'title' && ui.screen !== 'select') {
     const evs = pendingEvents;
