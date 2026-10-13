@@ -298,7 +298,7 @@ Renderer = {
   resize(),                      // integer-scale the 384×216 framebuffer to fit the window, letterboxed
 }
 // src/render/font.js  — drawText(ctx, text, x, y, color, {align, scale}) with an embedded 5×7 bitmap font (ASCII + accented Gaelic vowels à è ì ò ù)
-// src/render/palette.js — PAL (16 named colours) + tintFor(phase, levelTint)
+// src/render/palette.js — PAL (21 named colours) + tintFor(phase, levelTint)
 ```
 
 ---------------------------------------------------------------------------

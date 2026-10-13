@@ -15,7 +15,8 @@
 import { COVER, CELL_PX, SCREEN_W, SCREEN_H, dayPhase } from '../world/codes.js';
 import { PAL, PAL_U32 as U, applyTint, tintAt, BAYER8 } from './palette.js';
 import { LVL_OFF, bakeMap, bakeOverview, gatePlacement } from './mapbake.js';
-import { walkerSprite, iconSprite, gateSprite, blit, symbolArt, tickSprite } from './sprites.js';
+import { walkerSprite, lanternAnchor, iconSprite, gateSprite, blit, symbolArt, tickSprite } from './sprites.js';
+import { createFx } from './fx.js';
 import { drawText } from './font.js';
 import { rect, frame, px, resolveColor, clamp, ditherRect } from './draw.js';
 import { drawHud, STRIP_H } from './hud.js';
@@ -51,6 +52,7 @@ export function createRenderer(canvas) {
     walker: { dir: 'S', stride: 0, lastX: null, lastY: null },
     screen: null, screenSince: 0, lastState: null, bakeMs: 0,
     flashLut: new Uint32Array(1024),
+    fx: createFx(),
     scale: 1,
   };
 
@@ -60,6 +62,7 @@ export function createRenderer(canvas) {
     R.baked = null; R.mini = null; R.bigMap = null;
     R.cam.ready = false;
     R.flashes.length = 0; R.ripples.length = 0; R.pulses.length = 0; R.trail.length = 0;
+    R.fx.setWorld(world);
     if (!world) return;
     R.baked = bakeMap(world);
     R.bakeMs = R.baked.bakeMs;
@@ -229,6 +232,20 @@ export function createRenderer(canvas) {
     return W;
   }
 
+  /** pose + animation frame of the wanderer this frame (shared by the lantern light and the sprite) */
+  const poseOut = { pose: 'idle', frame: 0 };
+  function walkerPose(state) {
+    const p = state.player, W = R.walker, cov = p.cover;
+    let pose = p.moving ? 'walk' : 'idle';
+    let frame = Math.floor(W.stride) & 1;
+    if (!p.moving) frame = Math.floor(R.clock * 1.6) & 1;           // idle: slow 2-frame flutter of the cloak
+    if (p.sliding) pose = 'slide';
+    else if (cov === COVER.SHALLOW || cov === COVER.DEEP) { pose = 'wade'; frame = Math.floor(R.clock * 3) & 1; }
+    else if (cov === COVER.BOG && p.moving) { pose = 'mud'; frame = Math.floor(R.clock * 3) & 1; }
+    poseOut.pose = pose; poseOut.frame = frame;
+    return poseOut;
+  }
+
   function drawPlayer(state, camX, camY) {
     const p = state.player, W = R.walker;
     const sx = Math.round(p.x * CELL_PX - camX), sy = Math.round(p.y * CELL_PX - camY);
@@ -247,16 +264,13 @@ export function createRenderer(canvas) {
     for (let i = -3; i <= 2; i++) if (((i + sy) & 1) === 0) ctx.fillRect(sx + i, sy, 1, 1);
     for (let i = -2; i <= 1; i++) if (((i + sy) & 1) === 1) ctx.fillRect(sx + i, sy + 1, 1, 1);
     // pose
-    const cov = p.cover;
-    let pose = p.moving ? 'walk' : 'idle';
-    let frame = Math.floor(W.stride) & 1;
-    if (p.sliding) pose = 'slide';
-    else if (cov === COVER.SHALLOW || cov === COVER.DEEP) { pose = 'wade'; frame = Math.floor(R.clock * 3) & 1; }
-    else if (cov === COVER.BOG && p.moving) { pose = 'mud'; frame = Math.floor(R.clock * 3) & 1; }
+    const { pose, frame } = walkerPose(state);
     const spr = walkerSprite(W.dir, pose, frame);
-    let bob = (pose === 'walk' && frame === 1) ? 0 : 0;
+    const bob = (pose === 'walk' && frame === 1) ? -1 : 0;          // the staff lifts, then plants again
     const dx = sx - 6, dy = sy - 11 + bob;
     ctx.drawImage(spr, dx, dy);
+    const la = lanternAnchor(W.dir, pose, frame);
+    R.fx.paintLantern(ctx, dx + la.x, dy + la.y, R.clock);
     // slide dust
     if (pose === 'slide') {
       ctx.fillStyle = PAL.rock;
@@ -381,17 +395,36 @@ export function createRenderer(canvas) {
     if (state.world && state.world !== R.world) setWorld(state.world);
     if (!R.baked) { rect(ctx, 0, 0, SW, SH, PAL.night); return false; }
     updateCamera(state, dt);
-    const camX = Math.round(R.cam.x), camY = Math.round(R.cam.y);
-    copyMapRegion(camX, camY);
-    const tint = tintAt(state.timeOfDay != null ? state.timeOfDay : 0.3, state.world && state.world.level && state.world.level.palette && state.world.level.palette.tint);
-    applyTint(fb, SW, SH, dim ? { night: dim, warm: 0, wash: [] } : tint, camX, camY);
+    const FX = R.fx;
+    const mapPx = R.world.size * CELL_PX;
+    let camX = Math.round(R.cam.x), camY = Math.round(R.cam.y);
+    if (!dim) {                                                  // lightning shakes the sheet by a pixel or two (visual only)
+      FX.update(state, R.clock, dt);
+      camX = clamp(camX + FX.shake.x, 0, mapPx - SW);
+      camY = clamp(camY + FX.shake.y, 0, mapPx - SH);
+    }
     const pl = state.player || { x: 0, y: 0 };
-    applyFlashes(camX, camY, pl.x * CELL_PX - camX, pl.y * CELL_PX - camY);     // after the tint so feedback stays bright at night
+    const ws = walkerState(state, dt);
+    const ppx = pl.x * CELL_PX - camX, ppy = pl.y * CELL_PX - camY;
+    copyMapRegion(camX, camY);
+    const tod = state.timeOfDay != null ? state.timeOfDay : 0.3;
+    const tint = tintAt(tod, state.world && state.world.level && state.world.level.palette && state.world.level.palette.tint);
+    if (dim) {
+      applyTint(fb, SW, SH, { night: dim, warm: 0, wash: [] }, camX, camY);
+    } else {
+      // the lantern flame is the centre of the walker's pool of light
+      const wp = state.player ? walkerPose(state) : { pose: 'idle', frame: 0 };
+      const la = lanternAnchor(ws.dir, wp.pose, wp.frame);
+      const lx = Math.round(ppx) - 6 + la.x, ly = Math.round(ppy) - 11 + la.y;
+      const pre = FX.prepare(fb, camX, camY, tint, tod, R.clock, lx, ly, R.baked.lvl, R.baked.W);
+      applyTint(fb, SW, SH, pre.tint, camX, camY, 0, SH, pre.lightMap);
+      FX.paintGround(fb, camX, camY, R.clock);                 // mist, cloud shadow, lamp dither, stars
+    }
+    applyFlashes(camX, camY, ppx, ppy);                         // after the tint so feedback stays bright at night
     applyRipples(camX, camY);
+    if (!dim) FX.paintAir(fb, camX, camY, R.clock, R.baked.lvl, R.baked.W);   // smoke, rain/snow, lightning: over the map, under the HUD
     ctx.putImageData(fbImg, 0, 0);
     updateTrail(state, dt);
-    const ws = walkerState(state, dt);
-    void ws;
     drawPoiLayer(state, camX, camY);
     drawPlayer(state, camX, camY);
     return true;
@@ -453,6 +486,6 @@ export function createRenderer(canvas) {
     resize();
   }
 
-  const renderer = { setWorld, draw, flashContour, ripple, pulse, resize, _R: R, get scale() { return R.scale; } };
+  const renderer = { setWorld, draw, flashContour, ripple, pulse, resize, _R: R, get scale() { return R.scale; }, fx: R.fx, onLightning: (cb) => R.fx.onLightning(cb) };
   return renderer;
 }

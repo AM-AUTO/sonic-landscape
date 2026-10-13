@@ -9,6 +9,8 @@ export const COLORS = {
   k: PAL.ink, m: PAL.magenta, n: PAL.night, s: PAL.paper2, S: PAL.paper, b: PAL.waterInk, h: PAL.water,
   g: PAL.waterDeep, w: PAL.snow, c: PAL.contour, d: PAL.contourIdx, r: PAL.rock, p: PAL.paper, t: PAL.woodDark,
   l: PAL.wood, i: PAL.grid, o: PAL.bog,
+  // gothic-ballad colours
+  L: PAL.lamp, f: PAL.flame, v: PAL.dusk, y: PAL.ice, z: PAL.bolt,
 };
 
 function makeCanvas(w, h) {
@@ -61,89 +63,199 @@ export function blit(ctx, canvas, x, y, scale = 1) {
 }
 
 // ------------------------------------------------------------------ walker
-// k ink  m jacket  n trousers  s skin  b/c rucksack  w highlight
-const W_S = {
-  head: [
-    '...kkkkkk...',
-    '..kkwkkkkk..',
-    '..kssssssk..',
-    '..kskssksk..',
-    '...kssssk...',
-  ],
-  body: [
-    '..kmmmmmmk..',
-    'bkmmwmmmmmkb',
-    '.kmmmmmmmmk.',
-    '.ksmmmmmmsk.',
-    '..knnnnnnk..',
-  ],
-  legs: {
-    0: ['..knn..nnk..', '..kkk..kkk..'],
-    1: ['..knn..kkk..', '..kkk.......'],
-    2: ['..kkk..nnk..', '.......kkk..'],
+// The ragged wanderer: a hooded, hunched figure in a torn grey cloak, a bundle on the back, a
+// long staff planted on every step and a small lit lantern hung from the staff tip. 12x12.
+//   k ink outline / staff   r rock-grey cloak   n night shadow fold   d brown bundle   c strap
+//   s pale sliver of skin   L lamp orange       f flame yellow
+// In every standing pose the staff is column 10 and the lantern flame sits at (9,2): see
+// lanternAnchor(). Facing W is the E art mirrored (lantern then hangs on the left).
+// Walk frame 1 is drawn one pixel higher by the renderer (the staff lifts, then plants again).
+const W_ART = {
+  E: {
+    idle: [
+      [
+        '........kkk.',
+        '........LfL.',
+        '.....kk.LfL.',
+        '....krrk.Lk.',
+        '.kkkrrrrk.k.',
+        'kddkrrnnk.k.',
+        'kcdkrrnsk.k.',
+        '.kkkrrrrrkk.',
+        '.krkrrnrrk.k',
+        'krrkkrrrrk.k',
+        '.krrkrrrk..k',
+        '..krkkrkk..k',
+      ],
+      [
+        '........kkk.',
+        '........LfL.',
+        '.....kk.LfL.',
+        '....krrk.Lk.',
+        '..kkkrrrk.k.',
+        'kddkrrnnk.k.',
+        'kcdkrrnsk.k.',
+        '.kkkrrrrrkk.',
+        '..krrrnrrk.k',
+        '.krkkrrrrk.k',
+        'krrkkrrrk..k',
+        '.k.krkkrk..k',
+      ],
+    ],
+    walk: [
+      [
+        '........kkk.',
+        '........LfL.',
+        '.....kk.LfL.',
+        '....krrk.Lk.',
+        '.kkkrrrrk.k.',
+        'kddkrrnnk.k.',
+        'kcdkrrnsk.k.',
+        '.kkkrrrrrkk.',
+        '.krkrrnrrk.k',
+        'krrkkrrrrk.k',
+        'krkrrrrrkk.k',
+        'k.krkkrkk..k',
+      ],
+      [
+        '........kkk.',
+        '........LfL.',
+        '.....kk.LfL.',
+        '....krrk.Lk.',
+        '..kkkrrrk.k.',
+        'kddkrrnnk.k.',
+        'kcdkrrnsk.k.',
+        '.kkkrrrrrkk.',
+        '..krrrnrrk.k',
+        '.krkkrrrrk.k',
+        '..krrrrrkk.k',
+        '.kk.kkrk...k',
+      ],
+    ],
+  },
+  S: {
+    idle: [
+      [
+        '........kkk.',
+        '........LfL.',
+        '....kk..LfL.',
+        '...krrk..Lk.',
+        '..krrrrk..k.',
+        '..krnnrk..k.',
+        '..krsnrk..k.',
+        '.krrrnrrk.k.',
+        'kdrrrrrrkkk.',
+        'kdkrrnrrkk.k',
+        '.krrrrrrrk.k',
+        '.krk.krkk..k',
+      ],
+      [
+        '........kkk.',
+        '........LfL.',
+        '....kk..LfL.',
+        '...krrk..Lk.',
+        '..krrrrk..k.',
+        '..krnnrk..k.',
+        '..krsnrk..k.',
+        '.krrrnrrk.k.',
+        'kdrrrrrrkkk.',
+        'kdkrrnrrkk.k',
+        '.krrrrrrrk.k',
+        '..kkrk.krk.k',
+      ],
+    ],
+    walk: [
+      [
+        '........kkk.',
+        '........LfL.',
+        '....kk..LfL.',
+        '...krrk..Lk.',
+        '..krrrrk..k.',
+        '..krnnrk..k.',
+        '..krsnrk..k.',
+        '.krrrnrrk.k.',
+        'kdrrrrrrkkk.',
+        'kdkrrnrrkk.k',
+        '.krrrrrrrk.k',
+        '.kkrk.kkrk.k',
+      ],
+      [
+        '........kkk.',
+        '........LfL.',
+        '....kk..LfL.',
+        '...krrk..Lk.',
+        '..krrrrk..k.',
+        '..krnnrk..k.',
+        '..krsnrk..k.',
+        '.krrrnrrk.k.',
+        'kdrrrrrrkkk.',
+        'kdkrrnrrkk.k',
+        '.krrrrrrrk.k',
+        '..krkk.krk.k',
+      ],
+    ],
+  },
+  N: {
+    idle: [
+      [
+        '........kkk.',
+        '........LfL.',
+        '....kk..LfL.',
+        '...krrk..Lk.',
+        '..krrrrk..k.',
+        '..krnrrk..k.',
+        '.krrrnrrk.k.',
+        'kdddddddk.k.',
+        'kdcccdddkkk.',
+        'kdddddddk.k.',
+        '.krrrrrrk.k.',
+        '.krk.krkk..k',
+      ],
+      [
+        '........kkk.',
+        '........LfL.',
+        '....kk..LfL.',
+        '...krrk..Lk.',
+        '..krrrrk..k.',
+        '..krnrrk..k.',
+        '.krrrnrrk.k.',
+        'kdddddddk.k.',
+        'kdcccdddkkk.',
+        'kdddddddk.k.',
+        '.krrrrrrk.k.',
+        '..kkrk.krk.k',
+      ],
+    ],
   },
 };
-const W_N = {
-  head: [
-    '...kkkkkk...',
-    '..kkkkkkkk..',
-    '..kkkkkkkk..',
-    '..kkkkkkkk..',
-    '...kssssk...',
-  ],
-  body: [
-    '..kmmmmmmk..',
-    '.kmbbbbbbmk.',
-    '.kmbccccbmk.',
-    '.ksbbbbbbsk.',
-    '..knnnnnnk..',
-  ],
-  legs: W_S.legs,
-};
-const W_E = {
-  head: [
-    '....kkkkk...',
-    '...kkwkkkkk.',
-    '...kkssssk..',
-    '...kkssksk..',
-    '....kssssk..',
-  ],
-  body: [
-    '.bbkmmmmk...',
-    '.bckmmmmmk..',
-    '.bbkmmmmss..',
-    '.bbknnnnk...',
-    '..knnnnnk...',
-  ],
-  legs: {
-    0: ['..knn.nnk...', '..kkk.kkkk..'],
-    1: ['.knn...nnk..', '.kkk....kkk.'],
-    2: ['...knnnnk...', '...kkkkkk...'],
-  },
-};
+W_ART.N.walk = [
+  W_ART.N.idle[0].slice(0, 11).concat(['.kkrk.kkrk.k']),
+  W_ART.N.idle[0].slice(0, 11).concat(['..krkk.krk.k']),
+];
+// slide: skidding on the heels, leaning back, staff thrust out and the lantern flung up and forward
 const W_SLIDE = [
-  '............',
-  '......kkkk..',
-  '.....kkwkkk.',
-  '.....kssssk.',
-  '..bb.ksksk..',
-  '.bbbkmmmmk..',
-  '.bbckmmmmmss',
-  '..bbknnnk...',
-  '...knnnnnkk.',
-  '....kknnnnnk',
-  '....kkkkkkkk',
-  '.r.r.r.r.r..',
+  '.........kkk',
+  '.........LfL',
+  '.........LfL',
+  '..kkk.....Lk',
+  '.krrrk...k..',
+  '.krnnrk.k...',
+  '.krsnrkk....',
+  'krrrrrrkk...',
+  'kdrrrrrrk...',
+  'kdkrrrrrrkk.',
+  '.kkrrrrrrrrk',
+  'r.r.kkkkkkkk',
 ];
 const W_RIPPLE = [
   [
-    '..hhhhhhhh..',
+    '..hhhhhhhhk.',
     '.hwwhhhhwwh.',
     '.ghhhhhhhhg.',
     '..gggggggg..',
   ],
   [
-    '..hhhhhhhh..',
+    '..hhhhhhhhk.',
     '.hhwwhhwwhh.',
     '.ghhhhhhhhg.',
     '..gggggggg..',
@@ -163,30 +275,46 @@ const W_MUD = [
     '..dddddddd..',
   ],
 ];
+// the staff stands in the mud / water: ink pixel in the first ripple row
+W_MUD[0][0] = '..ooooooook.';
+W_MUD[1][0] = '..ooooooook.';
 
-function walkerArt(dir, pose, frame) {
-  const set = dir === 'S' ? W_S : dir === 'N' ? W_N : W_E;
-  const base = [...set.head, ...set.body];
-  const legIdx = pose === 'idle' ? 0 : (frame === 0 ? 1 : 2);
-  return [...base, ...set.legs[legIdx]];
+function flipRows(art) { return art.map((r) => [...r].reverse().join('')); }
+
+/** The raw 12-row art (array of strings) for a pose; W is returned mirrored. */
+export function walkerArt(dir, pose = 'idle', frame = 0) {
+  const d = dir === 'W' ? 'E' : (dir === 'N' || dir === 'S' || dir === 'E' ? dir : 'S');
+  let art;
+  if (pose === 'slide') art = W_SLIDE;
+  else if (pose === 'wade' || pose === 'mud') {
+    art = W_ART[d].idle[0].slice(0, 8).concat((pose === 'wade' ? W_RIPPLE : W_MUD)[frame & 1]);
+  } else {
+    const set = W_ART[d][pose === 'walk' ? 'walk' : 'idle'];
+    art = set[frame & 1];
+  }
+  return dir === 'W' ? flipRows(art) : art;
 }
 
 /**
  * Walker sprite canvas. dir: 'N'|'E'|'S'|'W'; pose: 'idle'|'walk'|'slide'|'wade'|'mud';
- * frame 0/1 selects the walk step (or ripple phase for wade/mud).
+ * frame 0/1 selects the step (idle: the 2-frame flutter; wade/mud: ripple phase).
  */
 export function walkerSprite(dir, pose = 'idle', frame = 0) {
-  const flip = dir === 'W';
-  const d = dir === 'W' ? 'E' : dir;
-  if (pose === 'slide') return artCanvas('walker-slide', W_SLIDE, { flipX: flip });
-  if (pose === 'wade' || pose === 'mud') {
-    const art = walkerArt(d, 'idle', 0).slice(0, 8).concat((pose === 'wade' ? W_RIPPLE : W_MUD)[frame & 1]);
-    return artCanvas(`walker-${pose}-${d}-${frame & 1}`, art, { flipX: flip });
-  }
-  const art = walkerArt(d, pose, frame);
-  return artCanvas(`walker-${d}-${pose}-${frame}`, art, { flipX: flip });
+  const f = frame & 1;
+  const key = pose === 'slide' ? 'walker-slide' : `walker-${dir === 'W' ? 'E' : dir}-${pose}-${f}`;
+  return artCanvas(key, walkerArt(dir === 'W' ? 'E' : dir, pose, f), { flipX: dir === 'W' });
 }
 export const WALKER_SIZE = 12;
+
+/**
+ * Pixel offset (inside the 12x12 walker sprite) of the lantern flame, for dir/pose/frame.
+ * The renderer centres the lantern-light pool there (add the sprite's draw offset).
+ */
+export function lanternAnchor(dir, pose = 'idle', frame = 0) {
+  void frame;
+  const x = pose === 'slide' ? 10 : 9, y = 2;
+  return { x: dir === 'W' ? WALKER_SIZE - 1 - x : x, y };
+}
 
 // ------------------------------------------------------------- 8x8 icons
 export const ICON_ART = {
@@ -235,7 +363,7 @@ export const ICON_ART = {
     '..kkkk..',
     '.kkkkkk.',
     'kkkkkkkk',
-    '.kkkkkk.',
+    '.kLkkLk.',
     '.kk..kk.',
     '.kk..kk.',
     '........',
@@ -285,29 +413,31 @@ export function iconMono(type, color) {
 }
 
 // ------------------------------------------------------------- gate glyphs
-const GATE_ART = [
-  '...mmmmm...',
-  '..mm...mm..',
-  '.mm.....mm.',
-  '.m.......m.',
-  'mm.......mm',
-  'm.........m',
-  'm.........m',
-  'm.........m',
-  'm.........m',
-  'mmm.....mmm',
+// The bealach is marked by a small Celtic ring-cross: ink cross, stone-grey ring.
+// Open: the ring burns ice-cyan with a pale glow inside it.
+export const GATE_ART = [
+  '.....k.....',
+  '...rrkrr...',
+  '..r..k..r..',
+  '.r...k...r.',
+  'kkkkkkkkkkk',
+  '.r...k...r.',
+  '..r..k..r..',
+  '...rrkrr...',
+  '.....k.....',
+  '...kkkkk...',
 ];
-const GATE_OPEN_ART = [
-  '...mmmmm...',
-  '..mmwwwmm..',
-  '.mmwwwwwmm.',
-  '.mwwwwwwwm.',
-  'mmwwwwwwwmm',
-  'mwwwwwwwwwm',
-  'mwwwwwwwwwm',
-  'mwwwwwwwwwm',
-  'mwwwwwwwwwm',
-  'mmmwwwwwmmm',
+export const GATE_OPEN_ART = [
+  '.....k.....',
+  '...yykyy...',
+  '..y.yky.y..',
+  '.y.y.k.y.y.',
+  'kkkkkwkkkkk',
+  '.y.y.k.y.y.',
+  '..y.yky.y..',
+  '...yykyy...',
+  '.....k.....',
+  '...kkkkk...',
 ];
 export function gateSprite(open = false, mono = null) {
   return artCanvas(open ? 'gate-open' : 'gate', open ? GATE_OPEN_ART : GATE_ART, mono ? { mono } : {});
@@ -438,7 +568,7 @@ export const TOUCH_ICONS = {
 export function touchIcon(id, color) { return artCanvas('touch-' + id, TOUCH_ICONS[id] || TOUCH_ICONS.pause, { mono: color }); }
 
 // ----------------------------------------------------------- map symbols
-// p = paper knockout, b = waterInk, k = ink, m = magenta, h = water
+// p = paper knockout, b = waterInk, k = ink, m = magenta, h = water, r = rock, L = lamp (lit window)
 export const MAP_SYMBOLS = {
   trig: [
     '...b...',
@@ -458,7 +588,7 @@ export const MAP_SYMBOLS = {
     '..kkk..',
     '.kkkkk.',
     'kkkkkkk',
-    'kkkkkkk',
+    'kLkkkLk',
     'kkk.kkk',
     'kkk.kkk',
   ],
@@ -501,14 +631,14 @@ export const MAP_SYMBOLS = {
     'kkkkkkk',
   ],
   gate: [
-    '..mmmmm..',
-    '.mmpppmm.',
-    'mmpppppmm',
-    'mpppppppm',
-    'mpppppppm',
-    'mpppppppm',
-    'mpppppppm',
-    'mmpppppmm',
+    '....k....',
+    '..rrkrr..',
+    '.rppkppr.',
+    'kkkkkkkkk',
+    '.rppkppr.',
+    '..rrkrr..',
+    '....k....',
+    '..kkkkk..',
   ],
 };
 export function symbolSprite(type) { return artCanvas('sym-' + type, MAP_SYMBOLS[type] || MAP_SYMBOLS.cairn); }

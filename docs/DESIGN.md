@@ -17,7 +17,7 @@ Move and it becomes yours.
 5. **Shared sound world.** Drone foundation, a soloed lead, envelope percussion and granular/reverb/delay space. Each level re-weights these, and none drops any.
 
 ## Visual language
-An Ordnance Survey Landranger sheet rendered by an 8-bit console. The internal framebuffer is 384×216, integer-scaled with no smoothing. The 16-colour palette:
+An Ordnance Survey Landranger sheet rendered by an 8-bit console. The internal framebuffer is 384×216, integer-scaled with no smoothing. The 21-colour palette (the original 16 OS-sheet colours plus five gothic-ballad colours):
 
 | Name | Hex | Use |
 |---|---|---|
@@ -37,6 +37,11 @@ An Ordnance Survey Landranger sheet rendered by an 8-bit console. The internal f
 | rock | #a39d92 | scree/rock |
 | bog | #7fb3a0 | marsh tufts |
 | night | #20263a | night tint / UI panels |
+| lamp | #e8832a | bothy windows, lantern glow |
+| flame | #f4c43c | flame cores |
+| bolt | #f6c8f6 | lightning |
+| ice | #8ee6e6 | cross glow, frost, blown snow |
+| dusk | #4b4a7a | mist and sky at dusk/night |
 
 Map conventions:
 - 10 m contours (20 m in steep levels), with an index contour every 5th, thicker and labelled in tiny pixel digits that follow the slope.

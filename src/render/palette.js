@@ -1,5 +1,6 @@
 /**
- * CONTOURS palette: the strict 16 colours, plus the day/night tint machinery.
+ * CONTOURS palette: the strict 21 colours (the original 16 OS-sheet colours plus the five
+ * gothic-ballad colours lamp / flame / bolt / ice / dusk), plus the day/night tint machinery.
  * No DOM here: everything works on plain typed arrays so it can run in Node.
  */
 
@@ -20,7 +21,18 @@ export const PAL = Object.freeze({
   rock: '#a39d92',
   bog: '#7fb3a0',
   night: '#20263a',
+  // gothic-ballad additions (indices 16..20)
+  lamp: '#e8832a',      // orange: bothy windows, lantern glow
+  flame: '#f4c43c',     // yellow: flame cores
+  bolt: '#f6c8f6',      // pink-white: lightning
+  ice: '#8ee6e6',       // cyan: cross glow, frost
+  dusk: '#4b4a7a',      // violet: mist and sky at dusk/night
 });
+
+/** Number of colours in the strict palette. */
+export const PAL_COUNT = 21;
+/** The original OS-sheet colours (indices 0..15). Level tints still snap to these only. */
+export const BASE_COUNT = 16;
 
 export const PAL_NAMES = Object.freeze(Object.keys(PAL));
 export const PAL_INDEX = Object.freeze(Object.fromEntries(PAL_NAMES.map((n, i) => [n, i])));
@@ -46,10 +58,10 @@ export const PAL_U32_LIST = Object.freeze(PAL_NAMES.map((n) => PAL_U32[n]));
 export function rgbU32(r, g, b) { return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0; }
 
 // ---------------------------------------------------------------- quantize
-/** Nearest palette index for an r,g,b triple. */
-export function quantize(r, g, b) {
+/** Nearest palette index for an r,g,b triple (searches the first `limit` colours, default all). */
+export function quantize(r, g, b, limit = PAL_NAMES.length) {
   let best = 0, bd = Infinity;
-  for (let i = 0; i < PAL_NAMES.length; i++) {
+  for (let i = 0; i < limit; i++) {
     const c = PAL_RGB[PAL_NAMES[i]];
     const dr = c[0] - r, dg = c[1] - g, db = c[2] - b;
     const d = dr * dr * 2 + dg * dg * 4 + db * db * 3;
@@ -57,13 +69,13 @@ export function quantize(r, g, b) {
   }
   return best;
 }
-export function quantizeHex(hex) {
+export function quantizeHex(hex, limit = PAL_NAMES.length) {
   const c = hexToRgb(hex);
-  return PAL_NAMES[quantize(c[0], c[1], c[2])];
+  return PAL_NAMES[quantize(c[0], c[1], c[2], limit)];
 }
 
 // ------------------------------------------------------- u32 -> palette idx
-// Perfect-hash the 16 colours into a small lookup table so tint passes are
+// Perfect-hash the palette colours into a small lookup table so tint passes are
 // branch-light. Non-palette pixels map to 255.
 let HASH_M = 0;
 let HASH_LUT = null;
@@ -138,7 +150,7 @@ export function tintFor(phase, levelTint) {
     wash: Object.entries(k.wash).filter(([, d]) => d > 0).map(([color, density]) => ({ color, density })),
   };
   if (levelTint) {
-    const q = quantizeHex(levelTint);
+    const q = quantizeHex(levelTint, BASE_COUNT);   // level tints keep snapping to the original 16
     if (q !== 'paper' && q !== 'paper2' && q !== 'snow' && q !== 'night' && q !== 'ink') {
       const e = t.wash.find((w) => w.color === q);
       if (e) e.density = Math.min(0.3, e.density + 0.03);
@@ -148,10 +160,12 @@ export function tintFor(phase, levelTint) {
   return t;
 }
 
-/** Continuous tint from timeOfDay in [0,1): interpolates between phase centres. */
-export function tintAt(timeOfDay, levelTint) {
+/**
+ * Where timeOfDay sits between two phase centres: { a, b, f } with f in [0,1] already held/eased
+ * (each phase holds through the middle of its span and eases at the boundaries).
+ */
+export function phaseBlend(timeOfDay) {
   const p = ((timeOfDay % 1) + 1) % 1;
-  // find the two phase centres around p
   let i0 = 3;                                     // before the first centre we are between night and dawn
   for (let i = 0; i < 4; i++) {
     const c = PHASE_CENTRE[ORDER[i]];
@@ -163,10 +177,15 @@ export function tintAt(timeOfDay, levelTint) {
   let pp = p;
   if (cb <= ca) cb += 1;
   if (pp < ca) pp += 1;           // wrapped segment (night -> dawn)
-  // hold each phase for the middle part, ease between at the boundaries
   let f = (pp - ca) / (cb - ca);
   f = f < 0.25 ? 0 : f > 0.75 ? 1 : (f - 0.25) / 0.5;
   f = f * f * (3 - 2 * f);
+  return { a, b, f };
+}
+
+/** Continuous tint from timeOfDay in [0,1): interpolates between phase centres. */
+export function tintAt(timeOfDay, levelTint) {
+  const { a, b, f } = phaseBlend(timeOfDay);
   const ta = tintFor(a, levelTint), tb = tintFor(b, levelTint);
   const colors = new Map();
   for (const w of ta.wash) colors.set(w.color, [w.density, 0]);
@@ -185,16 +204,16 @@ export function tintAt(timeOfDay, levelTint) {
 
 // colour groups for the tint pass ------------------------------------------
 const I = PAL_INDEX;
-const LIGHT = new Uint8Array(16);      // takes the warm / wash tints (hues of water and wood stay put)
+const LIGHT = new Uint8Array(PAL_COUNT);      // takes the warm / wash tints (hues of water and wood stay put)
 [I.paper, I.paper2, I.snow].forEach((i) => { LIGHT[i] = 1; });
 // warmer neighbour
-const WARM = new Uint8Array(16).map((_, i) => i);
+const WARM = new Uint8Array(PAL_COUNT).map((_, i) => i);
 WARM[I.paper] = I.paper2; WARM[I.snow] = I.paper;
 // Night look: each colour becomes a 2-colour ordered dither (A, then B for a fraction W),
 // chosen so the ground goes quiet and dark while contours, symbols and text glow.
-const NIGHT_A = new Uint8Array(16).map((_, i) => i);
-const NIGHT_B = new Uint8Array(16).map((_, i) => i);
-const NIGHT_W = new Float32Array(16);
+const NIGHT_A = new Uint8Array(PAL_COUNT).map((_, i) => i);
+const NIGHT_B = new Uint8Array(PAL_COUNT).map((_, i) => i);
+const NIGHT_W = new Float32Array(PAL_COUNT);
 function nightMap(c, a, b, w) { NIGHT_A[I[c]] = I[a]; NIGHT_B[I[c]] = I[b]; NIGHT_W[I[c]] = w; }
 nightMap('paper', 'night', 'ink', 0.30);
 nightMap('paper2', 'night', 'waterInk', 0.12);
@@ -216,8 +235,10 @@ nightMap('waterInk', 'waterDeep', 'waterDeep', 0);
  * buf: Uint32Array (w*h), tint from tintFor/tintAt. (ox,oy) = world offset of
  * pixel (0,0) so the dither pattern stays glued to the terrain when scrolling.
  * rows y0..y1 are processed (default all).
+ * lightMap (optional Uint8Array w*h, 255 = unlit): scales the night amount per pixel, so a
+ * lantern or a window can hold the darkness back (see fx.js).
  */
-export function applyTint(buf, w, h, tint, ox = 0, oy = 0, y0 = 0, y1 = h) {
+export function applyTint(buf, w, h, tint, ox = 0, oy = 0, y0 = 0, y1 = h, lightMap = null) {
   if (!tint) return;
   const night = tint.night, warm = tint.warm;
   const washes = tint.wash.map((s) => ({ d: s.density, u: PAL_U32[s.color] }));
@@ -244,9 +265,10 @@ export function applyTint(buf, w, h, tint, ox = 0, oy = 0, y0 = 0, y1 = h) {
           if (t < washes[k].d * 2 && ((wx + wy) & 1) === 0) out = washes[k].u;
         }
       }
-      if (night > 0) {
+      const nt = lightMap ? night * lightMap[y * w + x] * (1 / 255) : night;
+      if (nt > 0) {
         const t = (BAYER8[rowB3 | ((wx + 1) & 7)] + 0.5) / 64;
-        if (t < night) {
+        if (t < nt) {
           const m = (BAYER4[row4 | (wx & 3)] + 0.5) / 16;
           out = PAL_U32_LIST[m < NIGHT_W[pi] ? NIGHT_B[pi] : NIGHT_A[pi]];
         }
