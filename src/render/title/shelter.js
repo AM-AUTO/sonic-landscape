@@ -11,7 +11,7 @@
  */
 import bake from './baked/shelter.js';
 import { decodeBaked, blitBaked, pulseBakedEmbers } from './bakedkit.js';
-import { paintTitleLogo, animLogo, paintMistBands, animMistBands, paintFootPlate, textClear } from './kit.js';
+import { paintTitleLogo, animLogo, paintMistBands, animMistBands, paintFootPlate } from './kit.js';
 
 export const layout = { prompt: { x: 192, y: 177 }, colors: { subtitle: 'snow' } };
 export const levels = [];
@@ -19,9 +19,8 @@ export const levels = [];
 export function paint(r, spec, S) {
   S.baked = decodeBaked(bake);
   blitBaked(r, S.baked);
-  // the foot: calm dark ground under the prompt / controls / strapline; a little clearing behind the subtitle
-  paintFootPlate(r, 168, { strength: 0.38 });
-  textClear(r, { x: 0, y: 186, w: r.w, h: 30 }, 0.25);
+  // the foot: calm dark ground under the prompt / controls / strapline
+  paintFootPlate(r, 184, { strength: 0.3 });
   paintTitleLogo(r, S);
   // mist hangs on the far layers only (layerMax 1): the hut, cairns and grass stay in front of it
   S.mist = paintMistBands(r, [{ y: 88, rows: 24, dens: 0.55, layerMax: 1, speed: 3 }, { y: 112, rows: 14, dens: 0.5, layerMax: 1, speed: -4 }], S.seed);

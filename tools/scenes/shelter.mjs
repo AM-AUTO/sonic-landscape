@@ -26,34 +26,34 @@ export const TUNE = {
   ambSky: 0.24, ambGround: 0.09,
   aoRadius: 0.3,       // metres
   // ---- camera (low and close)
-  camDist: 6.8,        // metres from the hut centre
+  camDist: 6.2,        // metres from the hut centre
   camH: 0.72,          // eye height
   camTilt: 1.0,        // degrees looking up
   camFov: 38,          // vertical field of view
-  camShiftY: 0.12,     // lens shift: + moves the picture DOWN the frame (fraction of half the height), without changing the perspective
+  camShiftY: 0.13,      // lens shift: + moves the picture DOWN the frame (fraction of half the height), without changing the perspective
   camX: 0.1,           // sideways offset
   camLookX: 0.0,
   // ---- hut
-  hutW: 3.2,           // outer width (m, along the front wall)
+  hutW: 2.9,           // outer width (m, along the front wall)
   hutD: 2.2,           // outer depth
   hutYaw: 9,           // degrees; > 0 shows the right-hand side wall (in shade) beside the lit front
   courses: 5,          // courses of slabs below the roof
-  courseH: 0.15,      // average course height
+  courseH: 0.165,      // average course height
   wallT: 0.5,          // wall thickness
   slabLenMin: 0.28, slabLenMax: 0.85,
   chip: 0.05,          // corner chipping (m)
   slabRough: 0.016,    // surface roughness amplitude
   pinning: 0.55,       // chance of a pinning stone wedged into a joint
-  lichen: 0.5,         // lichen coverage on stone, 0..1
+  lichen: 0.42,        // lichen coverage on stone, 0..1
   doorW: 0.82, doorX: 0.12, doorCourses: 3,  // doorway width / offset / courses high (door height = those courses)
   lintelH: 0.2, lintelLen: 1.75,
-  turfH: 0.38,        // thickness of the turf roof above the capstones
+  turfH: 0.42,        // thickness of the turf roof above the capstones
   turfBlades: 80,      // tufts round the fringe and over the crown
   // ---- the ember
   glowU: 0.10, glowY: 0.13, glowW: 0.62,  // position in the hut frame (u across, y up, w depth; +w = towards the back wall)
-  glowR: 0.055,        // radius of the glowing coal (m)
-  glowInt: 0.4,        // light thrown on the interior stones
-  glowHalo: 0.30,      // reach of the sparse ember halo (m)
+  glowR: 0.075,        // radius of the glowing coal (m)
+  glowInt: 0.55,       // light thrown on the interior stones
+  glowHalo: 0.34,      // reach of the sparse ember halo (m)
   // ---- foreground
   tussocks: 9,         // tussock clumps
   tussockH: 0.85,       // tallest clump (m)
@@ -201,7 +201,7 @@ export function build(params = {}) {
   // roof: thin capstones laid across the wall tops, front to back; then the turf
   const roofY = wallTop + 0.005;
   for (let u = -W / 2 + 0.05; u < W / 2 - 0.2;) {
-    const lu = 0.7 + 0.3 * rngT();
+    const lu = Math.min(0.7 + 0.3 * rngT(), W / 2 - 0.05 - u);
     wslab(u + lu / 2, 0.01 + (rngT() - 0.5) * 0.04, roofY + (rngT() - 0.5) * 0.012, lu, 0.07 + 0.04 * rngT(), D - 0.2 + 0.06 * rngT(), { jit: 0.7, round: 0.03, taper: 0.03 });
     u += lu + 0.012;
   }
