@@ -18,11 +18,8 @@ export const COVER_NAMES = ['moor', 'path', 'bog', 'scree', 'crag', 'snow', 'woo
 /** POI / artefact types. */
 export const POI_TYPES = Object.freeze(['trig', 'cairn', 'lochan', 'waterfall', 'bothy', 'stone', 'crag', 'summit']);
 
-/** Artefact names, keyed by POI type. */
-export const ARTEFACT_NAMES = Object.freeze({
-  trig: 'Triangulation', cairn: 'Accretion', lochan: 'Reflection', waterfall: 'Cascade',
-  bothy: 'Hearth', stone: 'Monolith', crag: 'Fracture', summit: 'Apex',
-});
+/** Artefact names, keyed by POI type. Display text lives in src/text.js. */
+export { ARTEFACT_NAMES } from '../text.js';
 
 export const MAP_SIZE = 256;        // cells per side
 export const CELL_METERS = 40;      // 256 * 40 m = 10.24 km

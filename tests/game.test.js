@@ -875,7 +875,7 @@ test('knowledge: heard/woken counts; track 0 reveals every missing condition on 
   const e1 = poiEvents(evs)[0];
   assert.equal(e1.full, false);
   assert.deepEqual(e1.missing, ['dwell']);                // standing still: speed ok, dwell missing
-  assert.deepEqual(e1.plain, ['Stand still beside it for 100 seconds.']);
+  assert.deepEqual(e1.plain, ['Staun still aside it for 100 seconds.']);
   assert.deepEqual(e1.learnedNow, ['dwell']);
   assert.equal(e1.inChain, false); assert.equal(e1.keysTotal, 0); assert.equal(e1.keysSounding, 0);
   assert.deepEqual(g.state.knowledge.p, { heard: 1, woken: false, learned: ['dwell'] });
@@ -906,7 +906,7 @@ test('knowledge: other tracks show poetic hint first, plain text from the second
   leaveAndReturn(g, 100, 128, e2);
   const p2 = poiEvents(e2)[0];
   assert.deepEqual(p2.learnedNow, ['dwell']);
-  assert.deepEqual(p2.plain, ['Stand still beside it for 100 seconds.']);
+  assert.deepEqual(p2.plain, ['Staun still aside it for 100 seconds.']);
   assert.equal(g.state.knowledge.p.heard, 2);
 });
 
@@ -978,7 +978,7 @@ test('bothy-guide: targets the nearest un-woken POI of the first silent chain ty
   const gd = evs.filter((e) => e.type === 'bothy-guide');
   assert.equal(gd.length, 1);
   assert.equal(gd[0].poi.id, 'bo'); assert.equal(gd[0].target.id, 'la');
-  assert.equal(gd[0].text, 'A note pinned by the door: La — approach slowly: hold SPACE as you walk.');
+  assert.equal(gd[0].text, 'A note preened tae the door: La — come at it canny: haud SPACE as ye walk.');
   assert.deepEqual(g.state.knowledge.la.learned, ['speed']);
   // order: poi event, then guide
   assert.ok(evs.indexOf(note) < evs.indexOf(gd[0]));
@@ -990,7 +990,7 @@ test('bothy-guide: targets the nearest un-woken POI of the first silent chain ty
   leaveAndReturn(g, 100, 128, e3, 20.5);
   const g3 = e3.filter((e) => e.type === 'bothy-guide')[0];
   assert.equal(g3.target.id, 'cr');
-  assert.match(g3.text, /^A note pinned by the door: Cr — come down to it from higher ground\.$/);
+  assert.match(g3.text, /^A note preened tae the door: Cr — come doun tae it fae the heicher grund\.$/);
   // nothing left to teach -> no event
   const e4 = [];
   leaveAndReturn(g, 100, 128, e4, 20.5);

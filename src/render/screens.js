@@ -11,19 +11,16 @@ import { ARTEFACT_NAMES, POI_TYPES, CELL_PX } from '../world/codes.js';
 import { gridRef, bearingDeg } from './hud.js';
 import { gatePlacement } from './mapbake.js';
 import { hash2f } from '../core/rng.js';
+import { ROMAN, TITLE, SELECT, PAUSE, NOTES, COMPLETE, MAP, fmt } from '../text.js';
 
-const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
-
-export const TRACKS = [
-  { id: 'rannoch', name: 'Rannoch Moor', gaelic: 'Mòinteach Raineach', gridLetters: 'NN', subtitle: 'I. The Moor', chain: ['lochan', 'cairn'] },
-  { id: 'affric', name: 'Glen Affric', gaelic: 'Gleann Afraig', gridLetters: 'NH', subtitle: 'II. The Pinewood', chain: ['waterfall', 'lochan', 'bothy'] },
-  { id: 'coe', name: 'Glen Coe', gaelic: 'Gleann Comhann', gridLetters: 'NN', subtitle: 'III. The Pass', chain: ['crag', 'stone', 'trig'] },
-  { id: 'cairngorm', name: 'Cairngorm Plateau', gaelic: 'Am Monadh Ruadh', gridLetters: 'NJ', subtitle: 'IV. The Plateau', chain: ['lochan', 'summit', 'cairn'] },
-  { id: 'torridon', name: 'Torridon', gaelic: 'Toirbheartan', gridLetters: 'NG', subtitle: 'V. The Sandstone', chain: ['waterfall', 'crag', 'summit', 'bothy'] },
-  { id: 'cuillin', name: 'The Cuillin', gaelic: "A' Chuiltheann", gridLetters: 'NG', subtitle: 'VI. The Ridge', chain: ['crag', 'trig', 'lochan', 'stone'] },
-  { id: 'assynt', name: 'Assynt', gaelic: 'Asaint', gridLetters: 'NC', subtitle: 'VII. The Stillness', chain: ['stone', 'lochan', 'summit'] },
-  { id: 'nevis', name: 'Ben Nevis', gaelic: 'Beinn Nibheis', gridLetters: 'NN', subtitle: 'VIII. Homecoming', chain: ['waterfall', 'bothy', 'crag', 'summit'] },
-];
+/** Geometry the tests measure text against (kept in step with the draw code below). */
+export const LAYOUT = Object.freeze({
+  sw: 384,
+  select: Object.freeze({ x0: 8, lw: 222, nameX: 40, panelX: 242, panelW: 134 }),
+  map: Object.freeze({ rx: 234, rw: 144, ix0: 240, iw: 132, labelX: 16, nameX: 80 }),
+  pause: Object.freeze({ w: 150, itemX: 26 }),
+  complete: Object.freeze({ w: 262 }),
+});
 
 const CHECK = [[0, 2], [1, 3], [2, 2], [3, 1], [4, 0]];
 function check(ctx, x, y, color) { ctx.fillStyle = color; for (const [a, b] of CHECK) ctx.fillRect(x + a, y + b, 1, 1); }
@@ -36,10 +33,10 @@ function ticksBorder(ctx, SW, SH) {
 function blink(t, rate = 1.6, duty = 0.62) { return ((t * rate) % 1) < duty; }
 
 function levelList(ui) {
-  const src = ui.levels && ui.levels.length ? ui.levels : TRACKS;
-  return src.map((l, i) => ({
+  // the tracklist is built from the level files; main.js always supplies ui.levels (= LEVELS)
+  return (ui.levels || []).map((l, i) => ({
     id: l.id, name: l.name, gaelic: l.gaelic, gridLetters: l.gridLetters,
-    subtitle: l.subtitle || (ROMAN[i] + '.'), chain: (l.gate && l.gate.chain) || l.chain || (TRACKS[i] && TRACKS[i].chain) || [],
+    subtitle: l.subtitle || (ROMAN[i] + '.'), chain: (l.gate && l.gate.chain) || l.chain || [],
   }));
 }
 
@@ -128,14 +125,14 @@ function title(env) {
   rect(ctx, 6, 6, SW - 12, 46, PAL.magenta);
   hline(ctx, 6, 52, SW - 12, PAL.ink);
   ditherRect(ctx, 6, 44, SW - 12, 8, PAL.ink, 0.12);
-  drawText(ctx, 'CONTOURS', SW / 2 + 3, 14 + 3, PAL.ink, { scale: 4, spacing: 1, align: 'center' });
-  drawText(ctx, 'CONTOURS', SW / 2, 14, PAL.snow, { scale: 4, spacing: 1, align: 'center' });
-  drawText(ctx, 'ALBUM EDITION', 12, 11, PAL.snow, { font: 'small', spacing: 1 });
-  drawText(ctx, '1:25 000', SW - 12, 11, PAL.snow, { font: 'small', spacing: 1, align: 'right' });
-  drawText(ctx, 'SHEETS I-VIII', 12, 17, PAL.paper2, { font: 'small', spacing: 1 });
-  drawText(ctx, 'SONIC SURVEY', SW - 12, 17, PAL.paper2, { font: 'small', spacing: 1, align: 'right' });
+  drawText(ctx, TITLE.masthead, SW / 2 + 3, 14 + 3, PAL.ink, { scale: 4, spacing: 1, align: 'center' });
+  drawText(ctx, TITLE.masthead, SW / 2, 14, PAL.snow, { scale: 4, spacing: 1, align: 'center' });
+  drawText(ctx, TITLE.cornerLeft[0], 12, 11, PAL.snow, { font: 'small', spacing: 0 });
+  drawText(ctx, TITLE.cornerRight[0], SW - 12, 11, PAL.snow, { font: 'small', spacing: 0, align: 'right' });
+  drawText(ctx, TITLE.cornerLeft[1], 12, 17, PAL.paper2, { font: 'small', spacing: 0 });
+  drawText(ctx, TITLE.cornerRight[1], SW - 12, 17, PAL.paper2, { font: 'small', spacing: 0, align: 'right' });
 
-  drawText(ctx, 'a playable album in eight glens', SW / 2, 58, PAL.ink, { italic: true, spacing: 1, align: 'center' });
+  drawText(ctx, TITLE.subtitle, SW / 2, 58, PAL.ink, { italic: true, spacing: 1, align: 'center' });
 
   // emblem window
   const ex = Math.round((SW - EMB_W) / 2), ey = 72;
@@ -163,16 +160,14 @@ function title(env) {
   // prompt
   const ph = blink(t, 1.2, 0.65);
   if (ph) {
-    drawText(ctx, 'PRESS ENTER / TAP TO BEGIN', SW / 2, 168, PAL.ink, { spacing: 1, align: 'center' });
-    const w = measureText('PRESS ENTER / TAP TO BEGIN', { spacing: 1 });
+    drawText(ctx, TITLE.prompt, SW / 2, 168, PAL.ink, { spacing: 1, align: 'center' });
+    const w = measureText(TITLE.prompt, { spacing: 1 });
     drawText(ctx, '→', SW / 2 - w / 2 - 12 + (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
     drawText(ctx, '←', SW / 2 + w / 2 + 6 - (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
   }
-  const how = ui.touchVisible
-    ? 'HEADPHONES \u00b7 TOUCH: DRAG TO WALK \u00b7 BUTTONS: RUN, LISTEN, MAP, NOTES'
-    : 'HEADPHONES \u00b7 ARROWS/WASD WALK \u00b7 SHIFT RUN \u00b7 SPACE LISTEN \u00b7 M MAP \u00b7 L NOTES';
+  const how = ui.touchVisible ? TITLE.controlsTouch : TITLE.controlsKeys;
   drawText(ctx, how, SW / 2, 182, PAL.waterInk, { font: 'small', align: 'center' });
-  drawText(ctx, 'EIGHT GLENS  \u00b7  ONE RECORD  \u00b7  THE MAP IS THE SCORE', SW / 2, 191, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
+  drawText(ctx, TITLE.strapline, SW / 2, 191, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
   ruler(ctx, 12, 205, SW - 24, 4, PAL.grid, 3, 2, 4);
   hline(ctx, 12, 205, SW - 24, PAL.grid);
 }
@@ -252,11 +247,11 @@ function select(env) {
   // header
   rect(ctx, 0, 0, SW, 16, PAL.paper2);
   hline(ctx, 0, 16, SW, PAL.ink);
-  drawText(ctx, 'INDEX TO TRACKS', 8, 4, PAL.ink, { spacing: 1 });
-  drawText(ctx, 'CONTOURS · ALBUM EDITION', SW - 8, 6, PAL.contourIdx, { font: 'small', spacing: 1, align: 'right' });
+  drawText(ctx, SELECT.header, 8, 4, PAL.ink, { spacing: 1 });
+  drawText(ctx, SELECT.headerRight, SW - 8, 6, PAL.contourIdx, { font: 'small', spacing: 1, align: 'right' });
   ruler(ctx, 0, 16, SW, 8, PAL.grid, 3, 2, 4);
 
-  const x0 = 8, y0 = 22, rh = 22, lw = 222;
+  const x0 = LAYOUT.select.x0, y0 = 22, rh = 22, lw = LAYOUT.select.lw;
   levels.forEach((lv, i) => {
     const y = y0 + i * rh;
     const unlocked = isUnlocked(ui, levels, i), done = isCompleted(ui, levels, i), on = i === sel;
@@ -291,7 +286,7 @@ function select(env) {
   });
 
   // right panel: sheet cover + details
-  const rx = 242, rw = SW - rx - 8;
+  const rx = LAYOUT.select.panelX, rw = SW - rx - 8;
   const lv = levels[sel];
   const unlocked = isUnlocked(ui, levels, sel);
   panel(ctx, rx, 22, rw, 176, { fill: PAL.paper, shadow: PAL.paper2 });
@@ -304,7 +299,7 @@ function select(env) {
     rect(ctx, tx + THUMB_W / 2 - 18, ty + THUMB_H / 2 - 14, 36, 28, PAL.paper);
     frame(ctx, tx + THUMB_W / 2 - 18, ty + THUMB_H / 2 - 14, 36, 28, PAL.ink);
     ctx.drawImage(padlockSprite(PAL.ink), tx + THUMB_W / 2 - 3, ty + THUMB_H / 2 - 8);
-    drawText(ctx, 'LOCKED', tx + THUMB_W / 2, ty + THUMB_H / 2 + 3, PAL.ink, { font: 'small', align: 'center' });
+    drawText(ctx, SELECT.locked, tx + THUMB_W / 2, ty + THUMB_H / 2 + 3, PAL.ink, { font: 'small', align: 'center' });
   }
   const cx = rx + rw / 2;
   const subT = String(lv.subtitle || '').toUpperCase();
@@ -313,7 +308,7 @@ function select(env) {
   drawText(ctx, String(lv.name).toUpperCase(), cx, 130, unlocked ? PAL.ink : PAL.rock, { align: 'center', font: 'small', spacing: 1 });
   hline(ctx, rx + 10, 141, rw - 20, PAL.grid);
   // gate chain
-  drawText(ctx, 'GATE CHAIN', rx + 10, 146, PAL.contourIdx, { font: 'small', spacing: 1 });
+  drawText(ctx, SELECT.chainHeading, rx + 10, 146, PAL.contourIdx, { font: 'small', spacing: 1 });
   const chain = lv.chain || [];
   let ix = rx + 10;
   chain.forEach((type) => {
@@ -323,36 +318,36 @@ function select(env) {
     ix += 13;
   });
   ctx.drawImage(gateSprite(false, unlocked ? null : PAL.rock), ix + 1, 153);
-  const status = !unlocked ? 'LOCKED' : isCompleted(ui, levels, sel) ? 'COMPLETE' : 'OPEN';
+  const status = !unlocked ? SELECT.locked : isCompleted(ui, levels, sel) ? SELECT.statusDone : SELECT.statusOpen;
   drawText(ctx, status, rx + 10, 172, unlocked ? PAL.waterInk : PAL.rock, { font: 'small', spacing: 1 });
   if (isCompleted(ui, levels, sel)) check(ctx, rx + 10 + measureText(status, { font: 'small', spacing: 1 }) + 4, 171, PAL.magenta);
-  if (unlocked && blink(t, 1.4, 0.7)) drawText(ctx, 'ENTER TO WALK', cx, 185, PAL.magenta, { font: 'small', align: 'center', spacing: 1 });
+  if (unlocked && blink(t, 1.4, 0.7)) drawText(ctx, SELECT.prompt, cx, 185, PAL.magenta, { font: 'small', align: 'center', spacing: 1 });
 
   hline(ctx, 0, SH - 14, SW, PAL.ink);
   rect(ctx, 0, SH - 13, SW, 13, PAL.paper2);
-  drawText(ctx, '↑↓ CHOOSE    ENTER WALK    ESC BACK', SW / 2, SH - 9, PAL.contourIdx, { font: 'small', spacing: 1, align: 'center' });
+  drawText(ctx, SELECT.footer, SW / 2, SH - 9, PAL.contourIdx, { font: 'small', spacing: 1, align: 'center' });
 }
 
 // =================================================================== pause
 function pause(env) {
   const { ctx, ui, t, SW, SH } = env;
-  const items = ui.items || ['RESUME', 'FIELD NOTES', 'SHEET MAP', 'TRACKLIST'];
+  const items = ui.items || PAUSE.items.map((it) => it.label);
   const sel = clamp(ui.selected | 0, 0, items.length - 1);
-  const w = 150, h = 34 + items.length * 13 + 14;
+  const w = LAYOUT.pause.w, h = 34 + items.length * 13 + 14;
   const x = Math.round((SW - w) / 2), y = Math.round((SH - h) / 2);
   panel(ctx, x, y, w, h, { fill: PAL.paper, inner: PAL.grid });
   rect(ctx, x + 3, y + 3, w - 6, 20, PAL.magenta);
-  drawText(ctx, 'PAUSED', x + w / 2 + 1, y + 7 + 1, PAL.ink, { align: 'center', scale: 1, spacing: 4 });
-  drawText(ctx, 'PAUSED', x + w / 2, y + 7, PAL.snow, { align: 'center', spacing: 4 });
+  drawText(ctx, PAUSE.heading, x + w / 2 + 1, y + 7 + 1, PAL.ink, { align: 'center', scale: 1, spacing: 4 });
+  drawText(ctx, PAUSE.heading, x + w / 2, y + 7, PAL.snow, { align: 'center', spacing: 4 });
   items.forEach((it, i) => {
     const iy = y + 30 + i * 13;
     if (i === sel) {
       rect(ctx, x + 8, iy - 2, w - 16, 11, PAL.paper2);
       drawText(ctx, '→', x + 11 + (Math.floor(t * 3) & 1), iy, PAL.magenta, {});
     }
-    drawText(ctx, it, x + 26, iy, i === sel ? PAL.ink : PAL.contourIdx, { spacing: 1 });
+    drawText(ctx, it, x + LAYOUT.pause.itemX, iy, i === sel ? PAL.ink : PAL.contourIdx, { spacing: 1 });
   });
-  drawText(ctx, 'ESC RESUME', x + w / 2, y + h - 11, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
+  drawText(ctx, PAUSE.footer, x + w / 2, y + h - 11, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
 }
 
 // ====================================================================== map
@@ -458,7 +453,7 @@ function mapScreen(env) {
   }
 
   // ------------------------------------------------------------ right panel
-  const rx = 234, rw = SW - rx - 6, ix0 = rx + 6, iw = rw - 12;
+  const rx = LAYOUT.map.rx, rw = SW - rx - 6, ix0 = rx + 6, iw = rw - 12;
   panel(ctx, rx, 4, rw, 208, { fill: PAL.paper, shadow: PAL.ink });
   drawText(ctx, String(lv.name || '').toUpperCase(), ix0, 8, PAL.ink, { spacing: 1 });
   drawText(ctx, lv.gaelic || '', ix0, 19, PAL.contourIdx, { font: 'small' });
@@ -471,7 +466,7 @@ function mapScreen(env) {
   hline(ctx, rx + 5, 26 + ho, rw - 10, PAL.ink);
 
   // legend: symbol, type label, what its artefact does
-  drawText(ctx, 'LEGEND', ix0, 30 + ho, PAL.contourIdx, { font: 'small', spacing: 1 });
+  drawText(ctx, MAP.legend, ix0, 30 + ho, PAL.contourIdx, { font: 'small', spacing: 1 });
   const present = new Set(pois.map((p) => p.type));
   POI_TYPES.forEach((type, i) => {
     const y = 38 + ho + i * 9;
@@ -482,20 +477,22 @@ function mapScreen(env) {
       if (chainTypes.has(type)) pcircle(ctx, cxm, y + 4, 6, PAL.magenta);
       ctx.drawImage(spr, Math.round(cxm - spr.width / 2), Math.round(y + 4 - spr.height / 2));
     } else { ctx.fillStyle = PAL.rock; for (let k = 0; k < 5; k += 2) ctx.fillRect(cxm - 2 + k, y + 4, 1, 1); }
-    drawText(ctx, typeLabel(type), ix0 + 16, y + 1, here ? PAL.ink : PAL.rock, { font: 'small' });
-    drawText(ctx, type === 'bothy' ? 'FIELD NOTES' : ARTEFACT_NAMES[type].toUpperCase(), ix0 + 16 + 64, y + 1, here ? PAL.contourIdx : PAL.rock, { font: 'small' });
+    drawText(ctx, typeLabel(type), ix0 + LAYOUT.map.labelX, y + 1, here ? PAL.ink : PAL.rock, { font: 'small' });
+    drawText(ctx, type === 'bothy' ? MAP.bothyRow : ARTEFACT_NAMES[type].toUpperCase(), ix0 + LAYOUT.map.nameX, y + 1, here ? PAL.contourIdx : PAL.rock, { font: 'small' });
   });
   hline(ctx, rx + 5, 111 + ho, rw - 10, PAL.grid);
 
   // the key: what has to sound together
   let ky = 114 + ho;
-  drawText(ctx, 'KEY', ix0, ky, PAL.magenta, { font: 'small', spacing: 1 });
-  drawText(ctx, 'WAKE TOGETHER', ix0 + 17, ky, PAL.contourIdx, { font: 'small' });
+  // "KEY · WAUKEN THEGITHER": the first word in magenta, the rest in the legend brown
+  const [keyWord, ...keyRest] = MAP.keyHeading.split(' ');
+  const keyW = drawText(ctx, keyWord, ix0, ky, PAL.magenta, { font: 'small', spacing: 1 });
+  drawText(ctx, keyRest.join(' '), ix0 + keyW + 4, ky, PAL.contourIdx, { font: 'small' });
   ky += 8;
   let kx = ix0;
   chain.forEach((c, i) => {
     const count = c.count != null ? c.count : pois.filter((q) => q.type === c.type).length;
-    const label = (count > 1 ? 'ANY ' : '') + typeShort(c.type);
+    const label = count > 1 ? fmt(MAP.anyType, { type: typeShort(c.type) }) : typeShort(c.type);
     const cw = 12 + measureText(label, { font: 'small' }) + 1;
     const sep = i < chain.length - 1 ? 7 : 0;
     if (kx > ix0 && kx + cw > ix0 + iw) { kx = ix0; ky += 11; }
@@ -511,7 +508,7 @@ function mapScreen(env) {
     const lit = chain.filter((c) => c.resonating).length;
     ctx.drawImage(gateSprite(!!(state && state.gateOpen)), ix0, ky - 1, 9, 8);
     drawText(ctx, String(w.gate.name || 'Bealach').toUpperCase(), ix0 + 12, ky + 1, PAL.magenta, { font: 'small' });
-    const stat = state && state.gateOpen ? 'OPEN' : `${lit}/${chain.length}`;
+    const stat = state && state.gateOpen ? MAP.gateOpen : `${lit}/${chain.length}`;
     drawText(ctx, stat, rx + rw - 6, ky + 1, PAL.ink, { font: 'small', align: 'right' });
     ky += 9;
   }
@@ -520,7 +517,7 @@ function mapScreen(env) {
   // what has been learned, per place
   const footTop = 177;
   let ly = ky + 3;
-  drawText(ctx, 'LEARNED', ix0, ly, PAL.magenta, { font: 'small', spacing: 1 });
+  drawText(ctx, MAP.learned, ix0, ly, PAL.magenta, { font: 'small', spacing: 1 });
   ly += 8;
   const learnedLines = [];
   for (const poi of pois) {
@@ -531,7 +528,9 @@ function mapScreen(env) {
     learnedLines.push({ name: String(poi.name || poi.id), gl: gl.join(' ') });
   }
   const room = Math.max(0, Math.min(4, Math.floor((footTop - 2 - ly) / 7)));
-  if (!learnedLines.length) drawText(ctx, 'NOTHING YET. FAILED TRIES TEACH.', ix0, ly, PAL.rock, { font: 'small' });
+  if (!learnedLines.length) {
+    wrapText(MAP.learnedEmpty, iw, { font: 'small' }).slice(0, 2).forEach((l, i) => drawText(ctx, l, ix0, ly + i * 7, PAL.rock, { font: 'small' }));
+  }
   learnedLines.slice(0, room).forEach((L, i) => {
     const gw = measureText(L.gl, { font: 'small' });
     let name = L.name.toUpperCase();
@@ -545,19 +544,19 @@ function mapScreen(env) {
   hline(ctx, rx + 5, footTop - 1, rw - 10, PAL.ink);
   ctx.fillStyle = PAL.magenta;
   for (let k = 0; k < 12; k += 3) ctx.fillRect(ix0 + k, footTop + 5, 2, 1);
-  const rl = wrapText('YOUR ROUTE: THE TRACK YOU HAVE PLAYED', iw - 16, { font: 'small' });
+  const rl = wrapText(MAP.route, iw - 16, { font: 'small' });
   rl.slice(0, 2).forEach((l, i) => drawText(ctx, l, ix0 + 16, footTop + 2 + i * 7, PAL.ink, { font: 'small' }));
   if (state && state.player) {
     const p = state.player;
-    drawText(ctx, 'YOU ' + gridRef(w, p.x, p.y), ix0, 194, PAL.waterInk, { font: 'small' });
+    drawText(ctx, fmt(MAP.you, { ref: gridRef(w, p.x, p.y) }), ix0, 194, PAL.waterInk, { font: 'small' });
     drawText(ctx, `${Math.round(p.elevation || 0)}M`, rx + rw - 6, 194, PAL.ink, { font: 'small', align: 'right' });
   }
   // scale bar: 1 km
   const kmw = Math.round(kmPx);
   rect(ctx, ix0, 204, kmw, 2, PAL.ink); rect(ctx, ix0 + (kmw >> 1), 204, kmw >> 1, 2, PAL.paper);
   frame(ctx, ix0, 204, kmw, 2, PAL.ink);
-  drawText(ctx, '1 KM', ix0 + kmw + 4, 202, PAL.ink, { font: 'small' });
-  drawText(ctx, 'M/ESC CLOSE', rx + rw - 6, 202, PAL.contourIdx, { font: 'small', align: 'right' });
+  drawText(ctx, MAP.scaleBar, ix0 + kmw + 4, 202, PAL.ink, { font: 'small' });
+  drawText(ctx, MAP.footer, rx + rw - 6, 202, PAL.contourIdx, { font: 'small', align: 'right' });
   // north arrow
   const nx = sx + sw - 12, ny = sy + 14;
   pline(ctx, nx, ny + 8, nx, ny, PAL.ink); pline(ctx, nx, ny, nx - 2, ny + 3, PAL.ink); pline(ctx, nx, ny, nx + 2, ny + 3, PAL.ink);
@@ -583,16 +582,15 @@ function notes(env) {
     rect(ctx, x - 7, by + 1, 6, 1, PAL.rock);
     rect(ctx, x + 4, by, 2, 3, PAL.paper2);
   }
-  drawText(ctx, 'FIELD NOTES', x + 30, y + 8, PAL.ink, { spacing: 2 });
-  drawText(ctx, `${list.length} FOUND`, x + w - 8, y + 10, PAL.contourIdx, { font: 'small', align: 'right', spacing: 1 });
+  drawText(ctx, NOTES.heading, x + 30, y + 8, PAL.ink, { spacing: 2 });
+  drawText(ctx, fmt(NOTES.count, { n: list.length }), x + w - 8, y + 10, PAL.contourIdx, { font: 'small', align: 'right', spacing: 1 });
   hline(ctx, x + 30, y + 19, 82, PAL.magenta);
   hline(ctx, x + 30, y + 21, 82, PAL.magenta);
   const maxW = w - 48;
   let ly = y + 28;
   const scroll = (ui.scroll | 0);
   if (!list.length) {
-    drawText(ctx, 'Nothing yet.', x + 30, ly, PAL.contourIdx, { italic: true });
-    drawText(ctx, 'Listen to the land.', x + 30, ly + 10, PAL.contourIdx, { italic: true });
+    wrapText(NOTES.empty, maxW - 10, { italic: true }).slice(0, 4).forEach((l, i) => drawText(ctx, l, x + 30, ly + i * 10, PAL.contourIdx, { italic: true }));
   }
   const lines = [];
   list.forEach((n, i) => {
@@ -608,7 +606,7 @@ function notes(env) {
   });
   if (off > 0) drawText(ctx, '↑', x + w - 10, y + 26, PAL.magenta, {});
   if (off + visible < lines.length) drawText(ctx, '↓', x + w - 10, y + h - 12, PAL.magenta, {});
-  drawText(ctx, 'ESC CLOSE', x + w / 2, y + h - 9, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
+  drawText(ctx, NOTES.footer, x + w / 2, y + h - 9, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
 }
 
 // ================================================================= complete
@@ -634,35 +632,41 @@ function complete(env) {
   const lv = (state && state.world && state.world.level) || (state && state.level) || {};
   const idx = lv.index != null ? lv.index : (state && state.levelIndex) || 0;
   const ease = clamp(since / 0.5, 0, 1);
-  const w = 262, h = 146;
+  // the banner is set at 2x when it fits on one line, otherwise it wraps (still 2x) and the card grows
+  const w = LAYOUT.complete.w;
+  const bannerLines = wrapText(COMPLETE.banner, (w - 24) / 2, { spacing: 2 }).slice(0, 3);
+  const extra = (bannerLines.length - 1) * 17;
+  const h = 146 + extra;
   const x = Math.round((SW - w) / 2);
   const y = Math.round((SH - h) / 2 - 8 + (1 - ease) * -40);
   panel(ctx, x, y, w, h, { fill: PAL.paper, inner: PAL.magenta });
-  rect(ctx, x + 4, y + 4, w - 8, 30, PAL.magenta);
-  const title = 'BEALACH OPENED';
-  drawText(ctx, title, SW / 2 + 2, y + 10 + 2, PAL.ink, { scale: 2, spacing: 2, align: 'center' });
-  drawText(ctx, title, SW / 2, y + 10, PAL.snow, { scale: 2, spacing: 2, align: 'center' });
+  rect(ctx, x + 4, y + 4, w - 8, 30 + extra, PAL.magenta);
+  bannerLines.forEach((l, i) => {
+    drawText(ctx, l, SW / 2 + 2, y + 10 + 2 + i * 17, PAL.ink, { scale: 2, spacing: 2, align: 'center' });
+    drawText(ctx, l, SW / 2, y + 10 + i * 17, PAL.snow, { scale: 2, spacing: 2, align: 'center' });
+  });
   const gate = state && state.world && state.world.gate;
-  drawText(ctx, gate ? gate.name : 'Bealach', SW / 2, y + 40, PAL.magenta, { italic: true, align: 'center' });
-  ctx.drawImage(gateSprite(true), Math.round(SW / 2 - 5), y + 52);
+  drawText(ctx, gate ? gate.name : 'Bealach', SW / 2, y + 40 + extra, PAL.magenta, { italic: true, align: 'center' });
+  ctx.drawImage(gateSprite(true), Math.round(SW / 2 - 5), y + 52 + extra);
   const num = ROMAN[idx] || String(idx + 1);
-  drawText(ctx, `TRACK ${num} COMPLETE`, SW / 2, y + 68, PAL.ink, { align: 'center', spacing: 1 });
-  drawText(ctx, String(lv.subtitle || lv.name || '').toUpperCase(), SW / 2, y + 79, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
-  motifStave(ctx, SW / 2 - 52, y + 92, t);
+  drawText(ctx, fmt(COMPLETE.line, { numeral: num }), SW / 2, y + 68 + extra, PAL.ink, { align: 'center', spacing: 1 });
+  drawText(ctx, String(lv.subtitle || lv.name || '').toUpperCase(), SW / 2, y + 79 + extra, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
+  motifStave(ctx, SW / 2 - 52, y + 92 + extra, t);
   const nf = ui.fragmentCount != null ? ui.fragmentCount : ((state && state.fragments) || []).length;
-  drawText(ctx, `FRAGMENT ${Math.max(nf, idx + 1)}/8`, SW / 2 + 6, y + 91, PAL.ink, { font: 'small', spacing: 1 });
-  drawText(ctx, 'COLLECTED', SW / 2 + 6, y + 99, PAL.contourIdx, { font: 'small', spacing: 1 });
+  drawText(ctx, fmt(COMPLETE.motifCounter, { n: Math.max(nf, idx + 1) }), SW / 2 + 6, y + 91 + extra, PAL.ink, { font: 'small', spacing: 1 });
+  drawText(ctx, COMPLETE.motifDone, SW / 2 + 6, y + 99 + extra, PAL.contourIdx, { font: 'small', spacing: 1 });
   // next track
-  const next = ui.next || TRACKS[idx + 1];
+  const next = ui.next || (ui.levels && ui.levels[idx + 1]);
   hline(ctx, x + 8, y + h - 33, w - 16, PAL.grid);
   if (next) {
-    drawText(ctx, 'NEXT TRACK', x + 10, y + h - 27, PAL.contourIdx, { font: 'small', spacing: 1 });
+    drawText(ctx, COMPLETE.nextHeading, x + 10, y + h - 27, PAL.contourIdx, { font: 'small', spacing: 1 });
     drawText(ctx, String(next.name).toUpperCase(), x + 10, y + h - 20, PAL.ink, { spacing: 1 });
     drawText(ctx, String(next.subtitle || '').toUpperCase(), x + w - 10, y + h - 19, PAL.magenta, { font: 'small', align: 'right', spacing: 1 });
   } else {
-    drawText(ctx, 'THE ALBUM IS COMPLETE', SW / 2, y + h - 22, PAL.ink, { align: 'center', spacing: 1 });
+    const last = wrapText(COMPLETE.lastTrack, w - 20, { spacing: 1 }).slice(0, 2);
+    last.forEach((l, i) => drawText(ctx, l, SW / 2, y + h - 27 + i * 9 + (last.length > 1 ? 0 : 5), PAL.ink, { align: 'center', spacing: 1 }));
   }
-  if (blink(t, 1.3, 0.65)) drawText(ctx, 'PRESS ENTER', SW / 2, y + h - 9, PAL.magenta, { font: 'small', align: 'center', spacing: 2 });
+  if (blink(t, 1.3, 0.65)) drawText(ctx, COMPLETE.prompt, SW / 2, y + h - 9, PAL.magenta, { font: 'small', align: 'center', spacing: 2 });
 }
 
 export const Screens = { title, select, pause, map: mapScreen, notes, complete };

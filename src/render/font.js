@@ -1,6 +1,6 @@
 /**
  * Embedded bitmap fonts. Two faces:
- *   'main'  5x7 (descenders on an 8th row), mixed case, Gaelic grave vowels
+ *   'main'  5x7 (descenders on an 8th row), mixed case, Gaelic grave vowels, é ê
  *   'small' 3x5, single-case (lower case maps to the capitals) for map labels
  * Glyphs are drawn through per-colour atlas canvases with drawImage, 1:1 or
  * integer-scaled with smoothing off, so there is never any anti-aliasing.
@@ -148,6 +148,9 @@ const SMALL_ROWS = {
 // accents (grave) and their bases -----------------------------------------
 const GRAVE_UP = { 'À': 'A', 'È': 'E', 'Ì': 'I', 'Ò': 'O', 'Ù': 'U' };
 const GRAVE_LOW = { 'à': 'a', 'è': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u' };
+// acute and circumflex, needed by a few place names / words in the text (Léith, arête)
+const MARK_UP = { 'É': ['E', [0x04, 0x08], 0x04], 'Ê': ['E', [0x04, 0x0A], 0x08] };
+const MARK_LOW = { 'é': ['e', [0x04, 0x08], 0x04], 'ê': ['e', [0x04, 0x0A], 0x08] };
 
 function parseMain() {
   const g = {};
@@ -164,6 +167,12 @@ function parseMain() {
   for (const [ch, base] of Object.entries(GRAVE_UP)) {
     g[ch] = { rows: g[base].rows.slice(), above: [0x08, 0x04], w: 5 };
   }
+  for (const [ch, [base, mark]] of Object.entries(MARK_LOW)) {
+    const rows = g[base].rows.slice();
+    rows[0] = mark[0]; rows[1] = mark[1];
+    g[ch] = { rows, above: null, w: 5 };
+  }
+  for (const [ch, [base, mark]] of Object.entries(MARK_UP)) g[ch] = { rows: g[base].rows.slice(), above: mark, w: 5 };
   return g;
 }
 // M and W get a real 5px-wide glyph so they never read as n / u.
@@ -178,6 +187,9 @@ function parseSmall() {
   g.W = { rows: SMALL_WIDE.W, above: null, w: 5 };
   for (const [ch, base] of Object.entries({ ...GRAVE_UP, ...GRAVE_LOW })) {
     g[ch] = { rows: g[base.toUpperCase()].rows, above: [0x10], w: g[base.toUpperCase()].w };
+  }
+  for (const [ch, [base, , dot]] of Object.entries({ ...MARK_UP, ...MARK_LOW })) {
+    g[ch] = { rows: g[base.toUpperCase()].rows, above: [dot], w: g[base.toUpperCase()].w };
   }
   for (let c = 97; c <= 122; c++) g[String.fromCharCode(c)] = g[String.fromCharCode(c - 32)];
   return g;
@@ -216,7 +228,7 @@ function makeCanvas(w, h) {
 
 // ------------------------------------------------------------------ atlases
 const atlasCache = new Map();
-const CHARS = Object.keys(MAIN_HEX).concat(Object.keys(GRAVE_UP), Object.keys(GRAVE_LOW));
+const CHARS = Object.keys(MAIN_HEX).concat(Object.keys(GRAVE_UP), Object.keys(GRAVE_LOW), Object.keys(MARK_UP), Object.keys(MARK_LOW));
 const SMALL_CHARS = Object.keys(parseSmall());
 const ALL_CHARS = Array.from(new Set(CHARS.concat(SMALL_CHARS)));
 const charIndex = new Map(ALL_CHARS.map((c, i) => [c, i]));

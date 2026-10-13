@@ -11,10 +11,10 @@
  * ?fresh=1 ignores saved progress, ?speed=N runs the simulation N× faster.
  */
 import { LEVELS } from './world/levels/index.js';
-import { ARTEFACT_NAMES, RESONANCE_SECONDS } from './world/codes.js';
+import { RESONANCE_SECONDS } from './world/codes.js';
+import { ARTEFACT_NAMES, TYPE_LABEL, INTRO, PAUSE, BANNER, fmt } from './text.js';
 import { Game } from './game/sim.js';
 import { serialize, deserialize, revealNote } from './game/progression.js';
-import { TYPE_LABEL } from './game/describe.js';
 import { Autopilot, planChainRoute } from './game/autopilot.js';
 import { createInput } from './game/input.js';
 import { createRenderer } from './render/renderer.js';
@@ -81,7 +81,7 @@ const ui = {
   selected: 0,
   time: 0,
   message: '', messageT: 0, messageDur: 4, messageKind: 'note', messageSub: '', messageSub2: '',
-  items: ['RESUME', 'FIELD NOTES', 'SHEET MAP', 'TRACKLIST'],
+  items: PAUSE.items.map((it) => it.label),
   notes: [],
   scroll: 0,
   next: null,
@@ -106,15 +106,6 @@ function say(text, { kind = 'note', sub = '', sub2 = '', dur = 4.5, now = false 
 }
 function clearMessages() { messageQueue.length = 0; ui.messageT = 0; ui.messageSub2 = ''; }
 
-const INTRO = [
-  'THE MAP IS THE SCORE. WALK, AND LISTEN.',
-  'CLIMB AND THE MELODY CLIMBS. CROSS THE GRID AND THE HARMONY TURNS.',
-  'THE SYMBOLS AT THE FOOT OF THE SHEET ARE THE BEALACH\'S KEY. WAKE THEM ALL AT ONCE.',
-  'HOLD SPACE TO LISTEN: STAND STILL AND TIME PASSES; WALK AND YOU TREAD SOFTLY.',
-  'BOTHIES (the black huts) KEEP FIELD NOTES. THE ARROWS AT THE FOOT OF THE SHEET POINT TO THE NEAREST OF EACH KEY.',
-  'SHIFT: RUN.   M: THE SHEET.   L: FIELD NOTES.',
-];
-
 function unlockedIndex(i) {
   const id = LEVELS[i] && LEVELS[i].id;
   return game.progress.unlocked.includes(id);
@@ -129,13 +120,13 @@ function enterLevel(index) {
   ui.selected = index;
   const lvl = game.level;
   clearMessages();
-  say(lvl.name.toUpperCase(), { kind: 'artefact', sub: lvl.subtitle || '', dur: 5, now: true });
+  say(fmt(BANNER.levelStart.title, { name: lvl.name.toUpperCase() }), { kind: 'artefact', sub: fmt(BANNER.levelStart.sub, { subtitle: lvl.subtitle || '' }), dur: 5, now: true });
   if (index === 0 && !game.progress.completed.includes(lvl.id)) for (const line of INTRO) say(line, { dur: 5.5 });
   // every sheet arrives with one field note already in the walker's pocket
   const hasNote = (lvl.fieldNotes || []).some((n) => game.progress.notes.includes(n));
   if (!hasNote) {
     const n = revealNote(game.progress, lvl);
-    if (n) { say('FIELD NOTE: ' + n, { dur: 7 }); saveProgress(); }
+    if (n) { say(fmt(BANNER.fieldNote, { note: n }), { dur: 7 }); saveProgress(); }
   }
   if (audio) audio.setLevel(lvl);
   autopilot = null;
@@ -157,45 +148,46 @@ function handleEvents(events) {
         if (ev.full) {
           renderer.pulse(p.type);
           renderer.ripple(p.x + 0.5, p.y + 0.5, game.state.t, 'magenta');
+          const art = ARTEFACT_NAMES[p.type];
           const sub = ev.inChain
-            ? `KEY ${ev.keysSounding}/${ev.keysTotal} SOUNDING · ${RESONANCE_SECONDS}s`
-            : `${p.name || ''} · not part of this bealach's key`;
-          say(ARTEFACT_NAMES[p.type].toUpperCase(), { kind: 'artefact', sub, dur: 5, now: true });
+            ? fmt(BANNER.keyWoken.sub, { n: ev.keysSounding, N: ev.keysTotal, secs: RESONANCE_SECONDS })
+            : fmt(BANNER.notKey.sub, { place: p.name || '' });
+          say(fmt(BANNER.keyWoken.title, { artefact: art }), { kind: 'artefact', sub, dur: 5, now: true });
         } else {
           renderer.ripple(p.x + 0.5, p.y + 0.5, game.state.t, 'contour');
-          say(ARTEFACT_NAMES[p.type].toUpperCase() + ' · UNWOKEN', {
+          say(fmt(BANNER.partial.title, { artefact: ARTEFACT_NAMES[p.type] }), {
             kind: 'partial', sub: ev.hint || '', sub2: (ev.plain || []).join(' '),
             dur: ev.plain && ev.plain.length ? 8 : 5, now: !ui.messageT || ui.messageKind !== 'artefact',
           });
         }
         if (ev.note) {
           // field note found at a bothy — queued behind the artefact banner
-          say('FIELD NOTE: ' + ev.note, { dur: 7 });
+          say(fmt(BANNER.fieldNote, { note: ev.note }), { dur: 7 });
           saveProgress();
         } else saveSoon();   // knowledge (heard / woken / learned) changed
         break;
       }
       case 'bothy-guide':
-        say('FIELD NOTE: ' + ev.text, { dur: 8 });
+        say(fmt(BANNER.fieldNote, { note: ev.text }), { dur: 8 });
         saveSoon();
         break;
       case 'bothy-near':
-        say('A BOTHY. WALKERS LEAVE NOTES IN BOTHIES.', { dur: 5 });
+        say(BANNER.bothyNear, { dur: 5 });
         break;
       case 'gate-near':
-        if (ev.open) say('THE BEALACH IS OPEN. WALK THROUGH.', { dur: 5 });
+        if (ev.open) say(BANNER.gateOpen, { dur: 5 });
         else {
-          say('THE BEALACH STONE READS: ' + ev.chain.map((t) => TYPE_LABEL[t] || t.toUpperCase()).join(' · '),
-            { kind: 'artefact', sub: 'Wake them so they sound together.', dur: 6 });
+          const keys = ev.chain.map((t) => TYPE_LABEL[t] || t.toUpperCase()).join(' \u00b7 ');
+          say(fmt(BANNER.gateStone.title, { keys }), { kind: 'artefact', sub: BANNER.gateStone.sub, dur: 6 });
         }
         break;
       case 'chain':
-        if (ev.types && ev.types.length >= 2) say('CONCORD', { kind: 'artefact', sub: ev.types.map((t) => ARTEFACT_NAMES[t]).join(' · '), dur: 3.5, now: true });
+        if (ev.types && ev.types.length >= 2) say(BANNER.together.title, { kind: 'artefact', sub: fmt(BANNER.together.sub, { artefacts: ev.types.map((t) => ARTEFACT_NAMES[t]).join(' \u00b7 ') }), dur: 3.5, now: true });
         break;
       case 'gate-open': {
         const g = game.world.gate;
         renderer.ripple(g.x + 0.5, g.y + 0.5, game.state.t, 'magenta');
-        say('THE BEALACH OPENS', { kind: 'artefact', sub: (g.name || '') + ' — walk through it', dur: 6, now: true });
+        say(BANNER.gateUnlocks.title, { kind: 'artefact', sub: fmt(BANNER.gateUnlocks.sub, { name: g.name || '' }), dur: 6, now: true });
         break;
       }
       case 'level-complete': {
@@ -235,11 +227,11 @@ function handleActions(actions) {
         else if (a === 'down') ui.selected = (ui.selected + 1) % ui.items.length;
         else if (a === 'pause' || a === 'back') ui.screen = 'play';
         else if (a === 'confirm') {
-          const item = ui.items[ui.selected];
-          if (item === 'RESUME') ui.screen = 'play';
-          else if (item === 'FIELD NOTES') openNotes('pause');
-          else if (item === 'SHEET MAP') ui.screen = 'map';
-          else if (item === 'TRACKLIST') { ui.screen = 'select'; ui.selected = game.levelIndex; }
+          const item = PAUSE.items[ui.selected].id;
+          if (item === 'resume') ui.screen = 'play';
+          else if (item === 'notes') openNotes('pause');
+          else if (item === 'map') ui.screen = 'map';
+          else if (item === 'tracks') { ui.screen = 'select'; ui.selected = game.levelIndex; }
         }
         break;
       case 'map':
@@ -263,7 +255,7 @@ function handleActions(actions) {
 }
 
 function openNotes() {
-  ui.notes = game.progress.notes.length ? game.progress.notes.slice() : ['No field notes yet. Bothies keep them.'];
+  ui.notes = game.progress.notes.slice();   // empty: the notes screen shows its own empty state
   ui.scroll = 0;
   ui.screen = 'notes';
 }

@@ -19,6 +19,7 @@ import { clamp, lerp } from './macros.js';
 import { patchesFor } from './levelmusic.js';
 import { RESONANCE_SECONDS } from '../world/codes.js';
 import { ART_NOMINAL } from './artcal.js';
+import { ARTEFACT_NAMES as PIECE_NAMES } from '../text.js';
 
 const LA = 0.18;       // action lookahead (s)
 const ramp = (x, lo, hi) => clamp((x - lo) / (hi - lo), 0, 1);
@@ -72,7 +73,6 @@ const FADE_SECONDS = 2.6;
 /** signature scale degree of each artefact type (the concord pitch set and pre-echo notes) */
 export const SIGNATURE = { trig: 0, cairn: 2, lochan: 4, waterfall: 1, bothy: 3, stone: 5, crag: 6, summit: 7 };
 const ECHO_PERIOD = { trig: 9, cairn: 11.3, lochan: 13.7, waterfall: 8.3, bothy: 12.1, stone: 15.5, crag: 7.7, summit: 10.4 };
-const PIECE_NAMES = { trig: 'Triangulation', cairn: 'Accretion', lochan: 'Reflection', waterfall: 'Cascade', bothy: 'Hearth', stone: 'Monolith', crag: 'Fracture', summit: 'Apex' };
 
 class Piece {
   constructor(art, type, t0, opts = {}) {

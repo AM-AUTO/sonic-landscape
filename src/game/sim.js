@@ -9,6 +9,7 @@ import {
   normalizeProgress, revealNote, completeLevel, chainProgress, chainSatisfied, gateCentre, GATE_RADIUS, knowledgeFor,
 } from './progression.js';
 import { describeCondition } from './describe.js';
+import { BANNER, fmt } from '../text.js';
 
 // The world builder is written by another module; load it lazily so this file (and the tests that
 // inject their own buildWorld) still load while terrain.js is missing or broken.
@@ -125,7 +126,7 @@ export class Game {
       const e = k[target.id] || (k[target.id] = { heard: 0, woken: false, learned: [] });
       e.learned.push(bestKey);
       const plain = describeCondition(bestKey, target.condition, this.level);
-      const text = `A note pinned by the door: ${target.name || target.id} — ${plain.charAt(0).toLowerCase()}${plain.slice(1)}`;
+      const text = fmt(BANNER.bothyGuide, { place: target.name || target.id, plain: plain.charAt(0).toLowerCase() + plain.slice(1) });
       events.push({ type: 'bothy-guide', poi: bothy, target, key: bestKey, text });
       return;
     }
