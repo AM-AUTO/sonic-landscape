@@ -453,10 +453,8 @@ export function createRenderer(canvas) {
         Screens.pause(env);
         break;
       case 'map': Screens.map(env); break;
-      case 'notes':
-        if (state && renderWorldLayer(state, ui, dt, 0.97)) { /* dimmed world behind the notebook */ } else rect(ctx, 0, 0, SW, SH, PAL.night);
-        Screens.notes(env);
-        break;
+      case 'notes': Screens.notes(env); break;                  // field notes are story panels on their own black film
+      case 'story': Screens.story(env); break;
       case 'complete':
         if (state && renderWorldLayer(state, ui, dt, 0.8)) { drawHud(ctx, state, { ...ui, message: null }, R); } else rect(ctx, 0, 0, SW, SH, PAL.night);
         Screens.complete(env);

@@ -11,7 +11,10 @@ import { ARTEFACT_NAMES, POI_TYPES, CELL_PX } from '../world/codes.js';
 import { gridRef, bearingDeg } from './hud.js';
 import { gatePlacement } from './mapbake.js';
 import { hash2f } from '../core/rng.js';
-import { ROMAN, TITLE, SELECT, PAUSE, NOTES, COMPLETE, MAP, fmt } from '../text.js';
+import { ROMAN, TITLE, SELECT, PAUSE, NOTES, COMPLETE, MAP, STORY, fmt } from '../text.js';
+import { PANEL, TITLE_SCENE, THUMB, drawPanel } from './panels.js';
+import { revealCount } from '../story.js';
+import { LEVELS } from '../world/levels/index.js';
 
 /** Geometry the tests measure text against (kept in step with the draw code below). */
 export const LAYOUT = Object.freeze({
@@ -20,6 +23,7 @@ export const LAYOUT = Object.freeze({
   map: Object.freeze({ rx: 234, rw: 144, ix0: 240, iw: 132, labelX: 16, nameX: 80 }),
   pause: Object.freeze({ w: 150, itemX: 26 }),
   complete: Object.freeze({ w: 262 }),
+  story: Object.freeze({ capX: 42, capW: 300, capY: 158, capLines: 3, spacing: 1 }),
 });
 
 const CHECK = [[0, 2], [1, 3], [2, 2], [3, 1], [4, 0]];
@@ -30,100 +34,80 @@ function ticksBorder(ctx, SW, SH) {
   frame(ctx, 4, 4, SW - 8, SH - 8, PAL.grid);
 }
 
+
+// ------------------------------------------------------------------ the gothic frame: accent, gold sprockets, fades
+/** The palette name of a track's signature hue (magenta when none). */
+function accentNameOf(lv) { const a = lv && lv.palette && lv.palette.accent; return a && PAL[a] ? a : 'magenta'; }
+function accentOfIndex(i) { return PAL[accentNameOf(LEVELS[clamp(i | 0, 0, LEVELS.length - 1)])]; }
+function accentOfLevel(lv) { return PAL[accentNameOf(lv)]; }
+/** ink or snow text, whichever reads on a fill of this colour */
+function onFill(hex) {
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5 ? PAL.ink : PAL.snow;
+}
+
+/** A column of film-sprocket holes (gold squares with a lamp-orange shadow), scrolling slowly. Clipped to y0..y1. */
+function sprockets(ctx, x, y0, y1, t, o = {}) {
+  const w = o.w || 12, h = o.h || 10, pitch = o.pitch || 18, speed = o.speed == null ? 5 : o.speed;
+  const off = Math.floor(t * speed) % pitch;
+  for (let y = y0 - pitch + off; y < y1; y += pitch) {
+    const ya = Math.max(y, y0), yb = Math.min(y + h, y1);
+    if (yb <= ya) continue;
+    rect(ctx, x, ya, w, yb - ya, PAL.flame);
+    if (yb === y + h) rect(ctx, x, y + h - 1, w, 1, PAL.lamp);          // lower edge in shade
+    rect(ctx, x + w - 1, ya, 1, yb - ya, PAL.lamp);                     // right edge in shade
+    if (ya === y) rect(ctx, x, y, w - 1, 1, PAL.paper);                 // a glint on the lit top-left
+  }
+}
+
+const fadePats = [];
+/** Ordered-dither fade to black over a rect: k = 0 clear .. 1 black (cached 8x8 patterns, so one fillRect). */
+function fadeBlack(ctx, x, y, w, h, k) {
+  if (k <= 0) return;
+  if (k >= 1) { rect(ctx, x, y, w, h, PAL.ink); return; }
+  const lvl = Math.max(1, Math.min(63, Math.round(k * 64)));
+  let pat = fadePats[lvl];
+  if (!pat) {
+    const c = document.createElement('canvas');
+    c.width = 8; c.height = 8;
+    const g = c.getContext('2d');
+    g.fillStyle = PAL.ink;
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) if (BAYER8[(j << 3) | i] < lvl) g.fillRect(i, j, 1, 1);
+    pat = ctx.createPattern(c, 'repeat');
+    fadePats[lvl] = pat;
+  }
+  ctx.save();
+  ctx.fillStyle = pat;
+  ctx.translate(x, y);
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
 function blink(t, rate = 1.6, duty = 0.62) { return ((t * rate) % 1) < duty; }
 
 function levelList(ui) {
   // the tracklist is built from the level files; main.js always supplies ui.levels (= LEVELS)
   return (ui.levels || []).map((l, i) => ({
-    id: l.id, name: l.name, gaelic: l.gaelic, gridLetters: l.gridLetters,
+    id: l.id, name: l.name, gaelic: l.gaelic, gridLetters: l.gridLetters, accent: accentNameOf(l),
     subtitle: l.subtitle || (ROMAN[i] + '.'), chain: (l.gate && l.gate.chain) || l.chain || [],
   }));
 }
 
-// ================================================================= emblem
-// A little animated OS-map extract: breathing hills, a lochan, wood, walker.
-const EMB_W = 264, EMB_H = 88;
-let emblem = null;
-function buildEmblem() {
-  const fields = [];
-  const hills = [[70, 44, 34, 0.9], [150, 30, 30, 1.1], [215, 56, 26, 0.7], [110, 70, 22, 0.5]];
-  for (const [cx, cy, r, a] of hills) {
-    const g = new Float32Array(EMB_W * EMB_H);
-    for (let y = 0; y < EMB_H; y++) for (let x = 0; x < EMB_W; x++) {
-      const dx = (x - cx) / r, dy = (y - cy) / (r * 0.8);
-      g[y * EMB_W + x] = Math.exp(-(dx * dx + dy * dy) * 0.8) * a;
-    }
-    fields.push(g);
-  }
-  const dip = new Float32Array(EMB_W * EMB_H);
-  for (let y = 0; y < EMB_H; y++) for (let x = 0; x < EMB_W; x++) {
-    const dx = (x - 112) / 20, dy = (y - 48) / 9;
-    dip[y * EMB_W + x] = Math.exp(-(dx * dx + dy * dy)) * 0.5;
-  }
-  const noise = new Float32Array(EMB_W * EMB_H);
-  for (let y = 0; y < EMB_H; y++) for (let x = 0; x < EMB_W; x++) {
-    noise[y * EMB_W + x] = 0.5 + 0.25 * Math.sin(x * 0.11 + y * 0.07) + 0.25 * Math.sin(x * 0.05 - y * 0.13 + 1.3);
-  }
-  emblem = { fields, dip, noise, buf: new Uint32Array(EMB_W * EMB_H), h: new Float32Array(EMB_W * EMB_H), hills };
-}
-
-function drawEmblem(ctx, x0, y0, t) {
-  if (!emblem) buildEmblem();
-  const { fields, dip, noise, buf, h, hills } = emblem;
-  const amps = hills.map((hl, i) => hl[3] * (1 + 0.16 * Math.sin(t * 0.6 + i * 1.9)));
-  const f0 = fields[0], f1 = fields[1], f2 = fields[2], f3 = fields[3];
-  const [a0, a1, a2, a3] = amps.map((a, i) => a / hills[i][3]);
-  for (let i = 0; i < h.length; i++) h[i] = 0.2 + f0[i] * a0 + f1[i] * a1 + f2[i] * a2 + f3[i] * a3 - dip[i] * (0.9 + 0.1 * Math.sin(t));
-  // ring from the central summit
-  const rx = hills[1][0], ry = hills[1][1];
-  const ringR = (t * 24) % 150;
-  const BN = 15;
-  const band = (v) => Math.floor(v * BN);
-  for (let y = 0; y < EMB_H; y++) {
-    for (let x = 0; x < EMB_W; x++) {
-      const i = y * EMB_W + x, v = h[i];
-      const th = (BAYER4[((y & 3) << 2) | (x & 3)] + 0.5) / 16;
-      let c;
-      if (v < 0.2) c = U.water;
-      else if (v > 1.12) c = U.snow;
-      else if (noise[i] > 0.62 && v > 0.24 && v < 0.62) c = U.wood;
-      else c = th < 0.05 + Math.min(0.5, v * 0.3) ? U.paper2 : U.paper;
-      // contour test: lower-side pixel next to a higher band
-      const b = band(v);
-      let line = 0;
-      if (x < EMB_W - 1 && band(h[i + 1]) > b) line = b;
-      else if (y < EMB_H - 1 && band(h[i + EMB_W]) > b) line = b;
-      else if (x > 0 && band(h[i - 1]) > b) line = b;
-      else if (y > 0 && band(h[i - EMB_W]) > b) line = b;
-      if (line && v >= 0.2 - 0.001 && b > 2) {
-        const idx = ((b + 1) % 4) === 0;
-        c = idx ? U.contourIdx : U.contour;
-        if (v > 1.12) c = idx ? U.waterDeep : U.grid;
-        const d = Math.hypot(x - rx, (y - ry) * 1.25);
-        if (Math.abs(d - ringR) < 3.2) c = Math.abs(d - ringR) < 1.2 ? U.snow : U.magenta;
-      } else if (v < 0.2 + 0.03 && v >= 0.2 - 0.001) c = U.waterDeep;
-      buf[i] = c;
-    }
-  }
-  const img = new ImageData(new Uint8ClampedArray(buf.buffer), EMB_W, EMB_H);
-  ctx.putImageData(img, x0, y0);
-}
-
 // ================================================================== title
+// The cover: a black page under the magenta masthead, and a night scene in the window (layered ridges, drifting
+// mist, the ring-cross gate in fog with the wanderer and his lantern, the odd flash of lightning).
+const TITLE_SPEC = Object.freeze({ kind: 'title', levelIndex: 3 });
 function title(env) {
   const { ctx, t, SW, SH, ui } = env;
-  rect(ctx, 0, 0, SW, SH, PAL.paper);
-  // faint 1km-style grid over the whole cover
-  ctx.fillStyle = PAL.grid;
-  for (let x = 12; x < SW; x += 24) for (let y = 0; y < SH; y += 2) ctx.fillRect(x, y, 1, 1);
-  for (let y = 12; y < SH; y += 24) for (let x = 0; x < SW; x += 2) ctx.fillRect(x, y, 1, 1);
-  // paper pane behind everything central
-  rect(ctx, 8, 8, SW - 16, SH - 16, PAL.paper);
-  ticksBorder(ctx, SW, SH);
+  rect(ctx, 0, 0, SW, SH, PAL.ink);
+  // thin double rule round the page, with the corner ticks of an OS sheet
+  frame(ctx, 2, 2, SW - 4, SH - 4, PAL.magenta);
+  frame(ctx, 5, 5, SW - 10, SH - 10, PAL.rock);
+  for (const [x, y] of [[2, 2], [SW - 5, 2], [2, SH - 5], [SW - 5, SH - 5]]) rect(ctx, x, y, 3, 3, PAL.magenta);
 
   // header band
   rect(ctx, 6, 6, SW - 12, 46, PAL.magenta);
-  hline(ctx, 6, 52, SW - 12, PAL.ink);
+  hline(ctx, 6, 52, SW - 12, PAL.snow);
   ditherRect(ctx, 6, 44, SW - 12, 8, PAL.ink, 0.12);
   drawText(ctx, TITLE.masthead, SW / 2 + 3, 14 + 3, PAL.ink, { scale: 4, spacing: 1, align: 'center' });
   drawText(ctx, TITLE.masthead, SW / 2, 14, PAL.snow, { scale: 4, spacing: 1, align: 'center' });
@@ -132,97 +116,32 @@ function title(env) {
   drawText(ctx, TITLE.cornerLeft[1], 12, 17, PAL.paper2, { font: 'small', spacing: 0 });
   drawText(ctx, TITLE.cornerRight[1], SW - 12, 17, PAL.paper2, { font: 'small', spacing: 0, align: 'right' });
 
-  drawText(ctx, TITLE.subtitle, SW / 2, 58, PAL.ink, { italic: true, spacing: 1, align: 'center' });
+  drawText(ctx, TITLE.subtitle, SW / 2, 58, PAL.paper2, { italic: true, spacing: 1, align: 'center' });
 
-  // emblem window
-  const ex = Math.round((SW - EMB_W) / 2), ey = 72;
-  frame(ctx, ex - 3, ey - 3, EMB_W + 6, EMB_H + 6, PAL.ink);
-  frame(ctx, ex - 2, ey - 2, EMB_W + 4, EMB_H + 4, PAL.paper);
-  drawEmblem(ctx, ex, ey, t);
-  frame(ctx, ex - 1, ey - 1, EMB_W + 2, EMB_H + 2, PAL.grid);
-  // walker strolling along a dashed path across the emblem
-  const pathY = ey + EMB_H - 14;
-  for (let x = ex + 2; x < ex + EMB_W - 2; x++) {
-    const ph = x % 6;
-    if (ph < 3) px(ctx, x, pathY + Math.round(Math.sin(x * 0.07) * 2), PAL.magenta);
-    else if (ph === 4) px(ctx, x, pathY + Math.round(Math.sin(x * 0.07) * 2), PAL.ink);
-  }
-  const cycle = 14;
-  const wx = ex + 8 + ((t % cycle) / cycle) * (EMB_W - 28);
-  const wy = pathY + Math.round(Math.sin(wx * 0.07) * 2);
-  blit(ctx, walkerSprite('E', 'walk', Math.floor(t * 4) & 1), wx, wy - 11);
-  // trig on the summit
-  blit(ctx, symbolSprite('trig'), ex + 150 - 3, ey + 24);
-  // grid letters + ticks on the window
-  rect(ctx, ex - 1, ey - 1, 15, 9, PAL.paper);
-  drawText(ctx, 'NN', ex + 1, ey, PAL.ink, { font: 'small', spacing: 1 });
+  // the night scene
+  const ex = Math.round((SW - TITLE_SCENE.w) / 2), ey = 70;
+  frame(ctx, ex - 3, ey - 3, TITLE_SCENE.w + 6, TITLE_SCENE.h + 6, PAL.magenta);
+  frame(ctx, ex - 2, ey - 2, TITLE_SCENE.w + 4, TITLE_SCENE.h + 4, PAL.ink);
+  drawPanel(ctx, TITLE_SPEC, ex, ey, TITLE_SCENE.w, TITLE_SCENE.h, t);
+  frame(ctx, ex - 1, ey - 1, TITLE_SCENE.w + 2, TITLE_SCENE.h + 2, PAL.dusk);
 
   // prompt
-  const ph = blink(t, 1.2, 0.65);
-  if (ph) {
-    drawText(ctx, TITLE.prompt, SW / 2, 168, PAL.ink, { spacing: 1, align: 'center' });
+  if (blink(t, 1.2, 0.65)) {
+    drawText(ctx, TITLE.prompt, SW / 2, 168, PAL.snow, { spacing: 1, align: 'center' });
     const w = measureText(TITLE.prompt, { spacing: 1 });
     drawText(ctx, '→', SW / 2 - w / 2 - 12 + (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
     drawText(ctx, '←', SW / 2 + w / 2 + 6 - (Math.floor(t * 3) & 1), 168, PAL.magenta, {});
   }
   const how = ui.touchVisible ? TITLE.controlsTouch : TITLE.controlsKeys;
-  drawText(ctx, how, SW / 2, 182, PAL.waterInk, { font: 'small', align: 'center' });
-  drawText(ctx, TITLE.strapline, SW / 2, 191, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
-  ruler(ctx, 12, 205, SW - 24, 4, PAL.grid, 3, 2, 4);
-  hline(ctx, 12, 205, SW - 24, PAL.grid);
+  drawText(ctx, how, SW / 2, 182, PAL.rock, { font: 'small', align: 'center' });
+  drawText(ctx, TITLE.strapline, SW / 2, 191, PAL.magenta, { font: 'small', align: 'center', spacing: 1 });
+  ruler(ctx, 12, 205, SW - 24, 4, PAL.dusk, 3, 2, 4);
+  hline(ctx, 12, 205, SW - 24, PAL.dusk);
 }
 
 // ================================================================== select
-const thumbCache = new Map();
-const THUMB_W = 112, THUMB_H = 84;
-const THUMB_STYLE = [
-  { water: 0.34, wood: 0.1, snow: 9, rock: 0.9 }, { water: 0.2, wood: 0.6, snow: 9, rock: 1.1 }, { water: 0.1, wood: 0.25, snow: 9, rock: 0.5 },
-  { water: 0.08, wood: 0.0, snow: 0.7, rock: 0.9 }, { water: 0.12, wood: 0.1, snow: 9, rock: 0.55 }, { water: 0.05, wood: 0.0, snow: 0.95, rock: 0.5 },
-  { water: 0.3, wood: 0.0, snow: 9, rock: 0.8 }, { water: 0.1, wood: 0.3, snow: 0.8, rock: 0.7 },
-];
-function thumb(index, locked) {
-  const key = index + (locked ? 'L' : '');
-  if (thumbCache.has(key)) return thumbCache.get(key);
-  const st = THUMB_STYLE[index % THUMB_STYLE.length];
-  const W = THUMB_W, H = THUMB_H;
-  const buf = new Uint32Array(W * H);
-  const hh = new Float32Array(W * H);
-  const seed = 1000 + index * 77;
-  const peaks = [];
-  const np = 3 + (index % 3);
-  for (let i = 0; i < np; i++) peaks.push([hash2f(i, 1, seed) * W, hash2f(i, 2, seed) * H, 10 + hash2f(i, 3, seed) * 18, 0.5 + hash2f(i, 4, seed) * 0.8]);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    let v = 0.12 + 0.07 * Math.sin(x * 0.09 + index) + 0.06 * Math.sin(y * 0.13 + x * 0.05);
-    for (const [cx, cy, r, a] of peaks) { const dx = (x - cx) / r, dy = (y - cy) / (r * 0.85); v += a * Math.exp(-(dx * dx + dy * dy)); }
-    hh[y * W + x] = v * st.rock;
-  }
-  const BN = 11;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = y * W + x, v = hh[i];
-    const th = (BAYER4[((y & 3) << 2) | (x & 3)] + 0.5) / 16;
-    const wob = 0.5 + 0.25 * Math.sin(x * 0.2 + y * 0.11 + index) + 0.25 * Math.sin(x * 0.07 - y * 0.17);
-    let c = th < 0.06 + v * 0.25 ? U.paper2 : U.paper;
-    if (v < st.water) c = U.water;
-    else if (wob < st.wood && v < 0.6) c = U.wood;
-    else if (v > st.snow) c = U.snow;
-    const b = Math.floor(v * BN * 1.6);
-    const hi = (x < W - 1 && Math.floor(hh[i + 1] * BN * 1.6) > b) || (y < H - 1 && Math.floor(hh[i + W] * BN * 1.6) > b);
-    if (hi && v >= st.water) c = (b % 4 === 3) ? U.contourIdx : U.contour;
-    else if (v < st.water && v > st.water - 0.012) c = U.waterDeep;
-    if (locked) {
-      // greyscale: paper / rock / ink dither only
-      const g = c === U.water || c === U.waterDeep ? U.paper2 : c === U.wood ? U.rock : c === U.contour || c === U.contourIdx ? U.rock : c;
-      c = g;
-      if (((x + y) & 1) === 0 && c === U.paper) c = U.paper2;
-    }
-    buf[i] = c;
-  }
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(buf.buffer), W, H), 0, 0);
-  thumbCache.set(key, cv);
-  return cv;
-}
+/** Tracklist thumbnail: the track's own night skyline (a ridge panel, cached in panels.js). */
+function thumbSpec(index, locked) { return { kind: 'ridge', levelIndex: index, locked: !!locked }; }
 
 function isUnlocked(ui, levels, i) {
   const l = levels[i];
@@ -243,32 +162,42 @@ function select(env) {
   const { ctx, ui, t, SW, SH } = env;
   const levels = levelList(ui);
   const sel = clamp(ui.selected | 0, 0, levels.length - 1);
-  rect(ctx, 0, 0, SW, SH, PAL.paper);
-  // header
-  rect(ctx, 0, 0, SW, 16, PAL.paper2);
-  hline(ctx, 0, 16, SW, PAL.ink);
-  drawText(ctx, SELECT.header, 8, 4, PAL.ink, { spacing: 1 });
-  drawText(ctx, SELECT.headerRight, SW - 8, 6, PAL.contourIdx, { font: 'small', spacing: 1, align: 'right' });
-  ruler(ctx, 0, 16, SW, 8, PAL.grid, 3, 2, 4);
+  const accName = levels[sel] ? levels[sel].accent : 'magenta';
+  const accent = PAL[accName], onAcc = onFill(accent);
+  rect(ctx, 0, 0, SW, SH, PAL.ink);
+  // film margins: gold sprocket holes down both edges
+  sprockets(ctx, 1, 0, SH, t, { w: 5, h: 8, pitch: 12, speed: 4 });
+  sprockets(ctx, SW - 6, 0, SH, t, { w: 5, h: 8, pitch: 12, speed: 4 });
+  // parchment header: a scroll bar with the accent line under it
+  rect(ctx, 8, 0, SW - 16, 16, PAL.paper2);
+  hline(ctx, 8, 16, SW - 16, accent);
+  hline(ctx, 8, 17, SW - 16, PAL.ink);
+  drawText(ctx, SELECT.header, 12, 4, PAL.ink, { spacing: 1 });
+  drawText(ctx, SELECT.headerRight, SW - 12, 6, PAL.contourIdx, { font: 'small', spacing: 1, align: 'right' });
+  ruler(ctx, 8, 16, SW - 16, 8, PAL.grid, 3, 2, 4);
 
+  // the list sits on a parchment sheet
   const x0 = LAYOUT.select.x0, y0 = 22, rh = 22, lw = LAYOUT.select.lw;
+  rect(ctx, x0 - 1, 19, lw + 2, SH - 19 - 15, PAL.paper);
+  frame(ctx, x0 - 1, 19, lw + 2, SH - 19 - 15, PAL.contourIdx);
   levels.forEach((lv, i) => {
     const y = y0 + i * rh;
     const unlocked = isUnlocked(ui, levels, i), done = isCompleted(ui, levels, i), on = i === sel;
+    const acc = PAL[lv.accent || 'magenta'];
     if (on) {
       rect(ctx, x0, y, lw, rh - 2, PAL.paper2);
-      rect(ctx, x0, y, 3, rh - 2, PAL.magenta);
+      rect(ctx, x0, y, 3, rh - 2, acc);
       frame(ctx, x0, y, lw, rh - 2, PAL.ink);
     } else {
       ctx.fillStyle = PAL.grid;
       for (let x = x0; x < x0 + lw; x += 2) ctx.fillRect(x, y + rh - 2, 1, 1);
     }
     const col = unlocked ? PAL.ink : PAL.rock;
-    // roman numeral plate
+    // roman numeral plate in the track's own hue
     const nx = x0 + 7, ny = y + 3;
-    rect(ctx, nx, ny, 26, 15, unlocked ? (on ? PAL.magenta : PAL.paper) : PAL.paper2);
-    frame(ctx, nx, ny, 26, 15, unlocked ? PAL.magenta : PAL.rock);
-    drawText(ctx, ROMAN[i] || String(i + 1), nx + 13, ny + 4, unlocked ? (on ? PAL.snow : PAL.magenta) : PAL.rock, { align: 'center' });
+    rect(ctx, nx, ny, 26, 15, unlocked ? (on ? acc : PAL.paper) : PAL.paper2);
+    frame(ctx, nx, ny, 26, 15, unlocked ? acc : PAL.rock);
+    drawText(ctx, ROMAN[i] || String(i + 1), nx + 13, ny + 4, unlocked ? (on ? onFill(acc) : PAL.ink) : PAL.rock, { align: 'center' });
     // name + gaelic
     drawText(ctx, String(lv.name).toUpperCase(), x0 + 40, y + 3, col, { spacing: 1 });
     drawText(ctx, lv.gaelic || '', x0 + 40, y + 13, unlocked ? PAL.contourIdx : PAL.rock, { font: 'small', italic: true });
@@ -278,72 +207,83 @@ function select(env) {
     frame(ctx, gx, y + 3, 18, 13, unlocked ? PAL.grid : PAL.rock);
     drawText(ctx, lv.gridLetters || '', gx + 9, y + 7, unlocked ? PAL.waterInk : PAL.rock, { align: 'center' });
     if (!unlocked) blit(ctx, padlockSprite(PAL.rock), gx - 12, y + 6);
-    else if (done) check(ctx, gx - 11, y + 7, PAL.magenta);
-    if (on) {
-      const off = Math.floor(t * 3) & 1;
-      drawText(ctx, '→', x0 - 6 + off, y + 6, PAL.magenta, {});
-    }
+    else if (done) check(ctx, gx - 11, y + 7, PAL.ink);
   });
 
-  // right panel: sheet cover + details
+  // right: a black film frame, the track's night skyline between two rows of sprocket holes, then its details
   const rx = LAYOUT.select.panelX, rw = SW - rx - 8;
   const lv = levels[sel];
   const unlocked = isUnlocked(ui, levels, sel);
-  panel(ctx, rx, 22, rw, 176, { fill: PAL.paper, shadow: PAL.paper2 });
-  const tx = rx + Math.round((rw - THUMB_W) / 2), ty = 28;
-  ctx.drawImage(thumb(sel, !unlocked), tx, ty);
-  frame(ctx, tx - 1, ty - 1, THUMB_W + 2, THUMB_H + 2, PAL.ink);
-  rect(ctx, tx, ty, 14, 9, PAL.paper);
-  drawText(ctx, lv.gridLetters || '', tx + 2, ty + 2, PAL.ink, { font: 'small', spacing: 1 });
+  rect(ctx, rx, 19, rw, SH - 19 - 15, PAL.ink);
+  frame(ctx, rx, 19, rw, SH - 19 - 15, accent);
+  frame(ctx, rx + 2, 21, rw - 4, SH - 19 - 15 - 4, PAL.night);
+  const tx = rx + Math.round((rw - THUMB.w) / 2), ty = 28;
+  sprockets(ctx, rx + 4, ty, ty + THUMB.h, t, { w: 5, h: 6, pitch: 10, speed: 3 });
+  sprockets(ctx, rx + rw - 9, ty, ty + THUMB.h, t, { w: 5, h: 6, pitch: 10, speed: 3 });
+  drawPanel(ctx, thumbSpec(sel, !unlocked), tx, ty, THUMB.w, THUMB.h, t);
+  frame(ctx, tx - 1, ty - 1, THUMB.w + 2, THUMB.h + 2, unlocked ? accent : PAL.rock);
+  rect(ctx, tx, ty, 14, 9, PAL.ink);
+  drawText(ctx, lv.gridLetters || '', tx + 2, ty + 2, unlocked ? accent : PAL.rock, { font: 'small', spacing: 1 });
   if (!unlocked) {
-    rect(ctx, tx + THUMB_W / 2 - 18, ty + THUMB_H / 2 - 14, 36, 28, PAL.paper);
-    frame(ctx, tx + THUMB_W / 2 - 18, ty + THUMB_H / 2 - 14, 36, 28, PAL.ink);
-    ctx.drawImage(padlockSprite(PAL.ink), tx + THUMB_W / 2 - 3, ty + THUMB_H / 2 - 8);
-    drawText(ctx, SELECT.locked, tx + THUMB_W / 2, ty + THUMB_H / 2 + 3, PAL.ink, { font: 'small', align: 'center' });
+    rect(ctx, tx + THUMB.w / 2 - 18, ty + THUMB.h / 2 - 14, 36, 28, PAL.ink);
+    frame(ctx, tx + THUMB.w / 2 - 18, ty + THUMB.h / 2 - 14, 36, 28, PAL.rock);
+    ctx.drawImage(padlockSprite(PAL.rock), tx + THUMB.w / 2 - 3, ty + THUMB.h / 2 - 8);
+    drawText(ctx, SELECT.locked, tx + THUMB.w / 2, ty + THUMB.h / 2 + 3, PAL.rock, { font: 'small', align: 'center' });
   }
   const cx = rx + rw / 2;
   const subT = String(lv.subtitle || '').toUpperCase();
   const subFont = measureText(subT, {}) <= rw - 8 ? 'main' : 'small';
-  drawText(ctx, subT, cx, subFont === 'main' ? 118 : 120, unlocked ? PAL.magenta : PAL.rock, { align: 'center', font: subFont, spacing: subFont === 'small' ? 1 : 0 });
-  drawText(ctx, String(lv.name).toUpperCase(), cx, 130, unlocked ? PAL.ink : PAL.rock, { align: 'center', font: 'small', spacing: 1 });
-  hline(ctx, rx + 10, 141, rw - 20, PAL.grid);
-  // gate chain
-  drawText(ctx, SELECT.chainHeading, rx + 10, 146, PAL.contourIdx, { font: 'small', spacing: 1 });
+  drawText(ctx, subT, cx, subFont === 'main' ? 118 : 120, unlocked ? accent : PAL.rock, { align: 'center', font: subFont, spacing: subFont === 'small' ? 1 : 0 });
+  drawText(ctx, String(lv.name).toUpperCase(), cx, 130, unlocked ? PAL.snow : PAL.rock, { align: 'center', font: 'small', spacing: 1 });
+  hline(ctx, rx + 10, 141, rw - 20, PAL.dusk);
+  // gate chain: the OS symbols on little paper tiles
+  drawText(ctx, SELECT.chainHeading, rx + 10, 146, PAL.rock, { font: 'small', spacing: 1 });
   const chain = lv.chain || [];
   let ix = rx + 10;
   chain.forEach((type) => {
-    rect(ctx, ix - 1, 154, 10, 10, PAL.paper2);
-    frame(ctx, ix - 1, 154, 10, 10, unlocked ? PAL.ink : PAL.rock);
+    rect(ctx, ix - 1, 154, 10, 10, unlocked ? PAL.paper : PAL.paper2);
+    frame(ctx, ix - 1, 154, 10, 10, unlocked ? accent : PAL.rock);
     ctx.drawImage(iconSprite(type, unlocked), ix, 155);
     ix += 13;
   });
-  ctx.drawImage(gateSprite(false, unlocked ? null : PAL.rock), ix + 1, 153);
-  const status = !unlocked ? SELECT.locked : isCompleted(ui, levels, sel) ? SELECT.statusDone : SELECT.statusOpen;
-  drawText(ctx, status, rx + 10, 172, unlocked ? PAL.waterInk : PAL.rock, { font: 'small', spacing: 1 });
-  if (isCompleted(ui, levels, sel)) check(ctx, rx + 10 + measureText(status, { font: 'small', spacing: 1 }) + 4, 171, PAL.magenta);
-  if (unlocked && blink(t, 1.4, 0.7)) drawText(ctx, SELECT.prompt, cx, 185, PAL.magenta, { font: 'small', align: 'center', spacing: 1 });
+  rect(ctx, ix, 153, 11, 10, PAL.paper2);
+  ctx.drawImage(gateSprite(false, unlocked ? null : PAL.rock), ix, 153);
+  const doneNow = isCompleted(ui, levels, sel);
+  const status = !unlocked ? SELECT.locked : doneNow ? SELECT.statusDone : SELECT.statusOpen;
+  drawText(ctx, status, rx + 10, 172, unlocked ? PAL.snow : PAL.rock, { font: 'small', spacing: 1 });
+  if (doneNow) check(ctx, rx + 10 + measureText(status, { font: 'small', spacing: 1 }) + 4, 171, accent);
+  if (unlocked && blink(t, 1.4, 0.7)) drawText(ctx, SELECT.prompt, cx, 185, accent, { font: 'small', align: 'center', spacing: 1 });
 
-  hline(ctx, 0, SH - 14, SW, PAL.ink);
-  rect(ctx, 0, SH - 13, SW, 13, PAL.paper2);
+  // footer: parchment bar
+  rect(ctx, 8, SH - 14, SW - 16, 14, PAL.paper2);
+  hline(ctx, 8, SH - 14, SW - 16, PAL.ink);
+  hline(ctx, 8, SH - 15, SW - 16, accent);
   drawText(ctx, SELECT.footer, SW / 2, SH - 9, PAL.contourIdx, { font: 'small', spacing: 1, align: 'center' });
 }
 
 // =================================================================== pause
 function pause(env) {
-  const { ctx, ui, t, SW, SH } = env;
+  const { ctx, state, ui, t, SW, SH } = env;
+  const acc = accentOfLevel(state && ((state.world && state.world.level) || state.level));
   const items = ui.items || PAUSE.items.map((it) => it.label);
   const sel = clamp(ui.selected | 0, 0, items.length - 1);
   const w = LAYOUT.pause.w, h = 34 + items.length * 13 + 14;
   const x = Math.round((SW - w) / 2), y = Math.round((SH - h) / 2);
-  panel(ctx, x, y, w, h, { fill: PAL.paper, inner: PAL.grid });
-  rect(ctx, x + 3, y + 3, w - 6, 20, PAL.magenta);
-  drawText(ctx, PAUSE.heading, x + w / 2 + 1, y + 7 + 1, PAL.ink, { align: 'center', scale: 1, spacing: 4 });
-  drawText(ctx, PAUSE.heading, x + w / 2, y + 7, PAL.snow, { align: 'center', spacing: 4 });
+  // black film margins with sprocket holes, a parchment page between them
+  rect(ctx, x - 14, y - 4, w + 28, h + 8, PAL.ink);
+  sprockets(ctx, x - 11, y - 4, y + h + 4, t, { w: 7, h: 8, pitch: 12, speed: 4 });
+  sprockets(ctx, x + w + 4, y - 4, y + h + 4, t, { w: 7, h: 8, pitch: 12, speed: 4 });
+  panel(ctx, x, y, w, h, { fill: PAL.paper, shadow: null, inner: acc });
+  rect(ctx, x + 3, y + 3, w - 6, 20, acc);
+  const onAcc = onFill(acc);
+  drawText(ctx, PAUSE.heading, x + w / 2 + 1, y + 7 + 1, onAcc === PAL.snow ? PAL.ink : PAL.snow, { align: 'center', scale: 1, spacing: 4 });
+  drawText(ctx, PAUSE.heading, x + w / 2, y + 7, onAcc, { align: 'center', spacing: 4 });
   items.forEach((it, i) => {
     const iy = y + 30 + i * 13;
     if (i === sel) {
       rect(ctx, x + 8, iy - 2, w - 16, 11, PAL.paper2);
-      drawText(ctx, '→', x + 11 + (Math.floor(t * 3) & 1), iy, PAL.magenta, {});
+      rect(ctx, x + 8, iy - 2, 2, 11, acc);
+      drawText(ctx, '→', x + 12 + (Math.floor(t * 3) & 1), iy, PAL.ink, {});
     }
     drawText(ctx, it, x + LAYOUT.pause.itemX, iy, i === sel ? PAL.ink : PAL.contourIdx, { spacing: 1 });
   });
@@ -506,7 +446,7 @@ function mapScreen(env) {
   ky += 11;
   if (w.gate) {
     const lit = chain.filter((c) => c.resonating).length;
-    ctx.drawImage(gateSprite(!!(state && state.gateOpen)), ix0, ky - 1, 9, 8);
+    ctx.drawImage(gateSprite(!!(state && state.gateOpen)), ix0, ky - 1);   // native 11x10: the ring-cross keeps every pixel
     drawText(ctx, String(w.gate.name || 'Bealach').toUpperCase(), ix0 + 12, ky + 1, PAL.magenta, { font: 'small' });
     const stat = state && state.gateOpen ? MAP.gateOpen : `${lit}/${chain.length}`;
     drawText(ctx, stat, rx + rw - 6, ky + 1, PAL.ink, { font: 'small', align: 'right' });
@@ -563,54 +503,90 @@ function mapScreen(env) {
   drawText(ctx, 'N', nx, ny - 8, PAL.ink, { font: 'small', align: 'center' });
 }
 
-// ===================================================================== notes
-function notes(env) {
+// ============================================================ story frame + notes
+/** Caption lines (whole text wrapped first, so words never jump) and how many characters of each are showing. */
+export function captionLines(caption) {
+  const L = LAYOUT.story;
+  return wrapText(String(caption).toUpperCase(), L.capW, { spacing: L.spacing });
+}
+export function revealLines(lines, typed) {
+  let left = typed;
+  return lines.map((l) => { const n = [...l].length; const shown = [...l].slice(0, Math.max(0, left)).join(''); left -= n + 1; return shown; });
+}
+
+/** The filmstrip: black field, gold sprockets down both sides, the letterboxed painting, a typed grey caption. */
+function filmFrame(env, spec, caption, typed, since, o = {}) {
+  const { ctx, t, SW, SH } = env;
+  const acc = accentOfIndex(spec.levelIndex);
+  const L = LAYOUT.story;
+  rect(ctx, 0, 0, SW, SH, PAL.ink);
+  sprockets(ctx, 8, 0, SH, t);
+  sprockets(ctx, SW - 20, 0, SH, t);
+  // hairlines in the track's hue above and below the picture
+  hline(ctx, PANEL.x - 2, PANEL.y - 3, PANEL.w + 4, acc);
+  hline(ctx, PANEL.x - 2, PANEL.y + PANEL.h + 2, PANEL.w + 4, acc);
+  drawPanel(ctx, spec, PANEL.x, PANEL.y, PANEL.w, PANEL.h, t);
+  fadeBlack(ctx, PANEL.x, PANEL.y, PANEL.w, PANEL.h, 1 - clamp(since / 0.5, 0, 1));
+  // caption
+  const lines = captionLines(caption);
+  const shown = revealLines(lines, typed);
+  const total = lines.reduce((n, l) => n + [...l].length + 1, 0) - 1;
+  shown.slice(0, L.capLines).forEach((l, i) => {
+    if (l) drawText(ctx, l, L.capX, L.capY + i * 10, PAL.rock, { spacing: L.spacing, shadow: PAL.night });
+  });
+  const done = typed >= total;
+  // typing cursor / the "more" marker
+  let li = 0, rem = typed;
+  while (li < lines.length - 1 && rem > [...lines[li]].length) { rem -= [...lines[li]].length + 1; li++; }
+  const lastW = measureText(shown[li] || '', { spacing: L.spacing });
+  if (!done && Math.floor(t * 8) % 2 === 0) rect(ctx, L.capX + lastW + (shown[li] ? 2 : 0), L.capY + li * 10, 5, 7, PAL.rock);
+  if (done && o.more !== false && blink(t, 1.6, 0.6)) {
+    const mx = L.capX + L.capW - 6, my = L.capY + Math.min(lines.length, L.capLines) * 10 + 2;
+    for (let k = 0; k < 4; k++) rect(ctx, mx + k, my + k, 7 - 2 * k, 1, acc);
+  }
+  return { acc, done, lines };
+}
+
+function story(env) {
   const { ctx, ui, t, SW, SH } = env;
+  const st = ui.story;
+  if (!st) { rect(ctx, 0, 0, SW, SH, PAL.ink); return; }
+  const acc = filmFrame(env, st.panel, st.caption, st.typed, st.t).acc;
+  // which panel of how many: little squares
+  if (st.total > 1) {
+    const x0 = Math.round(SW / 2 - (st.total * 8) / 2);
+    for (let i = 0; i < st.total; i++) { rect(ctx, x0 + i * 8, 197, 5, 3, i === st.index ? acc : PAL.dusk); }
+  }
+  drawText(ctx, STORY.skip, SW / 2, 205, PAL.rock, { font: 'small', align: 'center', spacing: 1 });
+}
+
+let notePage = { page: -1, t0: 0 };
+function notes(env) {
+  const { ctx, ui, t, SW, SH, state } = env;
   const list = ui.notes || [];
-  const x = 36, y = 10, w = SW - 60, h = SH - 22;
-  // page shadow + page
-  rect(ctx, x + 3, y + 3, w, h, PAL.night);
-  rect(ctx, x, y, w, h, PAL.paper);
-  frame(ctx, x, y, w, h, PAL.ink);
-  // ruled lines
-  ctx.fillStyle = PAL.grid;
-  for (let ly = y + 36; ly < y + h - 6; ly += 10) ctx.fillRect(x + 4, ly, w - 8, 1);
-  vline(ctx, x + 22, y + 2, h - 4, PAL.magenta);
-  // spiral binding
-  for (let by = y + 8; by < y + h - 6; by += 12) {
-    rect(ctx, x - 9, by, 12, 3, PAL.ink);
-    rect(ctx, x - 7, by + 1, 6, 1, PAL.rock);
-    rect(ctx, x + 4, by, 2, 3, PAL.paper2);
+  const lv = (state && ((state.world && state.world.level) || state.level)) || null;
+  const li = lv && lv.index != null ? lv.index : (state && state.levelIndex) || 0;
+  const spec = { kind: 'bothy', levelIndex: li };
+  const page = clamp(ui.scroll | 0, 0, Math.max(0, list.length - 1));
+  if (notePage.page !== page || t < notePage.t0) notePage = { page, t0: t };
+  const text = list.length ? String(list[page]) : NOTES.empty;
+  const since = t - notePage.t0;
+  const typed = revealCount([...text].length, since * 1000);
+  const acc = accentOfIndex(li);
+  filmFrame(env, spec, text, typed, since, { more: false });
+  // heading and count above the picture, page marks below
+  drawText(ctx, NOTES.heading, PANEL.x, 2, acc, { font: 'small', spacing: 2 });
+  drawText(ctx, fmt(NOTES.count, { n: list.length }), PANEL.x + PANEL.w, 2, PAL.rock, { font: 'small', spacing: 1, align: 'right' });
+  if (list.length > 1) {
+    drawText(ctx, fmt(STORY.page, { n: page + 1, N: list.length }), SW / 2, 196, PAL.rock, { font: 'small', align: 'center', spacing: 1 });
+    if (page > 0) drawText(ctx, '↑', SW / 2 - 22, 194, acc, {});
+    if (page < list.length - 1) drawText(ctx, '↓', SW / 2 + 16, 194, acc, {});
   }
-  drawText(ctx, NOTES.heading, x + 30, y + 8, PAL.ink, { spacing: 2 });
-  drawText(ctx, fmt(NOTES.count, { n: list.length }), x + w - 8, y + 10, PAL.contourIdx, { font: 'small', align: 'right', spacing: 1 });
-  hline(ctx, x + 30, y + 19, 82, PAL.magenta);
-  hline(ctx, x + 30, y + 21, 82, PAL.magenta);
-  const maxW = w - 48;
-  let ly = y + 28;
-  const scroll = (ui.scroll | 0);
-  if (!list.length) {
-    wrapText(NOTES.empty, maxW - 10, { italic: true }).slice(0, 4).forEach((l, i) => drawText(ctx, l, x + 30, ly + i * 10, PAL.contourIdx, { italic: true }));
-  }
-  const lines = [];
-  list.forEach((n, i) => {
-    const wrapped = wrapText(String(n), maxW - 10, { italic: true });
-    wrapped.forEach((l, k) => lines.push({ text: l, first: k === 0, i }));
-  });
-  const visible = Math.floor((h - 34) / 10);
-  const off = clamp(scroll, 0, Math.max(0, lines.length - visible));
-  lines.slice(off, off + visible).forEach((l, k) => {
-    const yy = ly + k * 10;
-    if (l.first) { drawText(ctx, String(l.i + 1), x + 26, yy + 1, PAL.magenta, { font: 'small' }); }
-    drawText(ctx, l.text, x + 36, yy, PAL.night, { italic: true });
-  });
-  if (off > 0) drawText(ctx, '↑', x + w - 10, y + 26, PAL.magenta, {});
-  if (off + visible < lines.length) drawText(ctx, '↓', x + w - 10, y + h - 12, PAL.magenta, {});
-  drawText(ctx, NOTES.footer, x + w / 2, y + h - 9, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
+  drawText(ctx, STORY.notesFooter, SW / 2, 205, PAL.rock, { font: 'small', align: 'center', spacing: 1 });
 }
 
 // ================================================================= complete
-function motifStave(ctx, cx, y, t) {
+function motifStave(ctx, cx, y, t, acc = PAL.magenta) {
   // five lines + the contour motif [0,2,4,1,3] as notes
   const w = 70;
   const x = cx - w / 2;
@@ -619,7 +595,7 @@ function motifStave(ctx, cx, y, t) {
   motif.forEach((deg, i) => {
     const nx = x + 8 + i * 13, ny = y + 12 - deg * 1.5;
     const on = Math.floor(t * 4) % 5 === i;
-    const col = on ? PAL.magenta : PAL.ink;
+    const col = on ? acc : PAL.ink;
     ctx.fillStyle = col;
     ctx.fillRect(Math.round(nx) - 2, Math.round(ny) - 1, 5, 3);
     ctx.fillRect(Math.round(nx) - 1, Math.round(ny) - 2, 3, 5);
@@ -632,6 +608,7 @@ function complete(env) {
   const lv = (state && state.world && state.world.level) || (state && state.level) || {};
   const idx = lv.index != null ? lv.index : (state && state.levelIndex) || 0;
   const ease = clamp(since / 0.5, 0, 1);
+  const acc = accentOfLevel(lv), onAcc = onFill(acc);
   // the banner is set at 2x when it fits on one line, otherwise it wraps (still 2x) and the card grows
   const w = LAYOUT.complete.w;
   const bannerLines = wrapText(COMPLETE.banner, (w - 24) / 2, { spacing: 2 }).slice(0, 3);
@@ -639,19 +616,23 @@ function complete(env) {
   const h = 146 + extra;
   const x = Math.round((SW - w) / 2);
   const y = Math.round((SH - h) / 2 - 8 + (1 - ease) * -40);
-  panel(ctx, x, y, w, h, { fill: PAL.paper, inner: PAL.magenta });
-  rect(ctx, x + 4, y + 4, w - 8, 30 + extra, PAL.magenta);
+  // black film margins with sprocket holes either side of the parchment card
+  rect(ctx, x - 16, y - 4, w + 32, h + 8, PAL.ink);
+  sprockets(ctx, x - 13, y - 4, y + h + 4, t, { w: 8, h: 9, pitch: 14, speed: 4 });
+  sprockets(ctx, x + w + 5, y - 4, y + h + 4, t, { w: 8, h: 9, pitch: 14, speed: 4 });
+  panel(ctx, x, y, w, h, { fill: PAL.paper, shadow: null, inner: acc });
+  rect(ctx, x + 4, y + 4, w - 8, 30 + extra, acc);
   bannerLines.forEach((l, i) => {
-    drawText(ctx, l, SW / 2 + 2, y + 10 + 2 + i * 17, PAL.ink, { scale: 2, spacing: 2, align: 'center' });
-    drawText(ctx, l, SW / 2, y + 10 + i * 17, PAL.snow, { scale: 2, spacing: 2, align: 'center' });
+    drawText(ctx, l, SW / 2 + 2, y + 10 + 2 + i * 17, onAcc === PAL.snow ? PAL.ink : PAL.snow, { scale: 2, spacing: 2, align: 'center' });
+    drawText(ctx, l, SW / 2, y + 10 + i * 17, onAcc, { scale: 2, spacing: 2, align: 'center' });
   });
   const gate = state && state.world && state.world.gate;
-  drawText(ctx, gate ? gate.name : 'Bealach', SW / 2, y + 40 + extra, PAL.magenta, { italic: true, align: 'center' });
+  drawText(ctx, gate ? gate.name : 'Bealach', SW / 2, y + 40 + extra, PAL.contourIdx, { italic: true, align: 'center' });
   ctx.drawImage(gateSprite(true), Math.round(SW / 2 - 5), y + 52 + extra);
   const num = ROMAN[idx] || String(idx + 1);
   drawText(ctx, fmt(COMPLETE.line, { numeral: num }), SW / 2, y + 68 + extra, PAL.ink, { align: 'center', spacing: 1 });
   drawText(ctx, String(lv.subtitle || lv.name || '').toUpperCase(), SW / 2, y + 79 + extra, PAL.contourIdx, { font: 'small', align: 'center', spacing: 1 });
-  motifStave(ctx, SW / 2 - 52, y + 92 + extra, t);
+  motifStave(ctx, SW / 2 - 52, y + 92 + extra, t, acc);
   const nf = ui.fragmentCount != null ? ui.fragmentCount : ((state && state.fragments) || []).length;
   drawText(ctx, fmt(COMPLETE.motifCounter, { n: Math.max(nf, idx + 1) }), SW / 2 + 6, y + 91 + extra, PAL.ink, { font: 'small', spacing: 1 });
   drawText(ctx, COMPLETE.motifDone, SW / 2 + 6, y + 99 + extra, PAL.contourIdx, { font: 'small', spacing: 1 });
@@ -661,12 +642,12 @@ function complete(env) {
   if (next) {
     drawText(ctx, COMPLETE.nextHeading, x + 10, y + h - 27, PAL.contourIdx, { font: 'small', spacing: 1 });
     drawText(ctx, String(next.name).toUpperCase(), x + 10, y + h - 20, PAL.ink, { spacing: 1 });
-    drawText(ctx, String(next.subtitle || '').toUpperCase(), x + w - 10, y + h - 19, PAL.magenta, { font: 'small', align: 'right', spacing: 1 });
+    drawText(ctx, String(next.subtitle || '').toUpperCase(), x + w - 10, y + h - 19, PAL.contourIdx, { font: 'small', align: 'right', spacing: 1 });
   } else {
     const last = wrapText(COMPLETE.lastTrack, w - 20, { spacing: 1 }).slice(0, 2);
     last.forEach((l, i) => drawText(ctx, l, SW / 2, y + h - 27 + i * 9 + (last.length > 1 ? 0 : 5), PAL.ink, { align: 'center', spacing: 1 }));
   }
-  if (blink(t, 1.3, 0.65)) drawText(ctx, COMPLETE.prompt, SW / 2, y + h - 9, PAL.magenta, { font: 'small', align: 'center', spacing: 2 });
+  if (blink(t, 1.3, 0.65)) drawText(ctx, COMPLETE.prompt, SW / 2, y + h - 9, PAL.ink, { font: 'small', align: 'center', spacing: 2 });
 }
 
-export const Screens = { title, select, pause, map: mapScreen, notes, complete };
+export const Screens = { title, select, pause, map: mapScreen, notes, complete, story };

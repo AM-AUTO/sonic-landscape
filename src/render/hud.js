@@ -142,6 +142,7 @@ export const SCROLL = Object.freeze({
 });
 export const CELL_H = 22;                         // key-bar cell: icon row, label row, status row
 export const CHAIN_W = 27, GATE_W = 32, CHEV = 3;
+export const DRAIN_W = 11;                       // seconds-left bar in row three (1 px frame each side, label 3 px after)
 export const KEYBAR = Object.freeze({
   x0: 17, y: SCROLL_Y + 13, h: CELL_H,
   labelW: CHAIN_W,                                // widest label / status line a chain cell takes
@@ -376,7 +377,7 @@ function drawKeyBar(ctx, st, accent, R) {
     if (lit) {
       let secs = c.remaining;
       if (secs == null) { const r = res.find((q) => q.type === c.type); secs = r ? (r.strength == null ? 1 : r.strength) * RESONANCE_SECONDS : 0; }
-      drainBar(ctx, bx + 1, by + 18, 13, secs / RESONANCE_SECONDS, secs, accent);
+      drainBar(ctx, bx + 1, by + 18, DRAIN_W, secs / RESONANCE_SECONDS, secs, accent);
     } else if (dist != null) {
       const t = kmText(dist);
       drawText(ctx, t, centred(cell, t), by + 17, PAL.paper2, { font: 'small' });
