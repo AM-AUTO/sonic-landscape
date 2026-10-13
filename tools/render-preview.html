@@ -156,9 +156,11 @@ window.P = {
     window.world = world;
     return { name: world.level.name, minH: world.minH, maxH: world.maxH, levels: real ? real.LEVELS.length : 0 };
   },
+  /** build every track's real skyline for the story panels and tracklist thumbnails */
+  async warmProfiles() { const m = await import('/src/render/panels.js'); for (let i = 0; i < 8; i++) m.warmProfile(i); return true; },
   async levelDefs() {
     const r = await loadReal();
-    return r ? r.LEVELS.map((l) => ({ id: l.id, index: l.index, name: l.name, gaelic: l.gaelic, gridLetters: l.gridLetters, subtitle: l.subtitle, gate: { chain: l.gate.chain } })) : null;
+    return r ? r.LEVELS.map((l) => ({ id: l.id, index: l.index, name: l.name, gaelic: l.gaelic, gridLetters: l.gridLetters, subtitle: l.subtitle, palette: l.palette, gate: { chain: l.gate.chain } })) : null;
   },
   async realLevels() { const r = await loadReal(); return r ? r.LEVELS.length : 0; },
   async bake() {

@@ -2,7 +2,7 @@
  * Full-screen scenes: title, select (track list), pause, map, notes, complete.
  * Each takes an env { R, ctx, state, ui, t, since, SW, SH } from the renderer.
  */
-import { PAL, PAL_U32 as U, BAYER4 } from './palette.js';
+import { PAL, PAL_U32 as U, BAYER4, BAYER8 } from './palette.js';
 import { drawText, measureText, wrapText } from './font.js';
 import { rect, frame, hline, vline, pline, panel, px, ditherRect, clamp, ruler, pcircle } from './draw.js';
 import { typeLabel, typeShort, glyphFor } from './glyphs.js';

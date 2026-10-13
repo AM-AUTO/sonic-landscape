@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 import { ARTEFACT_NAMES, BANNER, fmt } from '../src/text.js';
 import { LEVELS } from '../src/world/levels/index.js';
+import { STORY, NOTES, fmt as fmtText } from '../src/text.js';
+import { introItems, trackItems, completeItems, albumItems } from '../src/story.js';
 import { describeCondition } from '../src/game/describe.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -84,6 +86,27 @@ save('select', await frame({ state: null, ui: { screen: 'select', levels: levelD
 save('select-locked', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 5, time: 1.4, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch', 'affric'] }, warm: 1 }));
 
 }
+
+// ---- gothic frames: the title night scene, the filmstrip story panels, the tracklist, notes, pause, card
+if (!FX_ONLY) {
+  await page.evaluate(() => window.P.warmProfiles());
+  const storyUi = (item, frac = 1, time = 6, index = 0, total = 1) => {
+    const len = [...item.caption].length;
+    return { screen: 'story', time, story: { panel: item.panel, caption: item.caption, typed: Math.round(len * frac), count: len, index, total, complete: frac >= 1, t: time } };
+  };
+  save('title-night', await frame({ state: null, ui: { screen: 'title', time: 11.3 }, warm: 1 }));
+  save('title-night-b', await frame({ state: null, ui: { screen: 'title', time: 5.2 }, warm: 1 }));
+  for (const [i, it] of introItems(STORY.intro).entries()) save(`story-intro-${i + 1}`, await frame({ state: null, ui: storyUi(it, i === 0 ? 0.55 : 1, 6 + i, i, 3), warm: 1 }));
+  for (const kind of ['ridge', 'cross', 'bothy', 'gate']) save(`story-panel-${kind}`, await frame({ state: null, ui: storyUi({ panel: { kind, levelIndex: 2 }, caption: STORY.track.coe }, 1, 7.4), warm: 1 }));
+  for (const i of [0, 1, 2, 3, 4, 5, 6, 7]) save(`story-track-${LEVELS[i].id}`, await frame({ state: null, ui: storyUi(trackItems(i, STORY.track[LEVELS[i].id])[0], 1, 8.1), warm: 1 }));
+  save('story-track-typing', await frame({ state: null, ui: storyUi(trackItems(4, STORY.track.torridon)[0], 0.4, 1.2), warm: 1 }));
+  save('story-complete', await frame({ state: null, ui: storyUi(completeItems(3, fmtText(STORY.complete, { n: 4 }))[0], 1, 9.6), warm: 1 }));
+  save('story-album', await frame({ state: null, ui: storyUi(albumItems(STORY.album)[0], 1, 9), warm: 1 }));
+  levelDefs = await page.evaluate(() => window.P.levelDefs());
+  for (const [sel, name, un, dn] of [[0, 'a', ['rannoch'], []], [3, 'b', ['rannoch', 'affric', 'coe', 'cairngorm'], ['rannoch', 'affric', 'coe']], [5, 'c', ['rannoch', 'affric', 'coe', 'cairngorm'], ['rannoch']], [7, 'd', LEVELS.map((l) => l.id), LEVELS.map((l) => l.id)]]) {
+    save(`gothic-select-${name}`, await frame({ state: null, ui: { screen: 'select', levels: levelDefs, selected: sel, time: 3.4, unlocked: un, completed: dn }, warm: 1 }));
+  }
+}
 for (const w of worlds) {
   const key = w.replace(':', '-');
   const info = await page.evaluate((x) => window.P.setWorld(x), w);
@@ -128,7 +151,8 @@ for (const w of worlds) {
   save(`${key}-play-touch`, await frame({ state: { ...base, tod: 0.3, at: has('cairn') ? 'cairn' : poiTypes[0], dx: 7, dy: 3, speed: 3, proximity: ['cairn'] }, ui: {}, touch: 'active' }));
   save(`${key}-play-touch-idle`, await frame({ state: { ...base, tod: 0.3, speed: 0 }, ui: {}, touch: 'idle' }));
   save(`${key}-map`, await frame({ state: { ...base, tod: 0.3, ...sp, chainLit: 1, discovered: ['lochan', 'cairn', 'trig', 'summit', 'bothy'] }, ui: { screen: 'map', time: 3 } }));
-  save(`${key}-notes`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes } }));
+  save(`${key}-notes`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes }, advance: 2.2 }));
+  save(`${key}-notes-p3`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes, scroll: 2 }, advance: 3.2 }));
   save(`${key}-pause`, await frame({ state: { ...base, tod: 0.3, ...sp }, ui: { screen: 'pause', time: 3, selected: 1 } }));
   save(`${key}-complete`, await frame({ state: { ...base, tod: 0.3, ...sp, gateOpen: true, chainLit: 3, fragments: ['rannoch'] }, ui: { screen: 'complete', time: 4 }, warm: 3, advance: 0.8 }));
   // timing

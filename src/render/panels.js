@@ -247,8 +247,13 @@ function ridgeLayer(r, id, W, H, band, size, o) {
       const c = bay(x, y) < f ? o.lower : o.upper;
       r.px(x, y, c, id);
     }
-    if (o.rim && (!o.rimDens || bay(x, top) < o.rimDens)) {
-      r.px(x, top, o.rim, id);
+  }
+  if (o.rim) {
+    // the crest line is unbroken: on a steep side the rim runs down to meet the next column's crest
+    for (let x = 0; x < W; x++) {
+      const top = clamp(tops[x], 2, H - 1), nxt = clamp(tops[Math.min(W - 1, x + 1)], 2, H - 1);
+      const y1 = Math.max(top, Math.min(nxt, top + 8));
+      for (let y = top; y <= y1; y++) if (!o.rimDens || bay(x, y) < o.rimDens) r.px(x, y, o.rim, id);
       if (o.rim2 && bay(x, top + 1) < 0.5) r.px(x, top + 1, o.rim2, id);
     }
   }
@@ -535,15 +540,25 @@ function paintCross(r, spec, S) {
   const accent = accentU(spec.levelIndex);
   const gy = Math.round(H * 0.8);
   r.rect(0, 0, W, H, C.ink, 0);
-  // the walls behind: grey dithered masses top left and right, as the ruined abbey in the reference
-  for (const [x0, w, hh] of [[0, Math.round(W * 0.2), Math.round(H * 0.34)], [Math.round(W * 0.78), Math.round(W * 0.22), Math.round(H * 0.4)]]) {
-    for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
-      const X = x0 + x, edgeD = Math.min(hh - y, Math.abs((x0 ? x : w - x))) ;
-      const slant = (x0 ? x : w - 1 - x) * 0.45 + 2;
-      if (y > hh - slant) continue;
-      const k = hash2f(X, y, seed + 2);
-      r.px(X, y, k < 0.55 ? C.night : (bay(X, y) < 0.5 ? C.rock : C.night), 1);
-      void edgeD;
+  // the walls behind: ragged grey masses top left and right with arched windows, as the abbey in the reference
+  for (const [x0, w, hh, side] of [[0, Math.round(W * 0.21), Math.round(H * 0.4), 0], [Math.round(W * 0.79), Math.round(W * 0.21), Math.round(H * 0.46), 1]]) {
+    for (let x = 0; x < w; x++) {
+      const X = x0 + x;
+      const edge = side ? w - 1 - x : x;                          // distance from the screen edge
+      const top = Math.round((edge / w) * hh * 0.75 + vnoise(X * 0.2, 3, seed) * 6);
+      for (let y = top; y < hh; y++) {
+        const k = hash2f(X, y, seed + 2);
+        const course = (y % 7 === 0) || ((X + (Math.floor(y / 7) & 1) * 5) % 11 === 0);
+        r.px(X, y, course ? C.ink : (k < 0.5 ? C.night : (bay(X, y) < 0.5 ? C.rock : C.night)), 1);
+      }
+    }
+    // two arched windows, black
+    for (const wx of [Math.round(w * 0.3), Math.round(w * 0.7)]) {
+      const cx2 = x0 + wx, top = Math.round(hh * 0.42);
+      for (let y = top; y < Math.min(hh - 2, top + 26); y++) for (let x = -5; x <= 5; x++) {
+        const inArch = y < top + 7 ? Math.hypot(x, y - top - 6) <= 5.5 : Math.abs(x) <= 5;
+        if (inArch && r.layer(cx2 + x, y) === 1) r.px(cx2 + x, y, C.ink, 1);
+      }
     }
   }
   // arches: stone outline, dithered grey, broken in places, with moss where it clings
@@ -572,8 +587,15 @@ function paintCross(r, spec, S) {
     r.px(x, gy, k < 0.55 ? C.woodDark : C.rock, 3);
     if (k < 0.3) r.px(x, gy + 1, C.woodDark, 3);
   }
-  for (let y = gy + 5; y < H; y += 9) for (let x = 0; x < W; x++) if (hash2f(x >> 2, y, seed + 4) < 0.7) r.px(x, y, bay(x, y) < 0.5 ? C.night : C.ink, 3);
-  for (let y = gy + 2; y < H; y += 9) for (let x = 0; x < W; x += 2) if (hash2f(x, y, seed + 6) < 0.28) r.px(x, y, C.rock, 3);
+  // courses of flagstone: ink mortar, grey-dithered faces
+  for (let y = gy + 2; y < H; y++) for (let x = 0; x < W; x++) {
+    const row = Math.floor((y - gy - 2) / 7), off = (row & 1) * 9;
+    const mortar = ((y - gy - 2) % 7 === 0) || ((x + off) % 19 === 0);
+    if (mortar) continue;
+    const k = hash2f(Math.floor((x + off) / 19), row, seed + 4);
+    const face = k < 0.4 ? C.night : (bay(x, y) < 0.45 ? C.night : C.ink);
+    r.px(x, y, (y - gy - 2) % 7 === 1 && k > 0.25 ? (bay(x, y) < 0.5 ? C.rock : C.night) : face, 3);
+  }
   const cx = Math.round(W / 2);
   const stepY = [gy, gy + 5];
   [[34, 0], [52, 1]].forEach(([hw, i]) => { r.rect(cx - hw, stepY[i], hw * 2, 1, C.ice, 4); r.dith(cx - hw, stepY[i] + 1, hw * 2, 3, C.woodDark, 0.5, 4); });
