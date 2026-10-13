@@ -303,8 +303,8 @@ export function paint(r, spec, S) {
   // receding ridges, far to near, each one paler and hazier at its foot, where the mist lies; a glen opens towards the sun
   const gap = (x, k) => k * Math.exp(-Math.pow((x - SUN.x) / 46, 2));
   const behind = (c, prev, m) => { for (let x = 0; x < W; x++) c[x] = Math.max(c[x], prev[x] + m); return c; };
-  const c0 = crestOf(seed + 11, 108, 24, 0.0105, 1.2, (x, y) => y + gap(x, 28));
-  const c1 = behind(crestOf(seed + 21, 116, 13, 0.017, 1.1, (x, y) => y + gap(x, 20)), c0, 5);
+  const c0 = crestOf(seed + 11, 110, 31, 0.0105, 1.25, (x, y) => y + gap(x, 28));
+  const c1 = behind(crestOf(seed + 21, 117, 16, 0.017, 1.15, (x, y) => y + gap(x, 20)), c0, 5);
   const c2 = behind(crestOf(seed + 31, 122, 8, 0.024, 1.0, (x, y) => y + gap(x, 12)), c1, 4);
   const c3 = behind(crestOf(seed + 41, 126, 9, 0.03, 1.0), c2, 3);
   for (let x = 0; x < W; x++) c3[x] = Math.min(c3[x], 124 - 34 * smooth(316, 384, x) - (vnoise(x * 0.05, 2, seed + 32) - 0.5) * 4 + (x > 330 ? 0 : 99 * 0));
@@ -312,7 +312,7 @@ export function paint(r, spec, S) {
   const c4 = behind(crestOf(seed + 51, 131, 3, 0.04, 0.8), c3, 0);
   for (let x = 0; x < W; x++) c4[x] = Math.max(c4[x], Math.min(c3[x] + 3, 132));
   const noText = [{ x: 50, y: 4, w: 290, h: 62 }];
-  paintRidge(r, c0, c1, { tints: [0.84, 0.64], hazeV: 0.92, layer: 1, step: 6, soft: 3, seed: seed + 100, grid: 48, spots: 1, shade: 0.2, avoid: noText, metres: [700, 1150] });
+  paintRidge(r, c0, c1, { tints: [0.8, 0.56], hazeV: 0.92, layer: 1, step: 6, soft: 3, seed: seed + 100, grid: 48, spots: 1, shade: 0.2, avoid: noText, metres: [700, 1150] });
   paintRidge(r, c1, c2, { tints: [0.74, 0.52], hazeV: 0.88, layer: 2, step: 5, soft: 3, seed: seed + 200, grid: 48, spots: 1, shade: 0.28, avoid: noText, metres: [520, 900] });
   paintRidge(r, c2, c3, { tints: [0.62, 0.42], hazeV: 0.8, layer: 2, step: 4.5, soft: 3, seed: seed + 300, grid: 48, shade: 0.3 });
   paintRidge(r, c3, c4, { tints: [0.5, 0.26], hazeV: 0.68, layer: 3, step: 4.5, fine: true, index: 4, accent: 0.55, seed: seed + 400, grid: 48, shade: 0.35 });
