@@ -311,8 +311,8 @@ ui.story = { panel:{kind:'ridge'|'cross'|'bothy'|'gate', levelIndex, seed?}, cap
 ```
 ```js
 // src/render/font.js  — drawText(ctx, text, x, y, color, {align, scale}) with an embedded 5×7 bitmap font (ASCII + accented Gaelic vowels à è ì ò ù)
-// src/render/palette.js — PAL (21 named colours) + tintFor(phase, levelTint)
-//   original 16 + lamp #e8832a, flame #f4c43c, bolt #f6c8f6, ice #8ee6e6, dusk #4b4a7a (PAL.lamp etc.)
+// src/render/palette.js — PAL (25 named colours) + tintFor(phase, levelTint)
+//   original 16 + lamp #e8832a, flame #f4c43c, bolt #f6c8f6, ice #8ee6e6, dusk #4b4a7a, then the reds blood #5e1f2b, rust #a9402a, ember #dd5a38, heather #7d3a62 (PAL.lamp, PAL.ember etc.)
 //   applyTint(buf,w,h,tint,ox,oy,y0,y1,lightMap?) — optional per-pixel light map scales the night dither
 // src/render/sprites.js — walkerSprite(dir,pose,frame) (12x12 ragged wanderer with a lit lantern),
 //   lanternAnchor(dir,pose,frame[,out]) -> {x,y} of the flame inside the sprite, gateSprite(open) (Celtic ring-cross)

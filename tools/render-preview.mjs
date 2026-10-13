@@ -2,7 +2,7 @@
 // usage: node tools/render-preview.mjs [--worlds mock:glen,real:0,real:1] [--scale 3] [--out out] [--fx-only] [--no-fx]
 // The atmosphere pass (weather on) renders real levels 0 rannoch, 2 coe, 3 cairngorm, 5 cuillin: day / dusk / night play
 // frames, a lightning (or storm) frame, a mist frame, a bothy-at-night frame and walker crops at 8x, plus the walker
-// pose sheet and the gate ring-cross sheet. Every frame is checked against the strict 21-colour palette.
+// pose sheet and the gate symbol-stone sheet. Every frame is checked against the strict 25-colour palette.
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';

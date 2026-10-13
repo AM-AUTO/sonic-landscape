@@ -1,5 +1,5 @@
 /**
- * CONTOURS renderer. 384x216 framebuffer, integer-scaled, strict 16-colour palette.
+ * CONTOURS renderer. 384x216 framebuffer, integer-scaled, strict 25-colour palette.
  *
  * createRenderer(canvas) -> Renderer
  *   setWorld(world)            bake the OS-style sheet (+ minimap / sheet overview)

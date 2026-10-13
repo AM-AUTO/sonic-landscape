@@ -309,7 +309,7 @@ function paintFrame(world, { tod, clock, cam = [60, 40], lvlFill = 0, fill = nul
   return { fb, fx };
 }
 
-test('every frame stays strictly on the 21-colour palette: all weathers, all times of day, flash frames included', () => {
+test('every frame stays strictly on the 25-colour palette: all weathers, all times of day, flash frames included', () => {
   for (const id of [...IDS, 'mock']) {
     for (const tod of [0.05, 0.375, 0.5, 0.625, 0.875]) {
       const { fb } = paintFrame(synth({ id, seed: 1000 + IDS.indexOf(id) }), { tod });

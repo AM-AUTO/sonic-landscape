@@ -7,12 +7,13 @@ import {
 
 const ORIGINAL_16 = ['paper', 'paper2', 'contour', 'contourIdx', 'water', 'waterDeep', 'waterInk', 'wood', 'woodDark', 'ink', 'magenta', 'grid', 'snow', 'rock', 'bog', 'night'];
 const NEW_5 = { lamp: '#e8832a', flame: '#f4c43c', bolt: '#f6c8f6', ice: '#8ee6e6', dusk: '#4b4a7a' };
+const REDS = { blood: '#5e1f2b', rust: '#a9402a', ember: '#dd5a38', heather: '#7d3a62' };
 
-test('the palette has exactly 21 unique colours', () => {
-  assert.equal(PAL_COUNT, 21);
-  assert.equal(PAL_NAMES.length, 21);
-  assert.equal(new Set(Object.values(PAL).map((h) => h.toLowerCase())).size, 21);
-  assert.equal(new Set(PAL_U32_LIST).size, 21);
+test('the palette has exactly 25 unique colours', () => {
+  assert.equal(PAL_COUNT, 25);
+  assert.equal(PAL_NAMES.length, 25);
+  assert.equal(new Set(Object.values(PAL).map((h) => h.toLowerCase())).size, 25);
+  assert.equal(new Set(PAL_U32_LIST).size, 25);
   for (const h of Object.values(PAL)) assert.match(h, /^#[0-9a-f]{6}$/);
 });
 
@@ -25,7 +26,9 @@ test('the original 16 colours keep their names, order and values; five new ones 
     assert.equal(PAL[n], hex, n);
     assert.ok(PAL_INDEX[n] >= 16, n + ' is an addition');
   }
-  assert.deepEqual(PAL_NAMES.slice(16).sort(), Object.keys(NEW_5).sort());
+  assert.deepEqual(PAL_NAMES.slice(16, 21).sort(), Object.keys(NEW_5).sort());
+  assert.deepEqual(PAL_NAMES.slice(21), ['blood', 'rust', 'ember', 'heather']);
+  for (const [n, hex] of Object.entries(REDS)) assert.equal(PAL[n], hex, n);
 });
 
 test('rgb and u32 tables agree with the hex values', () => {
@@ -60,6 +63,7 @@ test('quantize snaps to the nearest colour; the new colours are reachable, level
   for (const n of PAL_NAMES) assert.equal(quantizeHex(PAL[n]), n);
   assert.equal(quantizeHex('#ec8a30'), 'lamp');
   assert.equal(quantizeHex('#4b4a7a', BASE_COUNT) !== 'dusk', true);
+  assert.equal(quantizeHex('#dd5a38'), 'ember');
   for (const n of PAL_NAMES.slice(0, 16)) assert.equal(quantizeHex(PAL[n], BASE_COUNT), n);
   // a violet level tint must not turn into an accent wash of one of the new colours
   const t = tintFor('dusk', '#4b4a7a');
