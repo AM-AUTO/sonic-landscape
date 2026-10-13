@@ -3,7 +3,7 @@
  *
  * createRenderer(canvas) -> Renderer
  *   setWorld(world)            bake the OS-style sheet (+ minimap / sheet overview)
- *   draw(state, ui)            ui.screen: 'title'|'select'|'play'|'pause'|'map'|'notes'|'complete'
+ *   draw(state, ui)            ui.screen: 'title'|'select'|'story'|'play'|'pause'|'map'|'notes'|'complete'
  *   flashContour(index, t[, dir])  highlight contour line `index` (see below)
  *   ripple(x, y, t, color)     expanding ring from cell (x,y); brightens contour pixels it crosses
  *   pulse(type)                artefact fired: bloom of its icon + ring around the player

@@ -297,6 +297,19 @@ Renderer = {
   flashContour(index, t), ripple(x, y, t, color), pulse(type)   // visual sound feedback, called by main on events
   resize(),                      // integer-scale the 384×216 framebuffer to fit the window, letterboxed
 }
+```
+
+`ui.screen` also takes `'story'` (filmstrip panel + typed caption) and `'notes'` (field notes as bothy story panels).
+
+**Story contract** (`src/story.js`, `src/render/panels.js`, `Screens.story`):
+```js
+ui.story = { panel:{kind:'ridge'|'cross'|'bothy'|'gate', levelIndex, seed?}, caption, typed, count, index, total, complete, t }
+// main.js: startStory([{panel, caption}], onDone)   ENTER/tap: complete the reveal, then advance; ESC: skip the queue
+// flags: localStorage 'contours.flags.v1' = { intro:1, 'track.<id>':1 }; stories are off under ?autopilot, ?mute, ?nostory (?story=1 forces them)
+// panels: painted in code into palette rasters (Uint32Array), cached; per-frame animation on a copy. Ridge panels sample the track's heightfield.
+// levels: palette.accent = a PAL colour name (the track's signature hue: HUD scroll, masthead, story tint). state.day = days walked, from 1.
+```
+```js
 // src/render/font.js  — drawText(ctx, text, x, y, color, {align, scale}) with an embedded 5×7 bitmap font (ASCII + accented Gaelic vowels à è ì ò ù)
 // src/render/palette.js — PAL (21 named colours) + tintFor(phase, levelTint)
 //   original 16 + lamp #e8832a, flame #f4c43c, bolt #f6c8f6, ice #8ee6e6, dusk #4b4a7a (PAL.lamp etc.)
