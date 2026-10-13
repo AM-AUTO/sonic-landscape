@@ -47,6 +47,7 @@ const save = (name, dataUrl) => {
   fs.writeFileSync(f, Buffer.from(dataUrl.split(',')[1], 'base64'));
   console.log('wrote', path.relative(root, f));
 };
+const cropShot = (spec, x, y, w, h, sc) => page.evaluate(([s, a, b, c, d, e]) => window.P.crop(s, a, b, c, d, e), [spec, x, y, w, h, sc]);
 const frame = (spec) => page.evaluate(([s, sc]) => window.P.frame(s, sc), [spec, SCALE]);
 
 await page.evaluate(() => window.P.initRenderer());
@@ -81,6 +82,27 @@ for (const w of worlds) {
   const base = { heading: 0.4, speed: 4.2 };
   // day, walking, with a gate chain half-lit and a resonance
   save(`${key}-play-day`, await frame({ state: { ...base, tod: 0.32, at: has('cairn') ? 'cairn' : poiTypes[0], dx: 5, dy: 4, proximity: ['cairn'], resonance: ['lochan', 'trig'], chainLit: 1, discovered: ['lochan', 'trig'] }, ui: { message: 'TRIANGULATION', messageT: 3.2, messageKind: 'artefact', messageSub: 'Triangulation · trig' } }));
+  // ---- discovery layer (UX pass): chain bar, partial banner, knowledge marks, learned map
+  const nChain = await page.evaluate(() => window.P.world().gate.chain.length);
+  const know = 'demo';
+  const dBase = { ...base, tod: 0.32, know, trail: 'walk', speed: 3 };
+  const hudSpec = { state: { ...dBase, atIdx: 0, dx: 9, dy: 7 } };
+  save(`${key}-hud-idle`, await frame(hudSpec));
+  save(`${key}-hud-idle-crop`, await cropShot(hudSpec, 0, 160, 260, 56, 6));
+  const resSpec = { state: { ...dBase, atIdx: 1, dx: -12, dy: 8, litTypes: [await page.evaluate(() => window.P.world().gate.chain[0])], resonance: [await page.evaluate(() => window.P.world().gate.chain[0]), 'bothy'] } };
+  save(`${key}-hud-res`, await frame(resSpec));
+  save(`${key}-hud-res-crop`, await cropShot(resSpec, 0, 150, 260, 66, 6));
+  const allSpec = { state: { ...dBase, atIdx: 0, dx: 12, dy: 6, chainLit: nChain, resonance: await page.evaluate(() => window.P.world().gate.chain.slice()) } };
+  save(`${key}-hud-gate`, await frame(allSpec));
+  save(`${key}-hud-gate-crop`, await cropShot(allSpec, 0, 160, 260, 56, 6));
+  const partialUi = { message: 'REFLECTION \u00b7 UNWOKEN', messageT: 3.2, messageDur: 5, messageKind: 'partial', messageSub: 'Something glassy answers, if you do not hurry.', messageSub2: 'Approach slowly: hold SPACE as you walk.' };
+  save(`${key}-partial`, await frame({ state: { ...dBase, atIdx: 0, dx: 5, dy: 4 }, ui: partialUi }));
+  save(`${key}-partial-crop`, await cropShot({ state: { ...dBase, atIdx: 0, dx: 5, dy: 4 }, ui: partialUi }, 60, 10, 270, 64, 4));
+  const markSpec = { state: { ...dBase, atIdx: 0, dx: 14, dy: 10, speed: 0 } };
+  save(`${key}-marks`, await frame(markSpec));
+  save(`${key}-marks-crop`, await cropShot({ state: { ...dBase, atIdx: 1, dx: 8, dy: 6, speed: 0 } }, 100, 40, 190, 120, 5));
+  save(`${key}-map-know`, await frame({ state: { ...dBase, atIdx: 1, dx: 6, dy: 5, chainLit: 1, resonance: [await page.evaluate(() => window.P.world().gate.chain[0])] }, ui: { screen: 'map', time: 3 } }));
+  save(`${key}-map-know-empty`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'map', time: 3 } }));
   save(`${key}-play-dawn`, await frame({ state: { ...base, tod: 0.09, at: has('bothy') ? 'bothy' : poiTypes[0], dx: -6, dy: 5, heading: 1.6 }, ui: { message: 'Mist lifts from the burn.', messageT: 3, messageKind: 'note' } }));
   save(`${key}-play-dusk`, await frame({ state: { ...base, tod: 0.6, ...sp, heading: 3.14 }, pre: [{ op: 'flash' }], advance: 0.12 }));
   save(`${key}-play-night`, await frame({ state: { ...base, tod: 0.88, at: has('stone') ? 'stone' : poiTypes[0], dx: 3, dy: 3, heading: -1.2, resonance: ['stone'], chainLit: 2, gateOpen: false }, pre: [{ op: 'flash' }, { op: 'rippleAtPlayer', color: 'magenta' }], advance: 0.35 }));

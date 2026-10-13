@@ -47,6 +47,7 @@ function makeState(w, o = {}) {
     const poi = w.pois.find((q) => q.type === o.at);
     if (poi) pos = { x: poi.x + (o.dx || 0), y: poi.y + (o.dy || 0) };
   }
+  if (o.atIdx != null) { const q = w.pois[o.atIdx]; pos = { x: q.x + (o.dx || 0), y: q.y + (o.dy || 0) }; }
   const tod = o.tod ?? 0.3;
   const hdg = o.heading ?? 0;
   if (o.onCover) {
@@ -74,13 +75,54 @@ function makeState(w, o = {}) {
     },
     timeOfDay: tod, phase: dayPhase(tod), events: [],
     proximity: (o.proximity || []).map((id) => { const poi = w.pois.find((p) => p.id === id || p.type === id); return { poi, dist: Math.hypot(poi.x - pos.x, poi.y - pos.y) }; }),
-    resonance: (o.resonance || []).map((type, i) => ({ poiId: 'r' + i, type, t0: 0, strength: 1 - i * 0.28 })),
+    resonance: (o.resonance || []).map((type, i) => ({ poiId: (w.pois.find((q) => q.type === type) || {}).id || 'r' + i, type, t0: 0, strength: 1 - i * 0.28 })),
     gateOpen: !!o.gateOpen,
-    chainProgress: w.gate.chain.map((type, i) => ({ type, resonating: i < (o.chainLit ?? 0) })),
+    chainProgress: w.gate.chain.map((type, i) => {
+      const same = w.pois.filter((q) => q.type === type);
+      let nearest = null;
+      for (const q of same) {
+        const d = Math.hypot(q.x - pos.x, q.y - pos.y);
+        if (!nearest || d < nearest.dist) nearest = { poiId: q.id, name: q.name, x: q.x, y: q.y, dist: d, bearing: Math.atan2(q.y - pos.y, q.x - pos.x) };
+      }
+      const lit = (o.litTypes ? o.litTypes.includes(type) : i < (o.chainLit ?? 0));
+      return { type, resonating: lit, remaining: lit ? Math.max(4, 90 - i * 31) : 0, count: same.length, nearest: o.noNearest ? null : nearest };
+    }),
+    knowledge: o.know ? makeKnowledge(w, o.know) : {},
+    trail: o.trail ? makeTrail(w, pos, o.trail) : [],
     fragments: o.fragments || [], discovered: (o.discovered || []).map((t) => (w.pois.find((p) => p.type === t) || {}).id).filter(Boolean),
     levelComplete: false,
   };
   return st;
+}
+
+function condKeys(c) { return Object.keys(c || {}); }
+/** demo knowledge: a mix of woken, heard (with learned conditions) and heard-only POIs */
+function makeKnowledge(w, mode) {
+  const k = {};
+  const ps = w.pois;
+  ps.forEach((q, i) => {
+    const learned = condKeys(q.condition);
+    if (i === 0) k[q.id] = { heard: 2, woken: true, learned };
+    else if (i === 1 || i === 4) k[q.id] = { heard: 1, woken: false, learned };
+    else if (i === 2) k[q.id] = { heard: 1, woken: false, learned: [] };
+    else if (i === 3) k[q.id] = { heard: 1, woken: true, learned: [] };
+  });
+  return k;
+}
+/** a wandering route: spawn -> first POIs -> player, a point every 1.5 cells */
+function makeTrail(w, pos, mode) {
+  const way = [{ x: w.spawn.x, y: w.spawn.y }, ...w.pois.slice(0, 4).map((q) => ({ x: q.x, y: q.y })), pos];
+  const pts = [];
+  for (let s = 0; s < way.length - 1; s++) {
+    const a = way[s], b = way[s + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.floor(len / 1.5));
+    for (let i = 0; i < n; i++) {
+      const t = i / n, wob = Math.sin(t * 9 + s) * 2.2;
+      const nx = -(b.y - a.y) / (len || 1), ny = (b.x - a.x) / (len || 1);
+      pts.push({ x: a.x + (b.x - a.x) * t + nx * wob, y: a.y + (b.y - a.y) * t + ny * wob });
+    }
+  }
+  return pts;
 }
 
 window.P = {

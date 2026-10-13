@@ -4,8 +4,9 @@
 import { PAL } from './palette.js';
 import { drawText, measureText, wrapText } from './font.js';
 import { rect, frame, hline, vline, pline, panel, px, clamp, pdisc, pcircle, pcircleDotted } from './draw.js';
-import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas, touchIcon } from './sprites.js';
-import { CELL_PX, SCREEN_W, SCREEN_H, ARTEFACT_NAMES } from '../world/codes.js';
+import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas, touchIcon, arrowSprite, octantOf } from './sprites.js';
+import { typeShort } from './glyphs.js';
+import { CELL_PX, SCREEN_W, SCREEN_H, ARTEFACT_NAMES, RESONANCE_SECONDS } from '../world/codes.js';
 
 export const STRIP_H = 13;
 const MINI = 48;
@@ -115,60 +116,103 @@ function drawMinimap(ctx, st, R) {
   px(ctx, x + ppx, y + ppy, blink ? PAL.snow : PAL.magenta);
 }
 
+const CELL_H = 24;
+const CHAIN_W = 40, GATE_W = 46, CHEV = 5;
+
+/** km text for a distance in cells (40 m per cell). */
+function kmText(dist) {
+  if (!(dist > 3)) return 'HERE';
+  return (dist * 0.04).toFixed(1) + 'KM';
+}
+
+function lineTwo(ctx, x, y, oct, dist, color, clock) {
+  const near = dist <= 3;
+  if (!near) ctx.drawImage(arrowSprite(oct, color), x + 1, y);
+  else if (Math.floor(clock * 3) % 2 === 0) { rect(ctx, x + 2, y + 2, 3, 3, color); }
+  drawText(ctx, kmText(dist), x + 10, y + 1, PAL.ink, { font: 'small' });
+}
+
+function drainBar(ctx, x, y, w, frac, secs) {
+  const f = clamp(frac, 0, 1);
+  rect(ctx, x, y, w, 5, PAL.paper2);
+  frame(ctx, x, y, w, 5, PAL.rock);
+  const bw = Math.max(f > 0 ? 1 : 0, Math.round((w - 2) * f));
+  rect(ctx, x + 1, y + 1, bw, 3, f > 0.25 ? PAL.magenta : PAL.contourIdx);
+  drawText(ctx, Math.max(0, Math.ceil(secs)) + 'S', x + w + 2, y, PAL.ink, { font: 'small' });
+}
+
 function drawChain(ctx, st, R) {
   const w = st.world;
   const chain = st.chainProgress || [];
   const res = st.resonance || [];
-  let y = SCREEN_H - 3;
+  const p = st.player;
   const clock = R.clock || 0;
-  // gate chain panel
+  let y = SCREEN_H - 3;
   if (chain.length) {
-    const cw = 4 + chain.length * 14 + 11 + 3;
-    const ch = 14;
-    const x = 4;
-    y -= ch;
-    panel(ctx, x, y, cw, ch, {});
-    let ix = x + 3;
-    const anyLit = chain.some((c) => c.resonating);
+    const gate = w && w.gate;
+    let total = 6;
+    for (let i = 0; i < chain.length; i++) total += CHAIN_W + CHEV;
+    total += GATE_W;
+    y -= CELL_H;
+    panel(ctx, 4, y, total, CELL_H, {});
     const allLit = chain.every((c) => c.resonating);
+    let cx = 7;
     chain.forEach((c, i) => {
       const lit = !!c.resonating;
-      rect(ctx, ix - 1, y + 2, 10, 10, lit ? PAL.paper : PAL.paper2);
-      frame(ctx, ix - 1, y + 2, 10, 10, lit ? PAL.magenta : PAL.rock);
-      ctx.drawImage(iconSprite(c.type, lit), ix, y + 3);
-      if (lit) { // gentle pulse tick on the corner
-        if (Math.floor(clock * 2 + i) % 2 === 0) px(ctx, ix + 8, y + 2, PAL.snow);
+      // icon box
+      rect(ctx, cx, y + 2, 10, 10, lit ? PAL.paper : PAL.paper2);
+      frame(ctx, cx, y + 2, 10, 10, lit ? PAL.magenta : PAL.rock);
+      ctx.drawImage(iconSprite(c.type, true), cx + 1, y + 3);
+      if (lit && Math.floor(clock * 2 + i) % 2 === 0) px(ctx, cx + 9, y + 2, PAL.snow);
+      drawText(ctx, typeShort(c.type), cx + 12, y + 4, lit ? PAL.ink : PAL.contourIdx, { font: 'small' });
+      // line two
+      const ly = y + 14;
+      if (lit) {
+        let secs = c.remaining;
+        if (secs == null) { const r = res.find((q) => q.type === c.type); secs = r ? (r.strength == null ? 1 : r.strength) * RESONANCE_SECONDS : 0; }
+        drainBar(ctx, cx + 1, ly + 1, 20, secs / RESONANCE_SECONDS, secs);
+      } else if (c.nearest) {
+        const n = c.nearest;
+        const brg = n.bearing != null ? n.bearing : Math.atan2(n.y - p.y, n.x - p.x);
+        const dist = n.dist != null ? n.dist : Math.hypot(n.x - p.x, n.y - p.y);
+        lineTwo(ctx, cx, ly, octantOf(brg), dist, PAL.magenta, clock);
+      } else {
+        hline(ctx, cx + 2, ly + 3, 5, PAL.rock);
       }
       // connector chevron
-      const cx = ix + 10;
-      ctx.fillStyle = (lit && (chain[i + 1] ? chain[i + 1].resonating : st.gateOpen)) ? PAL.magenta : PAL.rock;
-      ctx.fillRect(cx, y + 6, 1, 3); ctx.fillRect(cx + 1, y + 7, 1, 1);
-      ix += 14;
+      const nx = cx + CHAIN_W;
+      const next = chain[i + 1];
+      ctx.fillStyle = (lit && (next ? next.resonating : st.gateOpen)) ? PAL.magenta : PAL.rock;
+      ctx.fillRect(nx, y + 6, 1, 3); ctx.fillRect(nx + 1, y + 7, 1, 1);
+      cx += CHAIN_W + CHEV;
     });
-    // gate glyph at the end
-    const gs = gateSprite(!!st.gateOpen);
-    const gx = ix - 1, gy = y + 2;
-    if (st.gateOpen) {
-      if (Math.floor(clock * 3) % 2 === 0) frame(ctx, gx - 1, gy - 1, 13, 12, PAL.snow);
+    // gate cell
+    const open = !!st.gateOpen;
+    const gs = gateSprite(open);
+    if (open && Math.floor(clock * 3) % 2 === 0) frame(ctx, cx - 1, y + 1, 13, 12, PAL.snow);
+    if (!open && allLit) frame(ctx, cx - 1, y + 1, 13, 12, PAL.magenta);
+    ctx.drawImage(gs, cx, y + 2);
+    drawText(ctx, 'BEALACH', cx + 14, y + 4, open ? PAL.magenta : PAL.ink, { font: 'small' });
+    const ly = y + 14;
+    if (open) drawText(ctx, 'OPEN', cx + 3, ly + 1, PAL.magenta, { font: 'small' });
+    else if (gate && p) {
+      const dx = gate.x - p.x, dy = gate.y - p.y;
+      lineTwo(ctx, cx, ly, octantOf(Math.atan2(dy, dx)), Math.hypot(dx, dy), allLit ? PAL.magenta : PAL.waterInk, clock);
     }
-    ctx.drawImage(gs, gx, gy);
-    if (!st.gateOpen && allLit) frame(ctx, gx - 1, gy - 1, 13, 12, PAL.magenta);
-    void anyLit;
   }
-  // resonance glyphs with draining bars
-  if (res.length) {
-    const rw = 4 + res.length * 11 + 1;
-    const rh = 15;
+  // artefacts sounding that are not part of the key: a slim row above the bar
+  const extra = res.filter((r) => !chain.some((c) => c.type === r.type));
+  if (extra.length) {
+    const rw = 6 + extra.length * 14, rh = 14;
     y -= rh + 2;
     panel(ctx, 4, y, rw, rh, {});
     let ix = 7;
-    for (const r of res) {
+    for (const r of extra) {
       const s = clamp(r.strength == null ? 1 : r.strength, 0, 1);
       ctx.drawImage(iconSprite(r.type, true), ix, y + 2);
       rect(ctx, ix, y + 11, 8, 2, PAL.rock);
-      const bw = Math.max(s > 0 ? 1 : 0, Math.round(8 * s));
-      rect(ctx, ix, y + 11, bw, 2, s > 0.25 ? PAL.magenta : PAL.contourIdx);
-      ix += 11;
+      rect(ctx, ix, y + 11, Math.max(s > 0 ? 1 : 0, Math.round(8 * s)), 2, s > 0.25 ? PAL.magenta : PAL.contourIdx);
+      ix += 14;
     }
   }
 }
@@ -183,7 +227,35 @@ function drawMessage(ctx, ui, R) {
   const fade = rem < 0.35;
   const col = fade ? PAL.rock : PAL.ink;
   const y0 = STRIP_H + 5;
-  if (kind === 'artefact') {
+  if (kind === 'partial') {
+    // UNWOKEN: muted contour-brown banner. Title, poetic hint (italic), plain instruction (main font, wrapped).
+    const maxW = 252;
+    const title = String(msg).toUpperCase();
+    const poetic = ui.messageSub ? wrapText(String(ui.messageSub), maxW, { italic: true }).slice(0, 2) : [];
+    const plain = ui.messageSub2 ? wrapText(String(ui.messageSub2), maxW - 8, {}).slice(0, 3) : [];
+    let lw = measureText(title, { spacing: 2 });
+    for (const l of poetic) lw = Math.max(lw, measureText(l, { italic: true }));
+    for (const l of plain) lw = Math.max(lw, measureText(l, {}) + 8);
+    const bw = Math.min(maxW + 20, Math.max(150, lw + 20));
+    const bh = 15 + poetic.length * 10 + (plain.length ? plain.length * 10 + 5 : 0) + 3;
+    const x = Math.round(SCREEN_W / 2 - bw / 2);
+    const band = fade ? PAL.rock : PAL.contourIdx, edge = fade ? PAL.rock : PAL.contour;
+    panel(ctx, x, y0, bw, bh, { fill: PAL.paper2, border: PAL.contourIdx });
+    rect(ctx, x + 1, y0 + 1, bw - 2, 12, band);
+    drawText(ctx, title, x + 8, y0 + 3, PAL.snow, { spacing: 2 });
+    rect(ctx, x + 1, y0 + 13, 3, bh - 14, edge);
+    let ty = y0 + 17;
+    for (const l of poetic) { drawText(ctx, l, x + 9, ty, fade ? PAL.rock : PAL.contourIdx, { italic: true }); ty += 10; }
+    if (plain.length) {
+      hline(ctx, x + 9, ty - 1, bw - 18, PAL.contour);
+      ty += 3;
+      plain.forEach((l, i) => {
+        if (i === 0) drawText(ctx, '>', x + 8, ty, PAL.magenta, {});
+        drawText(ctx, l, x + 16, ty, col, {});
+        ty += 10;
+      });
+    }
+  } else if (kind === 'artefact') {
     const text = String(msg).toUpperCase();
     const reveal = Math.min(text.length, Math.floor(elapsed * 40) + 1);
     const shown = text.slice(0, reveal);

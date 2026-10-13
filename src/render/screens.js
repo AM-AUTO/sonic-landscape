@@ -4,8 +4,9 @@
  */
 import { PAL, PAL_U32 as U, BAYER4 } from './palette.js';
 import { drawText, measureText, wrapText } from './font.js';
-import { rect, frame, hline, vline, pline, panel, px, ditherRect, clamp, ruler } from './draw.js';
-import { iconSprite, gateSprite, padlockSprite, symbolSprite, walkerSprite, blit, artCanvas, MAP_SYMBOLS } from './sprites.js';
+import { rect, frame, hline, vline, pline, panel, px, ditherRect, clamp, ruler, pcircle } from './draw.js';
+import { typeLabel, typeShort, glyphFor } from './glyphs.js';
+import { iconSprite, gateSprite, padlockSprite, symbolSprite, walkerSprite, blit, artCanvas, MAP_SYMBOLS, tickSprite } from './sprites.js';
 import { ARTEFACT_NAMES, POI_TYPES, CELL_PX } from '../world/codes.js';
 import { gridRef, bearingDeg } from './hud.js';
 import { gatePlacement } from './mapbake.js';
@@ -381,14 +382,55 @@ function mapScreen(env) {
     if (k > 0) drawText(ctx, two(n0 - k), mx - 4, gy - 2, PAL.waterInk, { font: 'small', align: 'right' });
   }
   drawText(ctx, lv.gridLetters || '', sx + 3, sy + 3, PAL.ink, { font: 'small', spacing: 1 });
-  // discovered pois
-  const disc = new Set((state && state.discovered) || []);
-  for (const poi of w.pois || []) {
-    if (!disc.has(poi.id)) continue;
+  const know = (state && state.knowledge) || {};
+  const chain = (state && state.chainProgress) || [];
+  const chainTypes = new Set(chain.map((c) => c.type));
+  const resIds = new Set(((state && state.resonance) || []).map((r) => r.poiId).filter(Boolean));
+  const pois = w.pois || [];
+
+  // the player's route: dotted magenta
+  const trail = (state && state.trail) || [];
+  if (trail.length) {
+    ctx.fillStyle = PAL.magenta;
+    let pxp = -1, pyp = -1;
+    for (let i = 0; i < trail.length; i++) {
+      const X = Math.round(mx + trail[i].x * f), Y = Math.round(my + trail[i].y * f);
+      if (X === pxp && Y === pyp) continue;
+      pxp = X; pyp = Y;
+      if (i % 3 !== 2) ctx.fillRect(X, Y, 1, 1);
+    }
+  }
+
+  // every POI on the sheet, with what the walker knows about it
+  const pulse = Math.floor(t * 2.5) & 1;
+  for (const poi of pois) {
     const spr = symbolSprite(poi.type);
-    const X = Math.round(mx + poi.x * f - spr.width / 2), Y = Math.round(my + poi.y * f - spr.height / 2);
+    const kn = know[poi.id];
+    const cxp = mx + poi.x * f, cyp = my + poi.y * f;
+    const X = Math.round(cxp - spr.width / 2), Y = Math.round(cyp - spr.height / 2);
+    if (chainTypes.has(poi.type)) pcircle(ctx, Math.round(cxp), Math.round(cyp), 6, PAL.magenta);
+    if (resIds.has(poi.id)) {
+      pcircle(ctx, Math.round(cxp), Math.round(cyp), 7 + pulse, pulse ? PAL.snow : PAL.magenta);
+      pcircle(ctx, Math.round(cxp), Math.round(cyp), 8 - pulse, pulse ? PAL.magenta : PAL.snow);
+    }
     rect(ctx, X - 1, Y - 1, spr.width + 2, spr.height + 2, PAL.paper);
     ctx.drawImage(spr, X, Y);
+    if (!kn) continue;
+    const mxp = X + spr.width + 1, myp = Y - 4;
+    if (kn.woken) {
+      rect(ctx, mxp - 1, myp - 1, 7, 6, PAL.paper);
+      ctx.drawImage(tickSprite(PAL.ink), mxp, myp);
+    } else if (kn.heard > 0) {
+      drawText(ctx, '?', mxp, myp, PAL.magenta, { font: 'small', halo: PAL.paper });
+    }
+    const gl = [];
+    for (const key of kn.learned || []) { const g = glyphFor(key, poi.condition); if (!gl.includes(g)) gl.push(g); }
+    if (gl.length) {
+      const txt = gl.slice(0, 2).join(' ') + (gl.length > 2 ? '+' : '');
+      const tw = measureText(txt, { font: 'small' });
+      const right = X + spr.width + 3 + tw < mx + n - 2;
+      drawText(ctx, txt, right ? X + spr.width + 3 : X - 3 - tw, Y + (spr.height >> 1) - 1, PAL.contourIdx, { font: 'small', halo: PAL.paper });
+    }
   }
   // gate
   const gp = gatePlacement(w);
@@ -415,54 +457,107 @@ function mapScreen(env) {
     ctx.fillRect(X - 1, Y - 1, 3, 3);
   }
 
-  // right panel
-  const rx = 234, rw = SW - rx - 6;
+  // ------------------------------------------------------------ right panel
+  const rx = 234, rw = SW - rx - 6, ix0 = rx + 6, iw = rw - 12;
   panel(ctx, rx, 4, rw, 208, { fill: PAL.paper, shadow: PAL.ink });
-  drawText(ctx, String(lv.name || '').toUpperCase(), rx + 6, 9, PAL.ink, { spacing: 1 });
-  drawText(ctx, lv.gaelic || '', rx + 6, 20, PAL.contourIdx, { font: 'small', italic: true });
-  drawText(ctx, String(lv.subtitle || '').toUpperCase(), rx + 6, 28, PAL.magenta, { font: 'small', spacing: 1 });
-  hline(ctx, rx + 5, 36, rw - 10, PAL.ink);
-  drawText(ctx, 'LEGEND', rx + 6, 40, PAL.contourIdx, { font: 'small', spacing: 1 });
-  const found = new Set((w.pois || []).filter((p) => disc.has(p.id)).map((p) => p.type));
-  const present = new Set((w.pois || []).map((p) => p.type));
+  drawText(ctx, String(lv.name || '').toUpperCase(), ix0, 8, PAL.ink, { spacing: 1 });
+  drawText(ctx, lv.gaelic || '', ix0, 19, PAL.contourIdx, { font: 'small' });
+  const subT = String(lv.subtitle || '').toUpperCase();
+  const subW = measureText(subT, { font: 'small' });
+  const twoLine = measureText(String(lv.gaelic || ''), { font: 'small' }) + subW + 6 > iw;
+  if (twoLine) drawText(ctx, subT, ix0, 26, PAL.magenta, { font: 'small' });
+  else drawText(ctx, subT, rx + rw - 6, 19, PAL.magenta, { font: 'small', align: 'right' });
+  const ho = twoLine ? 7 : 0;
+  hline(ctx, rx + 5, 26 + ho, rw - 10, PAL.ink);
+
+  // legend: symbol, type label, what its artefact does
+  drawText(ctx, 'LEGEND', ix0, 30 + ho, PAL.contourIdx, { font: 'small', spacing: 1 });
+  const present = new Set(pois.map((p) => p.type));
   POI_TYPES.forEach((type, i) => {
-    const y = 49 + i * 11;
+    const y = 38 + ho + i * 9;
     const spr = symbolSprite(type);
-    const isFound = found.has(type);
-    const cxm = rx + 14;
-    if (isFound) ctx.drawImage(spr, Math.round(cxm - spr.width / 2), Math.round(y + 4 - spr.height / 2));
-    else { ctx.fillStyle = PAL.rock; for (let k = 0; k < 7; k += 2) ctx.fillRect(cxm - 3 + k, y + 4, 1, 1); }
-    drawText(ctx, isFound ? ARTEFACT_NAMES[type].toUpperCase() : (present.has(type) ? '. . . . . .' : '--'), rx + 26, y + 1, isFound ? PAL.ink : PAL.rock, { font: 'small', spacing: 1 });
-    if (isFound) check(ctx, rx + rw - 12, y, PAL.magenta);
+    const here = present.has(type);
+    const cxm = ix0 + 5;
+    if (here) {
+      if (chainTypes.has(type)) pcircle(ctx, cxm, y + 4, 6, PAL.magenta);
+      ctx.drawImage(spr, Math.round(cxm - spr.width / 2), Math.round(y + 4 - spr.height / 2));
+    } else { ctx.fillStyle = PAL.rock; for (let k = 0; k < 5; k += 2) ctx.fillRect(cxm - 2 + k, y + 4, 1, 1); }
+    drawText(ctx, typeLabel(type), ix0 + 16, y + 1, here ? PAL.ink : PAL.rock, { font: 'small' });
+    drawText(ctx, type === 'bothy' ? 'FIELD NOTES' : ARTEFACT_NAMES[type].toUpperCase(), ix0 + 16 + 64, y + 1, here ? PAL.contourIdx : PAL.rock, { font: 'small' });
   });
-  hline(ctx, rx + 5, 139, rw - 10, PAL.grid);
-  // gate
+  hline(ctx, rx + 5, 111 + ho, rw - 10, PAL.grid);
+
+  // the key: what has to sound together
+  let ky = 114 + ho;
+  drawText(ctx, 'KEY', ix0, ky, PAL.magenta, { font: 'small', spacing: 1 });
+  drawText(ctx, 'WAKE TOGETHER', ix0 + 17, ky, PAL.contourIdx, { font: 'small' });
+  ky += 8;
+  let kx = ix0;
+  chain.forEach((c, i) => {
+    const count = c.count != null ? c.count : pois.filter((q) => q.type === c.type).length;
+    const label = (count > 1 ? 'ANY ' : '') + typeShort(c.type);
+    const cw = 12 + measureText(label, { font: 'small' }) + 1;
+    const sep = i < chain.length - 1 ? 7 : 0;
+    if (kx > ix0 && kx + cw > ix0 + iw) { kx = ix0; ky += 11; }
+    rect(ctx, kx, ky - 1, 10, 10, c.resonating ? PAL.paper : PAL.paper2);
+    frame(ctx, kx, ky - 1, 10, 10, c.resonating ? PAL.magenta : PAL.rock);
+    ctx.drawImage(iconSprite(c.type, true), kx + 1, ky);
+    drawText(ctx, label, kx + 12, ky + 1, c.resonating ? PAL.ink : PAL.contourIdx, { font: 'small' });
+    kx += cw;
+    if (sep) { drawText(ctx, '+', kx + 1, ky + 1, PAL.magenta, { font: 'small' }); kx += sep; }
+  });
+  ky += 11;
   if (w.gate) {
-    const lit = (state.chainProgress || []).filter((c) => c.resonating).length;
-    const total = (state.chainProgress || []).length;
-    ctx.drawImage(gateSprite(!!state.gateOpen), rx + 6, 144);
-    drawText(ctx, String(w.gate.name || 'Bealach'), rx + 22, 145, PAL.magenta, { font: 'small', italic: true });
-    drawText(ctx, state.gateOpen ? 'OPEN' : `CHAIN ${lit}/${total}`, rx + 22, 153, PAL.contourIdx, { font: 'small', spacing: 1 });
-    let ix = rx + 6;
-    for (const c of state.chainProgress || []) {
-      rect(ctx, ix - 1, 162, 10, 10, c.resonating ? PAL.paper : PAL.paper2);
-      frame(ctx, ix - 1, 162, 10, 10, c.resonating ? PAL.magenta : PAL.rock);
-      ctx.drawImage(iconSprite(c.type, !!c.resonating), ix, 163);
-      ix += 13;
-    }
+    const lit = chain.filter((c) => c.resonating).length;
+    ctx.drawImage(gateSprite(!!(state && state.gateOpen)), ix0, ky - 1, 9, 8);
+    drawText(ctx, String(w.gate.name || 'Bealach').toUpperCase(), ix0 + 12, ky + 1, PAL.magenta, { font: 'small' });
+    const stat = state && state.gateOpen ? 'OPEN' : `${lit}/${chain.length}`;
+    drawText(ctx, stat, rx + rw - 6, ky + 1, PAL.ink, { font: 'small', align: 'right' });
+    ky += 9;
   }
-  hline(ctx, rx + 5, 178, rw - 10, PAL.grid);
+  hline(ctx, rx + 5, ky, rw - 10, PAL.grid);
+
+  // what has been learned, per place
+  const footTop = 177;
+  let ly = ky + 3;
+  drawText(ctx, 'LEARNED', ix0, ly, PAL.magenta, { font: 'small', spacing: 1 });
+  ly += 8;
+  const learnedLines = [];
+  for (const poi of pois) {
+    const kn = know[poi.id];
+    if (!kn || !kn.learned || !kn.learned.length) continue;
+    const gl = [];
+    for (const key of kn.learned) { const g = glyphFor(key, poi.condition); if (!gl.includes(g)) gl.push(g); }
+    learnedLines.push({ name: String(poi.name || poi.id), gl: gl.join(' ') });
+  }
+  const room = Math.max(0, Math.min(4, Math.floor((footTop - 2 - ly) / 7)));
+  if (!learnedLines.length) drawText(ctx, 'NOTHING YET. FAILED TRIES TEACH.', ix0, ly, PAL.rock, { font: 'small' });
+  learnedLines.slice(0, room).forEach((L, i) => {
+    const gw = measureText(L.gl, { font: 'small' });
+    let name = L.name.toUpperCase();
+    while (name.length > 3 && measureText(name + ':', { font: 'small' }) + 3 + gw > iw) name = name.slice(0, -1);
+    drawText(ctx, name + ':', ix0, ly + i * 7, PAL.ink, { font: 'small' });
+    drawText(ctx, L.gl, rx + rw - 6, ly + i * 7, PAL.magenta, { font: 'small', align: 'right' });
+  });
+  if (learnedLines.length > room && room > 0) drawText(ctx, '+' + (learnedLines.length - room), rx + rw - 6, footTop - 8, PAL.contourIdx, { font: 'small', align: 'right' });
+
+  // footer: route, position, scale
+  hline(ctx, rx + 5, footTop - 1, rw - 10, PAL.ink);
+  ctx.fillStyle = PAL.magenta;
+  for (let k = 0; k < 12; k += 3) ctx.fillRect(ix0 + k, footTop + 5, 2, 1);
+  const rl = wrapText('YOUR ROUTE: THE TRACK YOU HAVE PLAYED', iw - 16, { font: 'small' });
+  rl.slice(0, 2).forEach((l, i) => drawText(ctx, l, ix0 + 16, footTop + 2 + i * 7, PAL.ink, { font: 'small' }));
   if (state && state.player) {
     const p = state.player;
-    drawText(ctx, 'YOU ' + gridRef(w, p.x, p.y), rx + 6, 183, PAL.waterInk, { font: 'small', spacing: 1 });
-    drawText(ctx, `ALT ${Math.round(p.elevation || 0)}M  BRG ${String(bearingDeg(p.heading || 0)).padStart(3, '0')}`, rx + 6, 191, PAL.ink, { font: 'small', spacing: 1 });
+    drawText(ctx, 'YOU ' + gridRef(w, p.x, p.y), ix0, 194, PAL.waterInk, { font: 'small' });
+    drawText(ctx, `${Math.round(p.elevation || 0)}M`, rx + rw - 6, 194, PAL.ink, { font: 'small', align: 'right' });
   }
   // scale bar: 1 km
   const kmw = Math.round(kmPx);
-  rect(ctx, rx + 6, 200, kmw, 2, PAL.ink); rect(ctx, rx + 6 + (kmw >> 1), 200, kmw >> 1, 2, PAL.paper);
-  frame(ctx, rx + 6, 200, kmw, 2, PAL.ink);
-  drawText(ctx, '1 KM', rx + 10 + kmw, 199, PAL.ink, { font: 'small' });
-  drawText(ctx, 'M/ESC CLOSE', rx + rw - 5, 199, PAL.contourIdx, { font: 'small', align: 'right' });
+  rect(ctx, ix0, 204, kmw, 2, PAL.ink); rect(ctx, ix0 + (kmw >> 1), 204, kmw >> 1, 2, PAL.paper);
+  frame(ctx, ix0, 204, kmw, 2, PAL.ink);
+  drawText(ctx, '1 KM', ix0 + kmw + 4, 202, PAL.ink, { font: 'small' });
+  drawText(ctx, 'M/ESC CLOSE', rx + rw - 6, 202, PAL.contourIdx, { font: 'small', align: 'right' });
   // north arrow
   const nx = sx + sw - 12, ny = sy + 14;
   pline(ctx, nx, ny + 8, nx, ny, PAL.ink); pline(ctx, nx, ny, nx - 2, ny + 3, PAL.ink); pline(ctx, nx, ny, nx + 2, ny + 3, PAL.ink);

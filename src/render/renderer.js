@@ -15,9 +15,9 @@
 import { COVER, CELL_PX, SCREEN_W, SCREEN_H, dayPhase } from '../world/codes.js';
 import { PAL, PAL_U32 as U, applyTint, tintAt, BAYER8 } from './palette.js';
 import { LVL_OFF, bakeMap, bakeOverview, gatePlacement } from './mapbake.js';
-import { walkerSprite, iconSprite, gateSprite, blit, symbolArt } from './sprites.js';
+import { walkerSprite, iconSprite, gateSprite, blit, symbolArt, tickSprite } from './sprites.js';
 import { drawText } from './font.js';
-import { rect, px, resolveColor, clamp, ditherRect } from './draw.js';
+import { rect, frame, px, resolveColor, clamp, ditherRect } from './draw.js';
 import { drawHud, STRIP_H } from './hud.js';
 import { Screens } from './screens.js';
 
@@ -274,6 +274,22 @@ export function createRenderer(canvas) {
       for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
         ctx.fillRect(x + sx * r - (sx > 0 ? 2 : 0), y + sy * r, 3, 1);
         ctx.fillRect(x + sx * r, y + sy * r - (sy > 0 ? 2 : 0), 1, 3);
+      }
+    }
+    // what the walker knows: persistent tick beside woken symbols, '?' beside heard-but-unwoken ones
+    const know = state.knowledge;
+    if (know) {
+      for (const poi of w.pois || []) {
+        const k = know[poi.id];
+        if (!k || (!k.woken && !(k.heard > 0))) continue;
+        const art = symbolArt(poi.type);
+        const x = Math.round(poi.x * CELL_PX + CELL_PX / 2 - camX), y = Math.round(poi.y * CELL_PX + CELL_PX / 2 - camY);
+        if (x < -20 || y < -20 || x > SW + 20 || y > SH + 20) continue;
+        const mx = x + (art[0].length >> 1) + 3, my = y - (art.length >> 1) - 7;
+        rect(ctx, mx - 2, my - 2, 9, 11, PAL.paper);
+        frame(ctx, mx - 2, my - 2, 9, 11, k.woken ? PAL.magenta : PAL.rock);
+        if (k.woken) ctx.drawImage(tickSprite(PAL.ink), mx, my + 2);
+        else drawText(ctx, '?', mx, my, PAL.ink, {});
       }
     }
     // proximity: a gentle 2px halo round the map symbol (pixels flip every few frames) plus a few motes
