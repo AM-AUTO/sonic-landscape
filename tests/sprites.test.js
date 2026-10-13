@@ -56,11 +56,22 @@ test('idle flutters (two different frames), walking alternates, W is the mirror 
   assert.ok(walkerArt('S', 'mud', 0).slice(8).some((r) => r.includes('o')));
 });
 
-test('gate ring-cross keeps its size; open burns ice-cyan, closed is grey; map symbols stay sensible', () => {
+test('gate is a Pictish symbol stone: keeps its size, closed is cold grey, open glows ember; no crosses', () => {
   assert.deepEqual(GATE_SIZE, [11, 10]);
   for (const art of [GATE_ART, GATE_OPEN_ART]) { assert.equal(art.length, 10); art.forEach((r) => assert.equal(r.length, 11)); }
-  assert.ok(GATE_OPEN_ART.join('').includes('y') && !GATE_OPEN_ART.join('').includes('m'));
-  assert.ok(GATE_ART.join('').includes('r') && !GATE_ART.join('').includes('y'));
+  const open = GATE_OPEN_ART.join(''), closed = GATE_ART.join('');
+  assert.ok(open.includes('E') && open.includes('f') && !open.includes('y') && !open.includes('m'));
+  assert.ok(closed.includes('r') && closed.includes('n') && !/[EfLy]/.test(closed));
+  assert.equal(COLORS.E, PAL.ember);
+  // a tapering slab: wider at the foot than at the head
+  const w = (row) => [...row].filter((c) => c !== '.').length;
+  assert.ok(w(GATE_ART[1]) < w(GATE_ART[8]));
+  // no plus-shaped cross anywhere in the incisions: no cell with all four neighbours incised
+  for (const [art, ch] of [[GATE_ART, 'n'], [GATE_OPEN_ART, 'E'], [GATE_OPEN_ART, 'f']]) {
+    for (let y = 1; y < 9; y++) for (let x = 1; x < 10; x++) {
+      if (art[y][x] === ch && art[y - 1][x] === ch && art[y + 1][x] === ch && (art[y][x - 1] === ch || art[y][x + 1] === ch)) assert.fail('cross-like incision at ' + x + ',' + y);
+    }
+  }
   const sym = MAP_SYMBOLS.gate;
   assert.equal(sym.length, 8); sym.forEach((r) => assert.equal(r.length, 9));
   assert.ok(MAP_SYMBOLS.bothy.join('').includes('L'), 'bothy windows are lit on the sheet');

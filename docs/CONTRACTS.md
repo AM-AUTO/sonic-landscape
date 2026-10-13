@@ -315,7 +315,7 @@ ui.story = { panel:{kind:'ridge'|'cross'|'bothy'|'gate', levelIndex, seed?}, cap
 //   original 16 + lamp #e8832a, flame #f4c43c, bolt #f6c8f6, ice #8ee6e6, dusk #4b4a7a, then the reds blood #5e1f2b, rust #a9402a, ember #dd5a38, heather #7d3a62 (PAL.lamp, PAL.ember etc.)
 //   applyTint(buf,w,h,tint,ox,oy,y0,y1,lightMap?) — optional per-pixel light map scales the night dither
 // src/render/sprites.js — walkerSprite(dir,pose,frame) (12x12 ragged wanderer with a lit lantern),
-//   lanternAnchor(dir,pose,frame[,out]) -> {x,y} of the flame inside the sprite, gateSprite(open) (Celtic ring-cross)
+//   lanternAnchor(dir,pose,frame[,out]) -> {x,y} of the flame inside the sprite, gateSprite(open) (Pictish symbol stone)
 // src/render/fx.js — atmosphere, all dithered palette colours, no Math.random (seeded from world.level.seed / .id):
 //   createFx() -> fx; fx.setWorld(world); fx.onLightning(cb) -> unsubscribe  (cb({index,time,x}); also renderer.onLightning)
 //   fx.update(state, clock, dt) (strike schedule, callbacks, fx.shake {x,y} +-2px for ~0.25 s)

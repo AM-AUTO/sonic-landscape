@@ -165,7 +165,7 @@ const FX_LEVELS = [0, 2, 3, 5];
 const saveRaw = (name, dataUrl) => save(name, dataUrl);
 if (!NO_FX && nReal > 0) {
   saveRaw('fx-sprites', await page.evaluate(() => window.P.sprites(8)));
-  saveRaw('fx-gates', await page.evaluate(() => window.P.gates(10)));
+  saveRaw('fx-gates', await page.evaluate(() => window.P.gates(8)));
   for (const L of FX_LEVELS) {
     if (L >= nReal) continue;
     const key = 'fx-' + L;

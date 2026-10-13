@@ -356,7 +356,7 @@ export function createRenderer(canvas) {
           for (let i = 0; i < 18; i++) {
             const ang = i / 18 * Math.PI * 2 + t * 0.9;
             const rr = 9 + Math.sin(t * 3 + i) * 2;
-            px(ctx, Math.round(gx + gp.w / 2 + Math.cos(ang) * rr * 1.2), Math.round(gy + gp.h / 2 + Math.sin(ang) * rr), i % 2 ? PAL.snow : PAL.magenta);
+            px(ctx, Math.round(gx + gp.w / 2 + Math.cos(ang) * rr * 1.2), Math.round(gy + gp.h / 2 + Math.sin(ang) * rr), i % 2 ? PAL.flame : PAL.ember);
           }
           // light shaft rising into the map from the arch (dithered, drifting)
           const side = w.gate && w.gate.side;
@@ -370,7 +370,7 @@ export function createRenderer(canvas) {
               const th = (BAYER8[(((k + Math.floor(t * 18)) & 7) << 3) | ((d + 8) & 7)] + 0.5) / 64;
               if (th < f * 1.0) {
                 const X = Math.round(cx0 + (vx ? vx * k : d)), Y = Math.round(cy0 + (vy ? vy * k : d));
-                px(ctx, X, Y, th < f * 0.28 ? PAL.snow : PAL.magenta);
+                px(ctx, X, Y, th < f * 0.28 ? PAL.flame : PAL.ember);
               }
             }
           }

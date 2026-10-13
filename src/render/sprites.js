@@ -11,6 +11,8 @@ export const COLORS = {
   l: PAL.wood, i: PAL.grid, o: PAL.bog,
   // gothic-ballad colours
   L: PAL.lamp, f: PAL.flame, v: PAL.dusk, y: PAL.ice, z: PAL.bolt,
+  // the reds
+  B: PAL.blood, R: PAL.rust, E: PAL.ember, H: PAL.heather,
 };
 
 function makeCanvas(w, h) {
@@ -415,31 +417,31 @@ export function iconMono(type, color) {
 }
 
 // ------------------------------------------------------------- gate glyphs
-// The bealach is marked by a small Celtic ring-cross: ink cross, stone-grey ring.
-// Open: the ring burns ice-cyan with a pale glow inside it.
+// The bealach is marked by a Pictish symbol stone: a tall tapering slab of grey rock with a
+// crescent-and-rod incised in it. Closed: the incisions are cold navy. Open: they glow ember/flame.
 export const GATE_ART = [
-  '.....k.....',
-  '...rrkrr...',
-  '..r..k..r..',
-  '.r...k...r.',
+  '....kkk....',
+  '...krrrk...',
+  '..knrrrnk..',
+  '..krnrnrk..',
+  '..krrnrrk..',
+  '.krrrrrnrk.',
+  '.krrrrnrrk.',
+  '.krrrnrrrk.',
+  '.krrnrrrrk.',
   'kkkkkkkkkkk',
-  '.r...k...r.',
-  '..r..k..r..',
-  '...rrkrr...',
-  '.....k.....',
-  '...kkkkk...',
 ];
 export const GATE_OPEN_ART = [
-  '.....k.....',
-  '...yykyy...',
-  '..y.yky.y..',
-  '.y.y.k.y.y.',
-  'kkkkkwkkkkk',
-  '.y.y.k.y.y.',
-  '..y.yky.y..',
-  '...yykyy...',
-  '.....k.....',
-  '...kkkkk...',
+  '....kkk....',
+  '...krrrk...',
+  '..kLrrrLk..',
+  '..krEfErk..',
+  '..krrfrrk..',
+  '.krrrrrErk.',
+  '.krrrrErrk.',
+  '.krrrfrrrk.',
+  '.krrErrrrk.',
+  'kkkkkkkkkkk',
 ];
 export function gateSprite(open = false, mono = null) {
   return artCanvas(open ? 'gate-open' : 'gate', open ? GATE_OPEN_ART : GATE_ART, mono ? { mono } : {});
@@ -633,14 +635,14 @@ export const MAP_SYMBOLS = {
     'kkkkkkk',
   ],
   gate: [
-    '....k....',
-    '..rrkrr..',
-    '.rppkppr.',
+    '...kkk...',
+    '..krrrk..',
+    '..knrnk..',
+    '..krnrk..',
+    '.krrrnrk.',
+    '.krrnrrk.',
+    '.krrrrrk.',
     'kkkkkkkkk',
-    '.rppkppr.',
-    '..rrkrr..',
-    '....k....',
-    '..kkkkk..',
   ],
 };
 export function symbolSprite(type) { return artCanvas('sym-' + type, MAP_SYMBOLS[type] || MAP_SYMBOLS.cairn); }

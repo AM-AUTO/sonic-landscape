@@ -62,11 +62,17 @@ export const WEATHER_DEFAULT = Object.freeze({ mist: 0.2, cloudline: 0.75, woods
 export function weatherFor(levelId) { return WEATHER[levelId] || WEATHER_DEFAULT; }
 
 /** How dark each phase is (0 = daylight, 1 = full night); blended with the same easing as the tint. */
-export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.46, night: 1 });
+export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.72, night: 1 });
 /** 0..1 darkness for a timeOfDay in [0,1). */
 export function darknessAt(timeOfDay) {
   const { a, b, f } = phaseBlend(timeOfDay);
   return PHASE_DARK[a] + (PHASE_DARK[b] - PHASE_DARK[a]) * f;
+}
+/** How red the dark is (0..1): the red hours at dusk, paler at dawn, a faint heather cast at night, none by day. */
+export const PHASE_TWILIGHT = Object.freeze({ dawn: 0.65, day: 0, dusk: 1, night: 0.12 });
+export function twilightAt(timeOfDay) {
+  const { a, b, f } = phaseBlend(timeOfDay);
+  return PHASE_TWILIGHT[a] + (PHASE_TWILIGHT[b] - PHASE_TWILIGHT[a]) * f;
 }
 /** Night amount (0..0.97, what the tint pass dithers) from the clock-of-day darkness plus weather. */
 export function effectiveNight(tintNight, timeOfDay, weather) {
@@ -391,82 +397,116 @@ const BANDS = [
 ];
 const TW = 256, TH = 128;
 
-// ---- the night ramp. Each colour has three looks: lit (as drawn), dim (dusk: grey-violet) and deep
-// (night: night-blue / dusk-violet, contours and labels still glowing). A pixel's darkness v = 0..1
-// picks lit -> dim over 0..0.5 and dim -> deep over 0.5..0.95, each time by the Bayer8 threshold,
-// so the falloff round a light is a smooth circle and the far field is one calm, fixed texture.
-const DIM_A = new Uint8Array(PAL_COUNT), DIM_B = new Uint8Array(PAL_COUNT), DIM_W = new Float32Array(PAL_COUNT);
-const DEEP_A = new Uint8Array(PAL_COUNT), DEEP_B = new Uint8Array(PAL_COUNT), DEEP_W = new Float32Array(PAL_COUNT);
-for (let i = 0; i < PAL_COUNT; i++) { DIM_A[i] = DIM_B[i] = DEEP_A[i] = DEEP_B[i] = i; }
-function ramp(c, dA, dB, dW, pA, pB, pW) {
-  const i = I[c];
-  DIM_A[i] = I[dA]; DIM_B[i] = I[dB]; DIM_W[i] = dW;
-  DEEP_A[i] = I[pA]; DEEP_B[i] = I[pB]; DEEP_W[i] = pW;
+// ---- the grading ramps. Each ramp is a list of anchors in darkness v (0 = lit .. 1 = deepest) and,
+// per palette colour, an A / B / weight look at every anchor after the first. A pixel's darkness
+// picks the stage it sits in and dithers (Bayer8) towards the next anchor, so the falloff round a
+// light is a smooth circle and the far field is one calm, fixed texture.
+//   BLUE: lit -> dim (grey-violet) -> deep (night-blue / dusk-violet): the night.
+//   WARM: lit -> ember/rust gold -> heather -> blood -> night-blue: the red hours, dusk and dawn.
+function makeRamp(anchors) {
+  const n = anchors.length - 1;
+  const R = { anchors, n, A: [], B: [], W: [] };
+  for (let k = 0; k < n; k++) {
+    const a = new Uint8Array(PAL_COUNT), b = new Uint8Array(PAL_COUNT);
+    for (let i = 0; i < PAL_COUNT; i++) { a[i] = i; b[i] = i; }
+    R.A.push(a); R.B.push(b); R.W.push(new Float32Array(PAL_COUNT));
+  }
+  return R;
 }
-//   colour     dim A / B / W               deep A / B / W
-ramp('paper', 'rock', 'dusk', 0.30, 'night', 'dusk', 0.24);
-ramp('paper2', 'rock', 'dusk', 0.26, 'night', 'dusk', 0.20);
-ramp('snow', 'paper2', 'rock', 0.30, 'dusk', 'night', 0.40);
-ramp('water', 'waterDeep', 'waterInk', 0.40, 'waterInk', 'night', 0.38);
-ramp('waterDeep', 'waterDeep', 'waterInk', 0.45, 'waterDeep', 'waterInk', 0.30);
-ramp('wood', 'woodDark', 'wood', 0.30, 'night', 'woodDark', 0.22);
-ramp('woodDark', 'woodDark', 'woodDark', 0, 'woodDark', 'night', 0.30);
-ramp('bog', 'woodDark', 'bog', 0.35, 'night', 'woodDark', 0.30);
-ramp('rock', 'rock', 'contourIdx', 0.40, 'contourIdx', 'night', 0.45);
-ramp('grid', 'grid', 'waterInk', 0.40, 'waterInk', 'night', 0.30);
-ramp('contour', 'contour', 'contour', 0, 'contourIdx', 'contourIdx', 0);
-ramp('contourIdx', 'contourIdx', 'contourIdx', 0, 'contour', 'contour', 0);
-ramp('ink', 'ink', 'rock', 0.5, 'rock', 'rock', 0);
-ramp('waterInk', 'waterInk', 'waterInk', 0, 'waterDeep', 'waterDeep', 0);
+function look(R, k, c, A, B, W) { const i = I[c]; R.A[k][i] = I[A]; R.B[k][i] = I[B]; R.W[k][i] = W; }
+const BLUE = makeRamp([0, 0.5, 0.95]);
+const WARM = makeRamp([0, 0.3, 0.55, 0.8, 1.0]);
+//                  colour        A            B           W
+for (const [c, A, B, W] of [['paper', 'rock', 'dusk', 0.30], ['paper2', 'rock', 'dusk', 0.26], ['snow', 'paper2', 'rock', 0.30],
+  ['water', 'waterDeep', 'waterInk', 0.40], ['waterDeep', 'waterDeep', 'waterInk', 0.45], ['wood', 'woodDark', 'wood', 0.30],
+  ['bog', 'woodDark', 'bog', 0.35], ['rock', 'rock', 'contourIdx', 0.40], ['grid', 'grid', 'waterInk', 0.40], ['ink', 'ink', 'rock', 0.5]]) look(BLUE, 0, c, A, B, W);
+for (const [c, A, B, W] of [['paper', 'night', 'dusk', 0.24], ['paper2', 'night', 'dusk', 0.20], ['snow', 'dusk', 'night', 0.40],
+  ['water', 'waterInk', 'night', 0.38], ['waterDeep', 'waterDeep', 'waterInk', 0.30], ['wood', 'night', 'woodDark', 0.22],
+  ['woodDark', 'woodDark', 'night', 0.30], ['bog', 'night', 'woodDark', 0.30], ['rock', 'contourIdx', 'night', 0.45],
+  ['grid', 'waterInk', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
+  ['ink', 'rock', 'rock', 0], ['waterInk', 'waterDeep', 'waterDeep', 0]]) look(BLUE, 1, c, A, B, W);
+// warm stage 1 (anchor .3): red-gold wash
+for (const [c, A, B, W] of [['paper', 'paper2', 'ember', 0.18], ['paper2', 'paper2', 'ember', 0.20], ['snow', 'paper2', 'lamp', 0.22],
+  ['water', 'water', 'heather', 0.20], ['waterDeep', 'waterDeep', 'heather', 0.22], ['wood', 'wood', 'rust', 0.26], ['woodDark', 'woodDark', 'blood', 0.20],
+  ['bog', 'bog', 'rust', 0.30], ['rock', 'rock', 'rust', 0.35], ['grid', 'grid', 'heather', 0.30]]) look(WARM, 0, c, A, B, W);
+// warm stage 2 (anchor .55): ember and rust sinking into heather
+for (const [c, A, B, W] of [['paper', 'rust', 'heather', 0.22], ['paper2', 'rust', 'ember', 0.28], ['snow', 'rust', 'ember', 0.34],
+  ['water', 'heather', 'waterInk', 0.45], ['waterDeep', 'waterInk', 'heather', 0.40], ['wood', 'woodDark', 'heather', 0.35], ['woodDark', 'blood', 'woodDark', 0.40],
+  ['bog', 'rust', 'woodDark', 0.40], ['rock', 'rust', 'rock', 0.40], ['grid', 'heather', 'waterInk', 0.40], ['ink', 'ink', 'rock', 0.5]]) look(WARM, 1, c, A, B, W);
+// warm stage 3 (anchor .8): blood
+for (const [c, A, B, W] of [['paper', 'blood', 'rust', 0.28], ['paper2', 'blood', 'rust', 0.24], ['snow', 'rust', 'blood', 0.50],
+  ['water', 'blood', 'waterInk', 0.32], ['waterDeep', 'waterInk', 'blood', 0.40], ['wood', 'blood', 'woodDark', 0.30], ['woodDark', 'blood', 'woodDark', 0.50],
+  ['bog', 'blood', 'woodDark', 0.40], ['rock', 'blood', 'contourIdx', 0.40], ['grid', 'waterInk', 'blood', 0.40], ['ink', 'rock', 'rock', 0], ['waterInk', 'waterDeep', 'waterDeep', 0]]) look(WARM, 2, c, A, B, W);
+// warm stage 4 (anchor 1.0): night-blue far field with a last breath of blood
+for (const [c, A, B, W] of [['paper', 'night', 'blood', 0.20], ['paper2', 'night', 'blood', 0.18], ['snow', 'dusk', 'night', 0.40],
+  ['water', 'waterInk', 'night', 0.38], ['waterDeep', 'waterDeep', 'waterInk', 0.30], ['wood', 'night', 'woodDark', 0.22],
+  ['woodDark', 'woodDark', 'night', 0.30], ['bog', 'night', 'woodDark', 0.30], ['rock', 'contourIdx', 'night', 0.45],
+  ['grid', 'waterInk', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
+  ['ink', 'rock', 'rock', 0], ['waterInk', 'waterDeep', 'waterDeep', 0]]) look(WARM, 3, c, A, B, W);
 const LIST32 = Uint32Array.from(Array.from({ length: PAL_COUNT }, (_, i) => U[PAL_NAMES[i]]));
 const B4 = new Float32Array(16);
 for (let i = 0; i < 16; i++) B4[i] = ([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][i] + 0.5) / 16;
 
-/**
- * Paint the night over the whole framebuffer. `night` is the global amount (0..0.97), `lm` an optional
- * Uint8Array light map (255 = unlit .. 0 = fully lit) scaling it per pixel. Palette colours only.
- */
-const N_KIND = new Uint8Array(256), N_TF = new Float32Array(256);
-export function paintNightInto(fb, w, h, camX, camY, night, lm) {
-  // per light-map value: 0 = leave, 1 = lit -> dim, 2 = dim -> deep; N_TF = Bayer threshold (0..64 scale)
+// per light-map value (0..255), per ramp: stage (0 = leave, k = between anchors k-1 and k) and Bayer threshold (0..64 scale)
+const T_STAGE = [new Uint8Array(256), new Uint8Array(256)], T_TF = [new Float32Array(256), new Float32Array(256)];
+function buildTables(R, t, night, lm) {
+  const st = T_STAGE[t], tf = T_TF[t];
   for (let l = 0; l < 256; l++) {
     const v = lm ? night * l * (1 / 255) : night;
-    if (v < 0.02) { N_KIND[l] = 0; N_TF[l] = 0; }
-    else if (v < 0.5) { N_KIND[l] = 1; N_TF[l] = v * 2 * 64; }
-    else { N_KIND[l] = 2; N_TF[l] = (v - 0.5) * (2 / 0.9) * 64; }
+    if (v < 0.02) { st[l] = 0; tf[l] = 0; continue; }
+    let k = 1;
+    while (k < R.n && v >= R.anchors[k]) k++;
+    st[l] = k;
+    const a0 = R.anchors[k - 1], a1 = R.anchors[k];
+    tf[l] = clamp((v - a0) / (a1 - a0) * 1, 0, 1.0) * 64;
+    if (k === R.n && v >= a1 * 0.95) tf[l] = 65;      // the far field is entirely the deepest look
   }
+}
+/**
+ * Paint the night / twilight over the whole framebuffer. `night` is the global darkness (0..0.97),
+ * `lm` an optional Uint8Array light map (255 = unlit .. 0 = fully lit) scaling it per pixel, `warm`
+ * (0..1) how much of the dark is the red-gold twilight ramp rather than the blue night ramp
+ * (chosen per pixel by dither). Palette colours only.
+ */
+export function paintNightInto(fb, w, h, camX, camY, night, lm, warm = 0) {
+  buildTables(BLUE, 0, night, lm); buildTables(WARM, 1, night, lm);
   const flat = lm ? -1 : 255;
+  const warm64 = warm * 64;
   for (let y = 0; y < h; y++) {
     const wy = y + camY;
-    const rowB = (wy & 7) << 3, row4 = (wy & 3) << 2;
+    const rowB = (wy & 7) << 3, rowW = ((wy + 4) & 7) << 3, row4 = (wy & 3) << 2;
     const row = y * w;
     for (let x = 0; x < w; x++) {
       const l = flat >= 0 ? flat : lm[row + x];
-      const kind = N_KIND[l];
+      const wx = x + camX;
+      const useWarm = (BAYER8[rowW | ((wx + 2) & 7)] + 0.5) < warm64 ? 1 : 0;
+      const kind = T_STAGE[useWarm][l];
       if (kind === 0) continue;
       const p = fb[row + x];
       const pi = paletteIndexOf(p);
       if (pi === 255) continue;
-      const wx = x + camX;
+      const R = useWarm ? WARM : BLUE;
       const bt = BAYER8[rowB | (wx & 7)] + 0.5;
       const m = B4[row4 | (wx & 3)];
+      const up = bt < T_TF[useWarm][l];
+      let k = kind - 1;
+      // below the first anchor's partner nothing is lit-> dither between the previous look and this one
       let out;
-      if (kind === 1) {
-        if (bt >= N_TF[l]) continue;
-        out = LIST32[m < DIM_W[pi] ? DIM_B[pi] : DIM_A[pi]];
-      } else if (bt < N_TF[l]) out = LIST32[m < DEEP_W[pi] ? DEEP_B[pi] : DEEP_A[pi]];
-      else out = LIST32[m < DIM_W[pi] ? DIM_B[pi] : DIM_A[pi]];
+      if (up) out = LIST32[m < R.W[k][pi] ? R.B[k][pi] : R.A[k][pi]];
+      else if (k === 0) continue;
+      else { k--; out = LIST32[m < R.W[k][pi] ? R.B[k][pi] : R.A[k][pi]]; }
       fb[row + x] = out;
     }
   }
 }
-function paintNight(fb, camX, camY, night, lm) { paintNightInto(fb, SW, SH, camX, camY, night, lm); }
+function paintNight(fb, camX, camY, night, lm, warm) { paintNightInto(fb, SW, SH, camX, camY, night, lm, warm); }
 
 export function createFx() {
   const fx = {
     weather: WEATHER_DEFAULT, levelId: null, seed: 1, world: null,
     shake: { x: 0, y: 0 },
     night: 0,            // effective night amount of the last prepare()
+    twilight: 0,         // how red the dark is (0..1) in the last prepare()
     lit: false,          // were light pools stamped this frame?
     strike: null,        // { index, time, age } of the strike that is still visible, or null
     lastIndex: -1, lastClock: null,
@@ -591,6 +631,7 @@ export function createFx() {
   fx.prepare = function prepare(fb, camX, camY, tint, timeOfDay, clock, lx, ly, lvl, MW) {
     const night = effectiveNight(tint.night, timeOfDay, fx.weather);
     fx.night = night;
+    fx.twilight = night > 0.04 ? twilightAt(timeOfDay) : 0;
     tintOut.phase = tint.phase; tintOut.night = 0; tintOut.warm = tint.warm; tintOut.wash = tint.wash;   // the night dark is painted by paintGround (smooth radial pools)
     // ---- lights
     fx.lit = night > 0.2;               // light pools only matter once it is properly dark (storm gloom alone does not light the lantern)
@@ -702,6 +743,7 @@ export function createFx() {
 
   // ------------------------------------------------------------ paintGround
   const MIST_DAY = [0, U.paper2, U.rock, U.rock, U.dusk];
+  const MIST_TWILIGHT = [0, U.rock, U.rock, 0, 0];          // rose-dun haze in the red hours
   const MIST_NIGHT = [0, U.dusk, U.rock, 0, 0];
   fx.paintGround = function paintGround(fb, camX, camY, clock) {
     const night = fx.night;
@@ -724,14 +766,18 @@ export function createFx() {
       }
     }
     // ---- the night: a continuous radial darkness value, dithered with the 8x8 Bayer threshold
-    if (night > 0.04) paintNight(fb, camX, camY, night, lm);
+    if (night > 0.04) paintNight(fb, camX, camY, night, lm, fx.twilight);
     // ---- mist / shadow
     for (let k = 0; k < nList; k++) {
       const i = list[k], l = lvls[k];
       const y = (i / SW) | 0, x = i - y * SW;
       const nl = night * (lm ? lm[i] * (1 / 255) : 1);
-      const isNight = nl > (BAYER8[(((y + camY) & 7) << 3) | ((x + camX) & 7)] + 0.5) * (1 / 64);
-      const c = isNight ? MIST_NIGHT[l] : MIST_DAY[l];
+      const bt = (BAYER8[(((y + camY) & 7) << 3) | ((x + camX) & 7)] + 0.5) * (1 / 64);
+      let c;
+      if (nl > 0.7 && (nl - 0.7) * 3.4 > bt) c = MIST_NIGHT[l];                  // true night: dusk-violet
+      else if (nl > 0.12 && l === 2 && fx.twilight > bt * 1 && bt < 0.4) c = U.bolt;
+      else if (nl > 0.12 && fx.twilight > (BAYER8[(((y + camY + 4) & 7) << 3) | ((x + camX + 2) & 7)] + 0.5) * (1 / 64)) c = MIST_TWILIGHT[l] || MIST_DAY[l];
+      else c = MIST_DAY[l];
       if (c) fb[i] = c;
     }
     // ---- stars (only in the dark, on dark ground)
@@ -769,7 +815,7 @@ export function createFx() {
         for (let y = 0; y < SH; y++) {
           const r = (y & 7) << 3;
           for (let x = 0; x < SW; x++) {
-            if (BAYER8[r | (x & 7)] < dd * 64) fb[y * SW + x] = ((x + (y >> 1)) & 1) === 0 ? U.snow : U.bolt;
+            if (BAYER8[r | (x & 7)] < dd * 64) fb[y * SW + x] = ((x + (y >> 1)) & 1) === 0 ? U.heather : U.bolt;
           }
         }
       }

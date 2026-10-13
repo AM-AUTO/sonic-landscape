@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  WEATHER, WEATHER_DEFAULT, weatherFor, darknessAt, effectiveNight, makeNoiseTex, buildMistField, LightningSchedule,
+  WEATHER, WEATHER_DEFAULT, weatherFor, darknessAt, effectiveNight, twilightAt, makeNoiseTex, buildMistField, LightningSchedule,
   flashDensity, boltVisibility, shakeAt, boltPoints, stampLight, flicker, makeParticles, precipitationFor, smokePuff, visibleBothies,
   createFx, BOLT_LIFE, SHAKE_LIFE,
 } from '../src/render/fx.js';
@@ -53,7 +53,8 @@ test('darkness follows the day: none by day, a lot at night, dusk in between; st
   assert.equal(darknessAt(0.375), 0);
   assert.ok(darknessAt(0.875) > 0.99);
   const d = darknessAt(0.625);
-  assert.ok(d > 0.3 && d < 0.7, 'dusk ' + d);
+  assert.ok(d > 0.5 && d < 0.85, 'dusk ' + d);
+  assert.ok(twilightAt(0.625) === 1 && twilightAt(0.375) === 0 && twilightAt(0.875) < 0.2 && twilightAt(0.125) > 0.5 && twilightAt(0.125) < 1, 'the red hours');
   assert.equal(effectiveNight(0, 0.375, WEATHER.assynt), 0);
   assert.ok(effectiveNight(0, 0.375, WEATHER.coe) > 0);
   assert.ok(effectiveNight(0, 0.375, WEATHER.coe) < 0.15);
@@ -411,7 +412,7 @@ test('lightning frame: flash dither of bolt/snow appears at the strike, a bolt p
   const fx0 = createFx(); fx0.setWorld(w);
   const t0 = fx0.strikeTime(0);
   const flash = paintFrame(w, { tod: 0.875, clock: t0 + 0.02, fill: [U.night] });
-  let b = 0, sn = 0; for (const v of flash.fb) { if (v === U.bolt) b++; else if (v === U.snow) sn++; }
+  let b = 0, sn = 0; for (const v of flash.fb) { if (v === U.bolt) b++; else if (v === U.heather) sn++; }
   assert.ok(b > 3000 && sn > 3000, 'flash dither ' + b + '/' + sn);
   assert.ok(b + sn > 0.3 * SW * SH && b + sn < 0.42 * SW * SH, 'frame A is a sparse ~35% wash, the map shows through: ' + (b + sn));
   const bolt = paintFrame(w, { tod: 0.875, clock: t0 + 0.2, fill: [U.night] });
