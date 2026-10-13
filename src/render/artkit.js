@@ -1,7 +1,12 @@
 /**
- * Small shared helpers for the painted scenes (panels.js, stone.js, titleart.js): ordered-dither threshold, value
+ * Small shared helpers for the painted scenes (panels.js, stone.js, titleart.js, title/*): ordered-dither threshold, value
  * noise, the red ramp that "lifting" or "sinking" a colour walks up and down, and a 3x5 map-label stamper.
  * Everything writes strict palette colours (the PAL_U32 values) into a Raster-like object { w, h, d, lay, px(), get() }.
+ *
+ * START-SCREEN COLOUR RULE: the five start screens (src/render/title/*) are greyscale with ONE accent. They use only
+ *   ink  char  slate  ash  rock  fog  snow   (the GREY ramp below, dark -> light; paper / paper2 only as warm light endpoints)
+ * plus ember (#dd5a38) as the single accent. No blue, green, yellow, purple, or the other reds. The old red/hypsometric
+ * ramps (RED, lift, sink) stay for the in-game panels; on the start screens use GREY, liftG and sinkG instead.
  */
 import { PAL_U32 as C, BAYER8 } from './palette.js';
 import { hash2f } from '../core/rng.js';
@@ -59,8 +64,19 @@ const LIFT = new Map();
 const SINK = new Map();
 RED.forEach((c, i) => { if (i + 1 < RED.length) { LIFT.set(c, RED[i + 1]); SINK.set(RED[i + 1], c); } });
 for (const [a, b] of [[C.night, C.dusk], [C.dusk, C.heather], [C.contourIdx, C.contour], [C.contour, C.paper2], [C.rock, C.paper2], [C.woodDark, C.wood], [C.waterInk, C.grid], [C.grid, C.water], [C.bog, C.water], [C.bolt, C.paper]]) { if (!LIFT.has(a)) LIFT.set(a, b); if (!SINK.has(b)) SINK.set(b, a); }
+// the warm greys join the generic lift / sink walk too (char < slate < ash < rock < fog < snow), so a grey is never reddened by accident
+// (only the new greys get entries: the existing colours keep their old walk, so the in-game panels are unchanged)
+LIFT.set(C.char, C.slate); LIFT.set(C.slate, C.ash); LIFT.set(C.ash, C.rock); LIFT.set(C.fog, C.snow);
+SINK.set(C.char, C.ink); SINK.set(C.slate, C.char); SINK.set(C.ash, C.slate); SINK.set(C.fog, C.rock);
 export const lift = (c) => LIFT.get(c) || c;
 export const sink = (c) => SINK.get(c) || c;
+
+/** The greyscale ramp of the start screens, dark -> light. ember is the one accent, kept apart from the ramp. */
+export const GREY = Object.freeze([C.ink, C.char, C.slate, C.ash, C.rock, C.fog, C.snow]);
+const GREY_AT = new Map(GREY.map((c, i) => [c, i]));
+/** One step up / down the GREY ramp (a non-grey colour is returned unchanged; ink sinks to ink, snow lifts to snow). */
+export const liftG = (c) => { const i = GREY_AT.get(c); return i === undefined ? c : GREY[Math.min(GREY.length - 1, i + 1)]; };
+export const sinkG = (c) => { const i = GREY_AT.get(c); return i === undefined ? c : GREY[Math.max(0, i - 1)]; };
 
 /** Sky colour at t (0 top .. 1 horizon): ordered dither between neighbouring stops. */
 export function skyAt(stops, t, x, y) {

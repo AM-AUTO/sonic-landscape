@@ -1,9 +1,9 @@
 // Renders title / select / play / map / notes / pause / complete screens to out/render-*.png (3x).
 // usage: node tools/render-preview.mjs [--worlds mock:glen,real:0,real:1] [--scale 3] [--out out] [--fx-only] [--no-fx] [--proof] [--proof-title]
-// --proof-title writes render-title-A.png / -B / -C: the three cover variants (Survey, Summit, Close) at 3x, nothing else.
+// --proof-title writes render-title-<name>.png for every start-screen variant in src/render/title/index.js (castlerigg, shelter, mentol, dolmen, menhir) at 3x, nothing else.
 // The atmosphere pass (weather on) renders real levels 0 rannoch, 2 coe, 3 cairngorm, 5 cuillin: day / dusk / night play
 // frames, a lightning (or storm) frame, a mist frame, a bothy-at-night frame and walker crops at 8x, plus the walker
-// pose sheet and the gate symbol-stone sheet. Every frame is checked against the strict 25-colour palette.
+// pose sheet and the gate symbol-stone sheet. Every frame is checked against the strict 29-colour palette.
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -15,6 +15,7 @@ import { LEVELS } from '../src/world/levels/index.js';
 import { STORY, NOTES, fmt as fmtText } from '../src/text.js';
 import { introItems, trackItems, completeItems, albumItems } from '../src/story.js';
 import { describeCondition } from '../src/game/describe.js';
+import { TITLE_VARIANTS } from '../src/render/title/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -40,7 +41,7 @@ const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 
 const SCALE = +opt('scale', 3);
 const FX_ONLY = args.includes('--fx-only');
 const PROOF = args.includes('--proof');   // just the art proof: cover, three story panels, the slim HUD (rannoch day and dusk)
-const PROOF_TITLE = args.includes('--proof-title');   // the three cover variants only
+const PROOF_TITLE = args.includes('--proof-title');   // the five start-screen variants only
 const NO_FX = args.includes('--no-fx');
 const OUT = path.resolve(root, opt('out', 'out'));
 fs.mkdirSync(OUT, { recursive: true });
@@ -70,7 +71,7 @@ await page.evaluate(() => window.P.initRenderer());
 
 if (PROOF_TITLE) {
   await page.evaluate(() => window.P.warmProfiles());
-  for (const v of ['A', 'B', 'C']) save(`title-${v}`, await frame({ state: null, ui: { screen: 'title', time: 3.0, titleVariant: v }, warm: 1 }));
+  for (const v of TITLE_VARIANTS) save(`title-${v}`, await frame({ state: null, ui: { screen: 'title', time: 3.0, titleVariant: v }, warm: 1 }));
   const prt = await page.evaluate(() => window.P.paletteReport());
   console.log(`palette audit: ${prt.bad === 0 ? 'OK' : 'FAIL'}  off-palette frames: ${prt.bad}`);
   await browser.close(); await srv.close();

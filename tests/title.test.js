@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  Raster, paintStandingStone, freshBase, paintBase, renderPanel, pixelHash, warmProfile, hasProfile, getPanel,
+  Raster, paintStandingStone, freshBase, paintBase, renderPanel, pixelHash, hasProfile, getPanel,
   TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT, TITLE_LEVELS, TITLE_SCENE,
 } from '../src/render/panels.js';
+import { DEFAULT_LAYOUT } from '../src/render/title/index.js';
+import * as K from '../src/render/title/kit.js';
 import { STONE_SYMBOLS, SYMBOL_STROKES } from '../src/render/stone.js';
 import { PAL, PAL_U32_LIST, PAL_U32 } from '../src/render/palette.js';
 import { measureText } from '../src/render/font.js';
@@ -12,8 +14,6 @@ import { TITLE } from '../src/text.js';
 const PAL_SET = new Set(PAL_U32_LIST);
 const W = TITLE_SCENE.w, H = TITLE_SCENE.h;
 const spec = (variant) => ({ kind: 'title', levelIndex: 3, variant });
-// the covers as painted from stand-in fields, before any track's real field has been built in this process
-const STAND_IN = Object.fromEntries(TITLE_VARIANTS.map((v) => [v, pixelHash(freshBase({ kind: 'title', levelIndex: 3, variant: v }, W, H))]));
 const offPalette = (d) => { let n = 0; for (let i = 0; i < d.length; i++) if (!PAL_SET.has(d[i])) n++; return n; };
 
 // ------------------------------------------------------------------ the standing stone
@@ -118,40 +118,149 @@ test('paintStandingStone: tilt shows the flat top of the slab, moss and lichen c
   assert.ok(greens(flat.r) > greens(bare.r), 'moss and lichen are green');
 });
 
-// ------------------------------------------------------------------ the three covers
-test('title covers: three variants A Survey / B Summit / C Close, each a full-bleed painting in strict palette colours', () => {
-  assert.deepEqual([...TITLE_VARIANTS], ['A', 'B', 'C']);
-  assert.ok(TITLE_VARIANTS.includes(TITLE_DEFAULT));
+// ------------------------------------------------------------------ greyscale + one accent
+const GREYS = ['ink', 'char', 'slate', 'ash', 'rock', 'fog', 'snow'];
+const ALLOWED = new Set([...GREYS, 'ember', 'paper', 'paper2'].map((n) => PAL_U32[n]));
+const foreign = (d) => { let n = 0; for (let i = 0; i < d.length; i++) if (!ALLOWED.has(d[i])) n++; return n; };
+
+test('mono stone: greys + ember only, deterministic, the ember sits in the incisions and the rim, the colour stone is untouched', () => {
+  const mono = (seed, glow = 0.7) => { const r = new Raster(240, 180); r.d.fill(PAL_U32.ash); r.lay.fill(0); const info = paintStandingStone(r, 90, 170, 130, { seed, mono: true, glow, shadow: { sx: 1.4, sy: 0.3, dens: 0.9, layerMax: 5 } }); return { r, info }; };
+  const a = mono(4), b = mono(4), c = mono(5);
+  assert.equal(pixelHash(a.r.d), pixelHash(b.r.d));
+  assert.notEqual(pixelHash(a.r.d), pixelHash(c.r.d));
+  assert.equal(foreign(a.r.d), 0, 'greys + ember only');
+  assert.ok(a.r.d.includes(PAL_U32.ember), 'ember in the incisions');
+  assert.ok(a.info.embers.length > 20 && a.info.embers.every((e) => e.length === 4));
+  const cold = mono(4, 0);
+  assert.ok(!cold.r.d.includes(PAL_U32.ember), 'no glow, no ember');
+  const col = stoneOn({ seed: 4 });
+  assert.ok(foreign(col.r.d) > 0, 'the colour stone is still coloured');
+});
+
+test('logo: carved stone in greys with a thin ember line on the lit edge only', () => {
+  const r = new Raster(384, 216); r.d.fill(PAL_U32.char); r.lay.fill(0);
+  const L = K.paintTitleLogo(r, {});
+  assert.equal(foreign(r.d), 0);
+  assert.ok(L.face.length > 1500 && L.ember.length > 100, `face ${L.face.length}, ember ${L.ember.length}`);
+  for (const i of L.ember) assert.equal(r.d[i], PAL_U32.ember, 'the ember line is painted');
+  const before = pixelHash(r.d);
+  K.animLogo(r, L, 1.0);
+  assert.notEqual(pixelHash(r.d), before, 'the glint sweeps');
+  assert.equal(foreign(r.d), 0);
+});
+
+// ------------------------------------------------------------------ the kit
+test('kit: ramp / gradient / glow / mist / foot plate stay on the grey ramp (+ ember) and are deterministic', () => {
+  const run = () => {
+    const r = new Raster(120, 80); r.lay.fill(0);
+    K.paintGreyGradient(r, { x: 0, y: 0, w: 120, h: 80 }, 0.1, 0.9, { streak: 0.8, seed: 3 });
+    K.paintDitherGlow(r, 60, 40, 30, PAL_U32.ember, 255, { core: PAL_U32.snow });
+    K.paintDitherGlow(r, 20, 20, 15, null);
+    K.paintMistBands(r, [{ y: 30, rows: 12, dens: 0.8 }], 5);
+    K.paintFootPlate(r, 50);
+    return r;
+  };
+  const a = run(), b = run();
+  assert.equal(pixelHash(a.d), pixelHash(b.d));
+  assert.equal(foreign(a.d), 0);
+  assert.ok(a.d.includes(PAL_U32.ember));
+  for (let v = 0; v <= 1; v += 0.1) assert.ok(GREYS.map((n) => PAL_U32[n]).includes(K.ramp(v, 3, 5)));
+  assert.equal(K.ramp(1, 0, 0, 1), PAL_U32.ember, 'accent 1 at a light tone is ember');
+  assert.equal(K.ramp(0, 0, 0, 1), PAL_U32.ink, 'and never over the darkest tone');
+});
+
+test('kit: lichen, strata, contour field: deterministic, inside their region, greys + ember, and they change the picture', () => {
+  const run = (seed) => {
+    const r = new Raster(200, 140); r.d.fill(PAL_U32.ash); r.lay.fill(0);
+    const reg = { x: 20, y: 20, w: 100, h: 90 };
+    const n = K.paintLichen(r, reg, seed, { density: 1.5 });
+    K.paintStrata(r, reg, seed, { cracks: 4, emberCrack: 1 });
+    return { r, n };
+  };
+  const a = run(1), b = run(1), c = run(2);
+  assert.equal(pixelHash(a.r.d), pixelHash(b.r.d));
+  assert.notEqual(pixelHash(a.r.d), pixelHash(c.r.d));
+  assert.ok(a.n > 300, 'lichen painted ' + a.n);
+  assert.equal(foreign(a.r.d), 0);
+  for (let y = 0; y < 140; y++) for (let x = 0; x < 200; x++) if (x < 20 || x >= 120 || y < 20 || y >= 110) assert.equal(a.r.d[y * 200 + x], PAL_U32.ash, 'nothing outside the region');
+  // a masked region: only where the mask is on
+  const r = new Raster(60, 60); r.d.fill(PAL_U32.ash);
+  const data = new Uint8Array(30 * 60); for (let j = 0; j < 60; j++) for (let i = 0; i < 30; i++) data[j * 30 + i] = 1;
+  K.paintLichen(r, { x: 0, y: 0, w: 30, h: 60, data }, 7, { density: 3 });
+  for (let y = 0; y < 60; y++) for (let x = 30; x < 60; x++) assert.equal(r.d[y * 60 + x], PAL_U32.ash);
+  // contour field
+  const field = () => { const q = new Raster(384, 216); q.lay.fill(0); const res = K.paintContourField(q, (x, y) => K.clamp(K.fbm(x * 0.012, y * 0.014, 5, 4) * 1.5 - 0.3, 0, 1), { bands: 16, grid: 24, spots: 4, accent: 0.5, relief: 40 }); return { q, res }; };
+  const f1 = field(), f2 = field();
+  assert.equal(pixelHash(f1.q.d), pixelHash(f2.q.d));
+  assert.ok(f1.q.d.every((v) => v !== 0), 'every pixel painted');
+  assert.equal(foreign(f1.q.d), 0);
+  assert.ok(f1.q.d.includes(PAL_U32.ember), 'the one ember contour');
+  assert.ok(f1.res.spots.length >= 1, 'spot heights');
+  // distinct greys used: it is a real hypsometric ramp
+  assert.ok(new Set(f1.q.d).size >= 6);
+});
+
+test('kit: stoneMask orients the stone mask like the screen', () => {
+  const r = new Raster(240, 180); r.d.fill(PAL_U32.magenta); r.lay.fill(0);        // a colour the mono stone never uses
+  const st = K.monoStone(r, 100, 170, 120, { seed: 2 });
+  const m = K.stoneMask(st);
+  assert.equal(m.data.length, m.w * m.h);
+  let on = 0, stone = 0;
+  for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.data[j * m.w + i]) { on++; if (r.get(m.x + i, m.y + j) !== PAL_U32.magenta) stone++; }
+  assert.ok(on > 1000 && stone / on > 0.99, `mask pixels are stone (${stone}/${on})`);
+  assert.ok(m.data[(m.h - 1) * m.w + (m.w >> 1)] || m.data[(m.h - 2) * m.w + (m.w >> 1)], 'the foot is the bottom row');
+});
+
+// ------------------------------------------------------------------ the five start screens
+test('title registry: five variants, castlerigg by default, a layout and a levels list for each', () => {
+  assert.deepEqual([...TITLE_VARIANTS], ['castlerigg', 'shelter', 'mentol', 'dolmen', 'menhir']);
+  assert.equal(TITLE_DEFAULT, 'castlerigg');
+  for (const v of TITLE_VARIANTS) {
+    const L = TITLE_LAYOUT[v];
+    assert.ok(L && L.subtitle && L.prompt && L.controls > 0 && L.strapline > 0 && L.cornerLeft && L.cornerRight && L.colors && Array.isArray(L.hide), v);
+    assert.ok(Array.isArray(TITLE_LEVELS[v]), v + ' levels');
+  }
+  assert.ok(DEFAULT_LAYOUT.colors.arrow === 'ember');
+});
+
+test('start screens: each variant is a full-bleed deterministic painting in the 29-colour palette, greys + ember only, with the logo', () => {
   const hashes = new Set();
   for (const v of TITLE_VARIANTS) {
     const d = freshBase(spec(v), W, H);
     assert.equal(d.length, W * H);
     assert.ok(d.every((c) => c !== 0), v + ': every pixel painted');
     assert.equal(offPalette(d), 0, v + ' palette');
-    for (const n of ['blood', 'rust', 'ember', 'heather', 'flame', 'grid']) assert.ok(d.includes(PAL_U32[n]), `${v} uses ${n}`);
+    assert.equal(foreign(d), 0, v + ': greys + ember (+ paper endpoints) only');
+    assert.equal(pixelHash(d), pixelHash(freshBase(spec(v), W, H)), v + ' deterministic');
+    assert.ok(d.includes(PAL_U32.ink) && d.includes(PAL_U32.fog), v + ' spans the greys');
     hashes.add(pixelHash(d));
-    // the logo: bright flame and bone pixels in the lettering band
+    // the logo: snow / fog carved pixels in the lettering band
     let bright = 0;
-    for (let y = 14; y < 72; y++) for (let x = 20; x < 364; x++) if (d[y * W + x] === PAL_U32.flame || d[y * W + x] === PAL_U32.paper) bright++;
-    assert.ok(bright > 500, `${v}: lettering present (${bright})`);
+    for (let y = 14; y < 90; y++) for (let x = 10; x < 374; x++) if (d[y * W + x] === PAL_U32.snow || d[y * W + x] === PAL_U32.fog) bright++;
+    assert.ok(bright > 300, `${v}: lettering present (${bright})`);
   }
-  assert.equal(hashes.size, 3, 'three different paintings');
+  assert.equal(hashes.size, 5, 'five different paintings');
 });
 
-test('title covers: deterministic, animated, and the animation never touches the cached base', () => {
+test('start screens: a seed changes the painting, an unknown variant (the old A / B / C) falls back to the default', () => {
+  assert.notEqual(pixelHash(freshBase({ ...spec('castlerigg'), seed: 1 }, W, H)), pixelHash(freshBase(spec('castlerigg'), W, H)));
+  for (const old of ['A', 'B', 'C', 'nope']) assert.equal(pixelHash(freshBase(spec(old), W, H)), pixelHash(freshBase(spec(TITLE_DEFAULT), W, H)), old);
+});
+
+test('start screens: animated, deterministic per time, and the animation never touches the cached base', () => {
   for (const v of TITLE_VARIANTS) {
     const s = spec(v);
-    assert.equal(pixelHash(freshBase(s, W, H)), pixelHash(freshBase(s, W, H)), v + ' base');
     const base = pixelHash(paintBase(s, W, H));
     const a = pixelHash(renderPanel(s, W, H, 1.0)), b = pixelHash(renderPanel(s, W, H, 4.7));
     assert.notEqual(a, b, v + ' moves');
     assert.equal(pixelHash(renderPanel(s, W, H, 1.0)), a, v + ' same time, same frame');
     assert.equal(pixelHash(paintBase(s, W, H)), base, v + ' base untouched');
     assert.equal(offPalette(renderPanel(s, W, H, 2.2)), 0, v + ' frame palette');
+    assert.equal(foreign(renderPanel(s, W, H, 2.2)), 0, v + ' frame greys + ember');
   }
 });
 
-test('title covers: a per-frame animation cost of a few milliseconds at most (the picture is a cached base)', () => {
+test('start screens: a per-frame animation cost of a few milliseconds at most (the picture is a cached base)', () => {
   for (const v of TITLE_VARIANTS) {
     const s = spec(v);
     renderPanel(s, W, H, 0);
@@ -162,35 +271,27 @@ test('title covers: a per-frame animation cost of a few milliseconds at most (th
   }
 });
 
-test('title covers: a spec that asks for it ({ warm: true }) has the fields its cover draws on built before it paints, so no stand-in is ever shown', () => {
-  assert.ok(!hasProfile(6), 'track VII is not warm yet in this process');
-  const standIn = STAND_IN.B;
-  const p = getPanel({ ...spec('B'), warm: true }, W, H);
-  assert.ok(hasProfile(6), 'the field of the Summit cover was built on demand');
-  assert.notEqual(pixelHash(p.base.d), standIn, 'and the cover is the real one');
-  assert.equal(pixelHash(paintBase({ ...spec('B'), warm: true }, W, H)), pixelHash(p.base.d), 'cached once warm');
-});
-
-test('title covers: the real heightfields of the tracks are used once they are warm, and the picture changes with them', () => {
-  const before = TITLE_VARIANTS.map((v) => STAND_IN[v]);
-  for (const v of TITLE_VARIANTS) for (const i of TITLE_LEVELS[v]) warmProfile(i);
-  const after = TITLE_VARIANTS.map((v) => pixelHash(freshBase(spec(v), W, H)));
-  before.forEach((h, i) => assert.notEqual(h, after[i], `${TITLE_VARIANTS[i]} is drawn from the track's field`));
-  // and warm covers are still deterministic
-  assert.deepEqual(after, TITLE_VARIANTS.map((v) => pixelHash(freshBase(spec(v), W, H))));
-});
-
-test('title covers: no stag, no wanderer, no birds, no cross: the old small silhouettes are gone from the cover', async () => {
-  const src = await import('node:fs').then((fs) => fs.readFileSync(new URL('../src/render/titleart.js', import.meta.url), 'utf8'));
-  assert.ok(!/drawStag|drawWanderer|drawBird/.test(src));
+test('start screens: a spec that asks for it ({ warm: true }) has the fields its variant lists in `levels` built before it paints', () => {
   for (const v of TITLE_VARIANTS) {
-    const l = TITLE_LAYOUT[v];
-    assert.ok(l && l.subtitle && l.prompt && l.controls > 0 && l.strapline > 0);
+    const p = getPanel({ ...spec(v), warm: true }, W, H);
+    for (const i of TITLE_LEVELS[v]) assert.ok(hasProfile(i), `${v}: field ${i} built on demand`);
+    assert.equal(pixelHash(paintBase({ ...spec(v), warm: true }, W, H)), pixelHash(p.base.d), v + ' cached once warm');
   }
 });
 
-test('title covers: the lines of text sit inside the screen and clear of each other for every variant', () => {
+test('start screens: the old A / B / C covers are unreachable and no stag, wanderer, bird or cross is drawn', async () => {
+  const fs = await import('node:fs');
+  for (const f of ['../src/render/titleart.js', '../src/render/title/index.js', '../src/render/title/kit.js']) {
+    const src = fs.readFileSync(new URL(f, import.meta.url), 'utf8');
+    assert.ok(!/drawStag|drawWanderer|drawBird/.test(src), f);
+  }
+  const panels = fs.readFileSync(new URL('../src/render/panels.js', import.meta.url), 'utf8');
+  assert.ok(!/paintLegacyTitleArt|LEGACY_TITLE/.test(panels), 'panels.js does not reach the legacy covers');
+});
+
+test('start screens: the lines of text sit inside the screen, clear of each other, in greys + ember', () => {
   const small = { font: 'small' };
+  const okName = new Set([...GREYS, 'ember', 'paper', 'paper2']);
   for (const v of TITLE_VARIANTS) {
     const L = TITLE_LAYOUT[v];
     const subW = L.subtitle.maxW ? L.subtitle.maxW : measureText(TITLE.subtitle, { italic: true, spacing: 1 });
@@ -200,5 +301,7 @@ test('title covers: the lines of text sit inside the screen and clear of each ot
     assert.ok(L.prompt.y + 9 < L.controls, `${v}: prompt above the controls line`);
     assert.ok(L.controls + 7 < L.strapline && L.strapline + 6 <= H, `${v}: controls above the strapline`);
     assert.ok(measureText(TITLE.controlsKeys, small) <= 380 && measureText(TITLE.strapline, { ...small, spacing: 1 }) <= 380);
+    for (const [k, c] of Object.entries(L.colors)) for (const n of [].concat(c)) assert.ok(okName.has(n) && PAL[n], `${v}: colour ${k} = ${n}`);
+    assert.ok(L.hide.every((n) => ['cornerLeft', 'cornerRight', 'subtitle', 'prompt', 'controls', 'strapline'].includes(n)), v + ' hide names');
   }
 });

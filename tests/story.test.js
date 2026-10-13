@@ -262,6 +262,7 @@ test('ridge panels are each track\'s own place: the skyline comes from its heigh
   const reds = ['blood', 'rust', 'ember', 'heather'].map((n) => PAL_U32_LIST[Object.keys(PAL).indexOf(n)]);
   for (const [k, spec] of Object.entries(SPECS)) {
     const d = freshBase(spec, PANEL.w, PANEL.h);
+    if (k === 'title') { assert.ok([reds[0], reds[1], reds[3]].every((c) => !d.includes(c)), 'the start screen is greys + ember only: no blood, rust or heather'); continue; }
     for (const c of reds) assert.ok(d.includes(c), `${k} uses ${c.toString(16)}`);
   }
 });
@@ -270,9 +271,9 @@ test('the title is full-bleed: the whole 384x216 screen is painted art with the 
   assert.deepEqual([PANEL.w, PANEL.h, TITLE_SCENE.w, TITLE_SCENE.h], [384, 216, 384, 216]);
   const d = freshBase(SPECS.title, 384, 216);
   assert.ok(d.every((c) => c !== 0));
-  // the logo: bright flame and bone pixels in the upper third, where the lettering is carved
+  // the logo: bright snow and fog pixels in the upper third, where the lettering is carved
   let bright = 0;
-  for (let y = 10; y < 80; y++) for (let x = 20; x < 364; x++) if (d[y * 384 + x] === PAL_U32_LIST[Object.keys(PAL).indexOf('flame')]) bright++;
+  for (let y = 10; y < 80; y++) for (let x = 20; x < 364; x++) if (d[y * 384 + x] === PAL_U32_LIST[Object.keys(PAL).indexOf('snow')] || d[y * 384 + x] === PAL_U32_LIST[Object.keys(PAL).indexOf('fog')]) bright++;
   assert.ok(bright > 400, 'lettering present: ' + bright);
 });
 

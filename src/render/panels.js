@@ -18,12 +18,13 @@
  *   bothy   a vast red-black moor, one small lit window and a thread of smoke (field notes)
  *   stone   a Pictish symbol stone at dawn, warm glow (track complete)
  *   dawn    a wide dawn over the whole set of ridges (album complete)
- *   title   the cover, three variants (spec.variant 'A'|'B'|'C'): a standing stone on a contour map, the logo painted on top
+ *   title   the start screen, five greyscale-plus-ember variants (spec.variant 'castlerigg'|'shelter'|'mentol'|'dolmen'|'menhir'), see title/index.js
  */
 import { PAL, PAL_NAMES, PAL_U32 as C } from './palette.js';
 import { hash2f } from '../core/rng.js';
 import { paintStandingStone } from './stone.js';
-import { paintTitleArt, animTitleArt, setTerrain, hasTerrain, TITLE_LEVELS, TITLE_DEFAULT, TITLE_VARIANTS, TITLE_LAYOUT } from './titleart.js';
+import { setTerrain, hasTerrain } from './titleart.js';
+import { paintTitleArt, animTitleArt, TITLE_LEVELS, TITLE_DEFAULT, TITLE_VARIANTS, TITLE_LAYOUT } from './title/index.js';
 import { Raster, bay, clamp, vnoise, lift, sink, skyAt, mistBand, drawMistBand } from './artkit.js';
 import * as SP from './sprites.js';
 import { LEVELS } from '../world/levels/index.js';
@@ -660,8 +661,8 @@ function paintDawn(r, spec, S) {
 function animDawn(r, spec, S, t) { for (const b of S.bands) drawMistBand(r, b, t); }
 
 // ======================================================================================== TITLE
-// The cover is three full-bleed paintings of one idea (a standing stone on an Ordnance Survey sheet); titleart.js paints them
-// and spec.variant ('A' Survey, 'B' Summit, 'C' Close) picks one. The field each draws on is a track's own heightfield.
+// The start screen is one of five full-bleed greyscale paintings with a single ember accent (src/render/title/*.js); spec.variant picks one.
+// A variant that wants a track's own heightfield lists it in its `levels` export (TITLE_LEVELS); none do by default.
 function paintTitle(r, spec, S) { paintTitleArt(r, spec, S); }
 function animTitle(r, spec, S, t) { animTitleArt(r, spec, S, t); }
 

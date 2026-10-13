@@ -5,7 +5,8 @@
  *     r     a Raster (artkit.js): palette u32 pixels plus a layer id per pixel
  *     cx    screen x of the stone's axis;  baseY  screen y of its foot;  h  its height in px
  *     mask  w x maskH, row 0 = the foot, 1 where the stone is;  x0, y0  screen position of the mask's left edge and top row
- *     embers [[x, y, phase], ...] the screen pixels of the incision that glow (a caller may pulse them between lamp, ember and rust)
+ *     embers [[x, y, phase, dimColour], ...] the screen pixels of the incision that glow (a caller may pulse them between lamp, ember and rust;
+ *            mono stones: kit.js pulseEmbers pulses them between ember and dimColour, the colour the pixel has when the ember is out)
  *
  * The stone is deterministic for a seed (no Math.random). Its face is a height-map (a rounded slab, strata that step in and out,
  * cracks, pits, an incised symbol); the normal of that map is lit by a low sun (ordered-dither steps of a cool or brown
@@ -26,12 +27,16 @@
  *   opts.layer   raster layer id written with every stone pixel
  *   opts.lichen  0..2 amount of lichen (default 1);  opts.moss 0..1 (default 1)
  *   opts.outline 0..1 a thin dark edge where the stone stands against a bright ground, so the sunward rim never dissolves into it
+ *   opts.mono    true: the start-screen look. Greyscale only (ink char slate ash rock fog snow, artkit GREY): no stains, no moss, no
+ *                bracken; lichen is grey (bone / pale / dark crust); the lit rim is fog / snow; ember appears ONLY in the incisions
+ *                (when glow > 0.1) and as a thin ember line just inside the sunward rim (when glow > 0.25). Every ember pixel is in
+ *                the returned `embers` list so a caller can pulse it (kit.js pulseEmbers). Deterministic: same seed, same stone.
  * No crosses: the symbols are a crescent with an arrow standing in its mouth, and two discs with a Z-rod beside a spear; no stroke
  * crosses another and none meets another at a right angle (SYMBOL_STROKES is the data; tests/title.test.js checks it).
  */
 import { PAL_U32 as C } from './palette.js';
 import { mulberry32, hash2f } from '../core/rng.js';
-import { bay, clamp, vnoise, fbm, smooth, lift, sink } from './artkit.js';
+import { bay, clamp, vnoise, fbm, smooth, lift, sink, GREY, liftG, sinkG } from './artkit.js';
 
 // colour ramps, dark -> light. Rock is grey-brown gneiss; stained patches and bands read off the brown, the purple-grey or (in the last sun) the warm ramp.
 const ROCK = [C.ink, C.blood, C.contourIdx, C.rock, C.contour, C.rock, C.paper2];          // grey-brown gneiss, warm in the shadows
@@ -45,6 +50,14 @@ const LICHEN = [
   [C.ink, C.blood, C.rust, C.contour],                   // rust crust
 ];
 const MOSS = [C.ink, C.night, C.woodDark, C.woodDark];
+// mono (start screens): lichen as grey crusts, bone-pale to dark
+const LICHEN_M = [
+  [C.slate, C.ash, C.fog, C.snow],                       // bone
+  [C.char, C.slate, C.rock, C.fog],                      // pale grey crust
+  [C.ink, C.char, C.slate, C.ash],                       // dark crust
+  [C.char, C.ash, C.rock, C.fog],                        // map-lichen
+];
+const MOSS_M = [C.ink, C.char, C.char, C.slate];
 
 function ramp(r, v, x, y) {
   const pos = clamp(v, 0, 1) * (r.length - 1);
@@ -113,6 +126,7 @@ export const STONE_SYMBOLS = Object.freeze(['crescent', 'discs', 'none']);
 // ---------------------------------------------------------------- the stone
 export function paintStandingStone(r, cx, baseY, h, opts = {}) {
   const o = { light: [-0.8, -0.5], elev: 0.42, seed: 1, symbol: 'crescent', glow: 0.5, width: 0.46, tilt: 0, lichen: 1, moss: 1, tone: 0, outline: 1, ...opts };
+  const M = !!o.mono;
   cx = Math.round(cx); baseY = Math.round(baseY); h = Math.max(24, Math.round(h));
   const rng = mulberry32((o.seed | 0) * 7919 + 12345);
   const seed = (o.seed | 0) * 131 + 7;
@@ -309,7 +323,7 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
   }
 
   // ---- shadow on the ground first (the stone is painted over it)
-  if (o.shadow) paintCastShadow(r, cx, baseY, h, { kind, GW, idx, minX, maxX, ...o.shadow }, lay);
+  if (o.shadow) paintCastShadow(r, cx, baseY, h, { kind, GW, idx, minX, maxX, mono: M, ...o.shadow }, lay);
 
   // ---- per pixel
   const shadowOf = (lx, ly, zz) => {                                  // ledges cast short shadows away from the sun
@@ -361,19 +375,25 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
     let rp = ROCK;
     if (ty === 1 && stain > 0.35 || stain > 0.8) rp = ROCK_BROWN; else if (ty === 2 && stain < 0.45) rp = ROCK_COOL;
     // the sunset on the lit face: coherent warm regions along the sunward side
-    if (glow > 0 && glow * smooth(0.4, 0.8, t) > 0.3 + 0.25 * vnoise(lx * 0.09, ly * 0.09, seed + 64)) rp = ROCK_GLOW;
-    let col = ramp(rp, t, X, Y);
-    if (kind[i] === 2) col = ramp(ROCK_BROWN, clamp(t + 0.06, 0, 1), X, Y);
+    if (!M && glow > 0 && glow * smooth(0.4, 0.8, t) > 0.3 + 0.25 * vnoise(lx * 0.09, ly * 0.09, seed + 64)) rp = ROCK_GLOW;
+    let col;
+    if (M) {                                                                  // greyscale: stained patches are only a little darker, a harder band a little paler
+      const tm = clamp(t + (rp === ROCK_BROWN ? -0.07 : rp === ROCK_COOL ? 0.05 : 0), 0, 1);
+      col = ramp(GREY, kind[i] === 2 ? clamp(t + 0.06, 0, 1) : tm, X, Y);
+    } else {
+      col = ramp(rp, t, X, Y);
+      if (kind[i] === 2) col = ramp(ROCK_BROWN, clamp(t + 0.06, 0, 1), X, Y);
+    }
     // glints of mica / quartz in the lit face
-    if (t > 0.5 && hash2f(lx, ly, seed + 59) < 0.004) col = C.paper2;
+    if (t > 0.5 && hash2f(lx, ly, seed + 59) < 0.004) col = M ? C.snow : C.paper2;
     // lichen
     const lc = lich[i];
     if (lc) {
       const ring = lichT[i];
-      const lr = LICHEN[lc - 1];
+      const lr = (M ? LICHEN_M : LICHEN)[lc - 1];
       const lt = clamp(t * 1.15 + 0.12 - (ring < 0.28 ? 0.1 : 0) + (ring > 0.78 ? -0.12 : 0), 0, 1);
       col = ramp(lr, lt, X, Y);
-      if (lc === 3 && ring > 0.8) col = C.ink;                        // map-lichen's black edge
+      if (lc === 3 && ring > 0.8) col = M ? C.char : C.ink;                        // map-lichen's black edge
     }
     out(lx, ly, col);
   }
@@ -391,17 +411,22 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
       if (G[i]) {
         const darkWall = farWall(lx, ly), litWall = sunWall(lx, ly);
         let c = C.ink;
-        if (Gd[i] < 0.4 && glow > 0.1) embers.push([X, Y, (X * 7 + Y * 13) % 17]);
+        if (Gd[i] < 0.4 && glow > 0.1) embers.push([X, Y, (X * 7 + Y * 13) % 17, C.char]);
+        if (M) {
+          if (Gd[i] < 0.4) c = glow < 0.15 ? C.char : (glow > 0.45 || bay(X, Y) < glow * 2) ? C.ember : C.char;     // mono: the bed glows ember, nothing else does
+          else if (litWall && !darkWall) c = C.char;
+        } else {
         if (Gd[i] < 0.4) c = glow < 0.15 ? C.blood : hash2f(lx, ly, seed + 65) < glow * 0.25 ? C.lamp : glow > 0.45 ? C.ember : bay(X, Y) < glow * 2 ? C.ember : C.rust;     // the ember in the bed
         else if (litWall && !darkWall) c = C.blood;
+        }
         out(lx, ly, c);
       } else if (Gnear[i]) {
         let dmin = 9;
         for (let oy = -3; oy <= 3; oy++) for (let ox = -3; ox <= 3; ox++) if (inGrid(lx + ox, ly + oy) && G[idx(lx + ox, ly + oy)]) dmin = Math.min(dmin, Math.hypot(ox, oy));
         // the lip: a lit rim just outside the groove, on the side away from the sun
         const lipSide = inGrid(lx - sx, ly - sy) && G[idx(lx - sx, ly - sy)];
-        if (lipSide) out(lx, ly, ramp([C.contourIdx, C.contour, C.rock, C.paper2], clamp(T[i] * 0.9 + 0.22, 0, 1), X, Y));
-        else if (glow > 0.05 && dmin < 3.6 && bay(X + 1, Y + 2) < glow * 0.55 * (1 - dmin / 3.6)) out(lx, ly, lift(r.get(X, Y)));
+        if (lipSide) out(lx, ly, ramp(M ? [C.slate, C.ash, C.rock, C.fog] : [C.contourIdx, C.contour, C.rock, C.paper2], clamp(T[i] * 0.9 + 0.22, 0, 1), X, Y));
+        else if (glow > 0.05 && dmin < 3.6 && bay(X + 1, Y + 2) < glow * 0.55 * (1 - dmin / 3.6)) out(lx, ly, M ? liftG(r.get(X, Y)) : lift(r.get(X, Y)));
       }
     }
   }
@@ -417,13 +442,20 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
     const farOut = outside(lx - Math.sign(lx2), ly - Math.sign(ly2)) && outside(lx - Math.round(lx2), ly - Math.round(ly2));
     if (rim && !G[i] && ly > 0) {
       const strength = (rim === 1 ? 0.95 : rim === 2 ? 0.6 : 0.3) * (0.5 + 0.5 * smooth(0.12, 0.6, T[i])) * (0.55 + 0.45 * glow);
-      if (bay(X, Y) < strength) out(lx, ly, rim === 1 ? (bay(X + 4, Y + 1) < 0.3 ? C.paper : glow > 0.4 ? C.flame : C.paper2) : rim === 2 ? (glow > 0.25 ? C.lamp : C.contour) : C.ember);
-    } else if (farOut && !rim) out(lx, ly, bay(X, Y) < 0.75 ? C.ink : C.blood);
-    if (kind[i] === 2 && outside(lx, ly + 1)) out(lx, ly, bay(X, Y) < 0.6 ? C.paper2 : C.contour);
+      if (M) {
+        if (bay(X, Y) < strength) {
+          if (rim === 1) out(lx, ly, bay(X + 4, Y + 1) < 0.35 ? C.snow : C.fog);
+          else if (rim === 2 && glow > 0.25) { embers.push([X, Y, (X * 7 + Y * 13) % 17, r.get(X, Y) || C.ash]); out(lx, ly, C.ember); }     // the thin ember line just inside the lit edge
+          else out(lx, ly, rim === 2 ? C.rock : C.ash);
+        }
+      } else if (bay(X, Y) < strength) out(lx, ly, rim === 1 ? (bay(X + 4, Y + 1) < 0.3 ? C.paper : glow > 0.4 ? C.flame : C.paper2) : rim === 2 ? (glow > 0.25 ? C.lamp : C.contour) : C.ember);
+    } else if (farOut && !rim) out(lx, ly, M ? (bay(X, Y) < 0.75 ? C.ink : C.char) : bay(X, Y) < 0.75 ? C.ink : C.blood);
+    if (kind[i] === 2 && outside(lx, ly + 1)) out(lx, ly, M ? (bay(X, Y) < 0.6 ? C.fog : C.rock) : bay(X, Y) < 0.6 ? C.paper2 : C.contour);
   }
 
   // ---- moss and turf at the foot, heather and grass spilling over it
   if (o.moss > 0) {
+    const MS = M ? MOSS_M : MOSS;
     const footH = 0.075 * h * o.moss;
     for (let ly = -2; ly <= footH + 3; ly++) for (let lx = -OX + 1; lx < OX - 1; lx++) {
       if (!inGrid(lx, ly) || kind[idx(lx, ly)] !== 1) continue;
@@ -432,8 +464,8 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
       if (prob <= 0 || hash2f(lx, ly, seed + 81) > prob * 1.1 + 0.04) continue;
       const X = cx + lx, Y = baseY - ly;
       const tm = clamp(T[idx(lx, ly)] * 1.2 + 0.08 + (hash2f(lx, ly, seed + 82) - 0.5) * 0.25, 0, 1);
-      let col = ramp(MOSS, tm, X, Y);
-      if (hash2f(lx, ly, seed + 83) < 0.16) col = ramp([C.ink, C.blood, C.rust, C.ember], tm, X, Y);   // bracken and heather in it
+      let col = ramp(MS, tm, X, Y);
+      if (!M && hash2f(lx, ly, seed + 83) < 0.16) col = ramp([C.ink, C.blood, C.rust, C.ember], tm, X, Y);   // bracken and heather in it
       out(lx, ly, col);
     }
     for (let lx = Math.floor(minX) - 5; lx <= maxX + 5; lx++) {
@@ -442,7 +474,7 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
       const bh = 1 + Math.floor(hash2f(lx, 12, seed + 84) * 0.04 * h * (0.4 + o.moss));
       const lean2 = hash2f(lx, 13, seed + 84) < 0.5 ? -1 : 1;
       const q = hash2f(lx, 14, seed + 84);
-      const base = q < 0.3 ? [C.ink, C.woodDark, C.woodDark, C.bog] : q < 0.65 ? [C.ink, C.blood, C.rust, C.ember] : [C.ink, C.contourIdx, C.contour];
+      const base = M ? [C.ink, C.char, C.slate, C.ash] : q < 0.3 ? [C.ink, C.woodDark, C.woodDark, C.bog] : q < 0.65 ? [C.ink, C.blood, C.rust, C.ember] : [C.ink, C.contourIdx, C.contour];
       for (let k = 0; k < bh; k++) {
         const bx = lx + (k > 2 ? lean2 : 0), by = -1 + k;
         out(bx, by, ramp(base, clamp((k + 1) / bh * 0.8 + 0.1 + (lx2 < 0 ? (bx < 0 ? 0.12 : -0.1) : 0), 0, 1), cx + bx, baseY - by));
@@ -452,12 +484,12 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
 
   // ---- a thin dark edge round the stone wherever the ground behind it is bright (the sunward rim must not melt into the glow)
   if (o.outline > 0) {
-    const BRIGHT_BG = new Set([C.lamp, C.flame, C.paper, C.paper2, C.ember, C.snow, C.rock]);
+    const BRIGHT_BG = new Set([C.lamp, C.flame, C.paper, C.paper2, C.ember, C.snow, C.rock, C.fog]);
     for (let ly = -OY + 1; ly < GH - OY - 1; ly++) for (let lx = -OX + 1; lx < OX - 1; lx++) {
       if (kind[idx(lx, ly)] || ly < 0) continue;
       if (!(kind[idx(lx - 1, ly)] || kind[idx(lx + 1, ly)] || kind[idx(lx, ly - 1)] || kind[idx(lx, ly + 1)])) continue;
       const X = cx + lx, Y = baseY - ly, cur = r.get(X, Y);
-      if (BRIGHT_BG.has(cur) && bay(X + 1, Y + 2) < 0.9 * o.outline) r.px(X, Y, cur === C.ember ? C.blood : C.rust, lay);
+      if (BRIGHT_BG.has(cur) && bay(X + 1, Y + 2) < 0.9 * o.outline) r.px(X, Y, M ? C.ink : cur === C.ember ? C.blood : C.rust, lay);
     }
   }
 
@@ -469,7 +501,7 @@ export function paintStandingStone(r, cx, baseY, h, opts = {}) {
       for (let oy = -3; oy <= 3 && d > 1; oy++) for (let ox = -3; ox <= 3; ox++) if (inGrid(lx + ox, ly + oy) && kind[idx(lx + ox, ly + oy)] && (ox * lx2 + oy * ly2) <= 0.2) d = Math.min(d, Math.hypot(ox, oy));
       if (d < 3.6) {
         const X = cx + lx, Y = baseY - ly;
-        if (bay(X, Y) < glow * 0.5 * (1 - d / 3.6)) { const cur = r.get(X, Y); if (cur && cur !== C.lamp && cur !== C.flame && cur !== C.paper && cur !== C.paper2) r.px(X, Y, lift(cur), lay); }
+        if (bay(X, Y) < glow * 0.5 * (1 - d / 3.6)) { const cur = r.get(X, Y); if (cur && cur !== C.lamp && cur !== C.flame && cur !== C.paper && cur !== C.paper2) r.px(X, Y, M ? liftG(cur) : lift(cur), lay); }
       }
     }
   }
@@ -513,7 +545,7 @@ function paintCastShadow(r, cx, baseY, h, g, lay) {
       const n = whole + (lvl - whole > bay(x, y) ? 1 : 0);
       if (n <= 0) continue;
       let c = r.get(x, y);
-      for (let k = 0; k < Math.min(4, n); k++) c = sink(c);
+      for (let k = 0; k < Math.min(4, n); k++) c = g.mono ? sinkG(c) : sink(c);
       r.px(x, y, c, undefined);
     }
   }

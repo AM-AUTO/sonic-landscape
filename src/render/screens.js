@@ -80,31 +80,30 @@ function levelList(ui) {
 }
 
 // ================================================================== title
-// The cover is one full-bleed painting (panels.js 'title', three variants A Survey / B Summit / C Close: a standing stone on an
-// Ordnance Survey sheet, the logo painted on top); only the small lines of text are drawn over it, where TITLE_LAYOUT says.
+// The start screen is one full-bleed painting (panels.js 'title'; five greyscale + ember variants, src/render/title/*.js: castlerigg,
+// shelter, mentol, dolmen, menhir; ui.titleVariant picks one); only the small lines of text are drawn over it, where TITLE_LAYOUT says.
 const TITLE_SPECS = Object.freeze(Object.fromEntries(TITLE_VARIANTS.map((v) => [v, Object.freeze({ kind: 'title', levelIndex: 3, variant: v, warm: true })])));
 const TITLE_SPEC = TITLE_SPECS[TITLE_DEFAULT];
 function title(env) {
   const { ctx, t, SW, SH, ui } = env;
   const v = TITLE_SPECS[ui.titleVariant] ? ui.titleVariant : TITLE_DEFAULT;
-  const L = TITLE_LAYOUT[v];
+  const L = TITLE_LAYOUT[v], K = L.colors, show = (name) => !L.hide.includes(name);
   drawPanel(ctx, TITLE_SPECS[v] || TITLE_SPEC, 0, 0, TITLE_SCENE.w, TITLE_SCENE.h, t);
-  const halo = { halo: PAL.ink };
-  drawText(ctx, TITLE.cornerLeft[0], 8, 4, PAL.paper2, { font: 'small', spacing: 0, ...halo });
-  drawText(ctx, TITLE.cornerLeft[1], 8, 11, PAL.rock, { font: 'small', spacing: 0, ...halo });
-  drawText(ctx, TITLE.cornerRight[0], SW - 8, 4, PAL.paper2, { font: 'small', spacing: 0, align: 'right', ...halo });
-  drawText(ctx, TITLE.cornerRight[1], SW - 8, 11, PAL.rock, { font: 'small', spacing: 0, align: 'right', ...halo });
-  const sub = L.subtitle.maxW ? wrapText(TITLE.subtitle, L.subtitle.maxW, { italic: true, spacing: 1 }) : [TITLE.subtitle];
-  sub.forEach((ln, i) => drawText(ctx, ln, L.subtitle.x, L.subtitle.y + i * (L.subtitle.lh || 11), PAL.paper, { italic: true, spacing: 1, align: L.subtitle.align, halo: PAL.blood }));
-  if (blink(t, 1.2, 0.65)) {
-    drawText(ctx, TITLE.prompt, L.prompt.x, L.prompt.y, PAL.snow, { spacing: 1, align: 'center', halo: PAL.ink });
-    const w = measureText(TITLE.prompt, { spacing: 1 });
-    drawText(ctx, '→', L.prompt.x - w / 2 - 12 + (Math.floor(t * 3) & 1), L.prompt.y, PAL.ember, { halo: PAL.ink });
-    drawText(ctx, '←', L.prompt.x + w / 2 + 6 - (Math.floor(t * 3) & 1), L.prompt.y, PAL.ember, { halo: PAL.ink });
+  const halo = { halo: PAL[K.halo] };
+  if (show('cornerLeft')) TITLE.cornerLeft.forEach((ln, i) => drawText(ctx, ln, L.cornerLeft.x, L.cornerLeft.y + i * L.cornerLeft.lh, PAL[K.corner[i]], { font: 'small', spacing: 0, ...halo }));
+  if (show('cornerRight')) TITLE.cornerRight.forEach((ln, i) => drawText(ctx, ln, L.cornerRight.x, L.cornerRight.y + i * L.cornerRight.lh, PAL[K.corner[i]], { font: 'small', spacing: 0, align: 'right', ...halo }));
+  if (show('subtitle')) {
+    const sub = L.subtitle.maxW ? wrapText(TITLE.subtitle, L.subtitle.maxW, { italic: true, spacing: 1 }) : [TITLE.subtitle];
+    sub.forEach((ln, i) => drawText(ctx, ln, L.subtitle.x, L.subtitle.y + i * (L.subtitle.lh || 11), PAL[K.subtitle], { italic: true, spacing: 1, align: L.subtitle.align, halo: PAL[K.subtitleHalo] }));
   }
-  const how = ui.touchVisible ? TITLE.controlsTouch : TITLE.controlsKeys;
-  drawText(ctx, how, SW / 2, L.controls, PAL.rock, { font: 'small', align: 'center', halo: PAL.ink });
-  drawText(ctx, TITLE.strapline, SW / 2, L.strapline, PAL.contour, { font: 'small', align: 'center', spacing: 1, halo: PAL.ink });
+  if (show('prompt') && blink(t, 1.2, 0.65)) {
+    drawText(ctx, TITLE.prompt, L.prompt.x, L.prompt.y, PAL[K.prompt], { spacing: 1, align: 'center', halo: PAL[K.promptHalo] });
+    const w = measureText(TITLE.prompt, { spacing: 1 });
+    drawText(ctx, '→', L.prompt.x - w / 2 - 12 + (Math.floor(t * 3) & 1), L.prompt.y, PAL[K.arrow], { halo: PAL[K.promptHalo] });
+    drawText(ctx, '←', L.prompt.x + w / 2 + 6 - (Math.floor(t * 3) & 1), L.prompt.y, PAL[K.arrow], { halo: PAL[K.promptHalo] });
+  }
+  if (show('controls')) drawText(ctx, ui.touchVisible ? TITLE.controlsTouch : TITLE.controlsKeys, SW / 2, L.controls, PAL[K.controls], { font: 'small', align: 'center', halo: PAL[K.halo] });
+  if (show('strapline')) drawText(ctx, TITLE.strapline, SW / 2, L.strapline, PAL[K.strapline], { font: 'small', align: 'center', spacing: 1, halo: PAL[K.halo] });
 }
 
 // ================================================================== select

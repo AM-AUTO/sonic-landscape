@@ -1,6 +1,7 @@
 /**
- * CONTOURS palette: the strict 25 colours (the original 16 OS-sheet colours, the five
- * gothic-ballad colours lamp / flame / bolt / ice / dusk and the four reds blood / rust / ember / heather), plus the day/night tint machinery.
+ * CONTOURS palette: the strict 29 colours (the original 16 OS-sheet colours, the five
+ * gothic-ballad colours lamp / flame / bolt / ice / dusk, the four reds blood / rust / ember / heather and the four
+ * warm-neutral greys char / slate / ash / fog), plus the day/night tint machinery.
  * No DOM here: everything works on plain typed arrays so it can run in Node.
  */
 
@@ -32,10 +33,15 @@ export const PAL = Object.freeze({
   rust: '#a9402a',      // bracken and rust
   ember: '#dd5a38',     // glowing red-orange: the red hours, lit incisions
   heather: '#7d3a62',   // heather purple-red
+  // warm-neutral greys of the start screens (indices 25..28); they sit between ink #1d1a17 and rock #a39d92 / snow
+  char: '#3a3835',      // burnt wood, deep shade
+  slate: '#5f5c58',     // dark stone
+  ash: '#807c77',       // mid stone
+  fog: '#c9c5be',       // pale stone, mist
 });
 
 /** Number of colours in the strict palette. */
-export const PAL_COUNT = 25;
+export const PAL_COUNT = 29;
 /** The original OS-sheet colours (indices 0..15). Level tints still snap to these only. */
 export const BASE_COUNT = 16;
 

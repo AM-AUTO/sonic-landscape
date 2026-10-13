@@ -1,4 +1,8 @@
 /**
+ * LEGACY (unreachable since the five greyscale start screens of src/render/title/*): the three red-banded covers A / B / C. Kept for the
+ * shared helpers that title/* builds on: paintLogo + animLogo (the carved-stone logo), setTerrain / hasTerrain / terrainOf / hAt (the
+ * track heightfields), the voxel / plan / sheet map renderers. The old registry names are prefixed LEGACY_ / Legacy so nothing picks them up.
+ *
  * The cover paintings. Three full-bleed variants, all in the language of the Ordnance Survey sheet (hypsometric layer tints in the
  * reds, fine and index contours, the blue 1 km grid, tiny spot heights, hill-shaded dither gradients) with ONE hero: a standing
  * stone (stone.js) with real detail. The terrain is each track's own heightfield (setTerrain / the stand-in noise field).
@@ -7,21 +11,21 @@
  *   B 'Summit'  straight down on one great hill drawn as banded contour rings, the stone on the summit, its shadow down the slope
  *   C 'Close'   the stone close up, big and fully detailed, against banded sky and receding contour ridges
  *
- * paintTitleArt paints the cached base; animTitleArt is the cheap per-frame pass (mist, glints, the ember in the incisions).
+ * paintLegacyTitleArt paints the cached base; animLegacyTitleArt is the cheap per-frame pass (mist, glints, the ember in the incisions).
  */
 import { PAL_U32 as C } from './palette.js';
 import { hash2f } from '../core/rng.js';
 import { FONTS } from './font.js';
-import { Raster, bay, clamp, smooth, mix, vnoise, fbm, lift, sink, rampAt, stampSmall, smallWidth, mistBand, drawMistBand } from './artkit.js';
+import { Raster, bay, clamp, smooth, mix, vnoise, fbm, lift, sink, liftG, sinkG, rampAt, stampSmall, smallWidth, mistBand, drawMistBand } from './artkit.js';
 import { paintStandingStone } from './stone.js';
 
-export const TITLE_VARIANTS = Object.freeze(['A', 'B', 'C']);
+export const LEGACY_TITLE_VARIANTS = Object.freeze(['A', 'B', 'C']);
 /** Which tracks' fields / skylines each variant draws on (the panel cache re-paints when one of them arrives). */
-export const TITLE_LEVELS = Object.freeze({ A: [3], B: [6], C: [5, 4] });
-export const TITLE_DEFAULT = 'A';
+export const LEGACY_TITLE_LEVELS = Object.freeze({ A: [3], B: [6], C: [5, 4] });
+export const LEGACY_TITLE_DEFAULT = 'A';
 
 /** Where the screen's own text goes over each cover (screens.js reads this). */
-export const TITLE_LAYOUT = Object.freeze({
+export const LEGACY_TITLE_LAYOUT = Object.freeze({
   A: { subtitle: { x: 150, y: 66, align: 'center' }, prompt: { x: 192, y: 172 }, controls: 191, strapline: 201 },
   B: { subtitle: { x: 192, y: 66, align: 'center' }, prompt: { x: 192, y: 172 }, controls: 191, strapline: 201 },
   C: { subtitle: { x: 262, y: 66, align: 'center', maxW: 170, lh: 11 }, prompt: { x: 262, y: 156 }, controls: 191, strapline: 201 },
@@ -60,7 +64,7 @@ export function setTerrain(levelIndex, heights, size = 256) {
 }
 export const hasTerrain = (levelIndex) => terrains.has(levelIndex);
 const standIns = new Map();
-function terrainOf(i, hint) {
+export function terrainOf(i, hint) {
   const t = terrains.get(i);
   if (t) return t;
   let s = standIns.get(i);
@@ -87,7 +91,7 @@ function mipLevel(T, k) {
   return mips[k];
 }
 /** Bilinear height 0..1 at field coordinates (mirrored at the edges so the map goes on for ever). */
-function hAt(T, x, y) {
+export function hAt(T, x, y) {
   const S = T.size, P = 2 * (S - 1);
   let xm = ((x % P) + P) % P; if (xm > S - 1) xm = P - xm;
   let ym = ((y % P) + P) % P; if (ym > S - 1) ym = P - ym;
@@ -120,8 +124,11 @@ function textMask(text, scale, spacing) {
 }
 
 /**
- * The logo, painted on the art: a cast shadow, a block of extrusion, a hard outline, and a face that runs
- * flame -> ember -> rust with a lit edge and a shaded one, grained like carved stone. Returns the face pixels.
+ * The logo, carved in stone and painted on the art: a dithered cast shadow, a block of extrusion (char / ink), a hard ink outline and a
+ * face that runs fog -> ash -> slate down the letters with horizontal strata and grain, a lit upper-left edge in snow / fog with one thin
+ * ember line just inside it (the light catching a fresh cut), and a shaded lower-right edge in char / ink. Greys + ember only.
+ *   paintLogo(r, text, cx, top, scale, spacing) -> { face: [pixel index...], ember: [pixel index...], x0, y0, w, h }
+ * `face` is every face pixel (the glint sweep of animLogo walks it); the shadow and extrusion are written to layer 6 like the face.
  */
 export function paintLogo(r, text, cx, top, scale, spacing) {
   const base = textMask(text, scale, spacing);
@@ -132,24 +139,49 @@ export function paintLogo(r, text, cx, top, scale, spacing) {
   const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && m[y * w + x] === 1;
   const EX = Math.max(3, Math.round(scale * 0.8));
   for (let y = -2; y < h + EX + 8; y++) for (let x = -2; x < w + EX + 8; x++) {            // cast shadow, dithered
-    if (at(x - EX - 4, y - EX - 5) && bay(x0 + x, y0 + y) < 0.6) { const X = x0 + x, Y = y0 + y; r.px(X, Y, sink(sink(r.get(X, Y))), 6); }
+    if (at(x - EX - 4, y - EX - 5) && bay(x0 + x, y0 + y) < 0.6) { const X = x0 + x, Y = y0 + y; r.px(X, Y, sinkG(sinkG(r.get(X, Y))), 6); }
   }
-  for (let k = EX; k >= 1; k--) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y)) r.px(x0 + x + k, y0 + y + k, k >= EX - 1 ? C.ink : k > EX / 2 ? C.blood : C.rust, 6);   // extrusion
+  for (let k = EX; k >= 1; k--) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y)) r.px(x0 + x + k, y0 + y + k, k >= EX - 1 ? C.ink : k > EX / 2 ? (bay(x0 + x, y0 + y) < 0.5 ? C.ink : C.char) : C.char, 6);   // extrusion
   const near = (x, y) => { for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (at(x + i, y + j)) return true; return false; };
   for (let y = -2; y < h + 2; y++) for (let x = -2; x < w + 2; x++) if (!at(x, y) && near(x, y)) r.px(x0 + x, y0 + y, C.ink, 6);   // outline
-  const face = [];
-  const stops = [C.paper, C.flame, C.lamp, C.ember, C.rust];
+  const face = [], ember = [];
+  const stops = [C.slate, C.ash, C.rock, C.fog];                                                 // dark -> light; the letter runs light at the top
+  const bandH = Math.max(3, Math.round(scale * 1.4));
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!at(x, y)) continue;
     const X = x0 + x, Y = y0 + y;
-    let c = rampAt(stops.slice().reverse(), 1 - Math.pow(y / (h - 1), 0.9), X, Y);
-    if (hash2f(X, Y, 1234) < 0.07) c = sink(c);                                                    // carved grain
-    if (!at(x - 1, y) || !at(x, y - 1)) c = bay(X, Y) < 0.8 ? C.paper : C.flame;                  // lit edge
-    else if (!at(x + 1, y) || !at(x, y + 1)) c = bay(X, Y) < 0.7 ? C.blood : C.rust;              // shaded edge
+    const yy = y + Math.round((x - w / 2) * 0.06);                                             // the bedding dips a little across the word
+    const band = Math.floor(yy / bandH), within = yy - band * bandH;
+    let v = 1 - Math.pow(y / (h - 1), 0.9) * 0.92;
+    v += (hash2f(band, 7, 4321) - 0.5) * 0.2;                                                  // each stratum its own tone
+    v += (fbm(X * 0.09, Y * 0.2, 4400, 2) - 0.5) * 0.3;                                         // weathering blotches
+    let c = rampAt(stops, clamp(v, 0, 1), X, Y);
+    if (within === 0 && band > 0 && hash2f(X >> 2, band, 4322) < 0.7) c = sinkG(c);              // a bedding joint, broken in places
+    else if (within === 1 && hash2f(X >> 2, band, 4323) < 0.3) c = liftG(c);                     // and the lip below it
+    const g = hash2f(X, Y, 1234);
+    if (g < 0.07) c = sinkG(c); else if (g > 0.965) c = liftG(c);                                // carved grain, mica
+    const litEdge = !at(x - 1, y) || !at(x, y - 1), shadeEdge = !at(x + 1, y) || !at(x, y + 1);
+    if (litEdge) c = bay(X, Y) < 0.8 ? C.snow : C.fog;                                           // lit edge
+    else if (shadeEdge) c = bay(X, Y) < 0.7 ? C.char : C.ink;                                    // shaded edge
+    else if ((at(x - 1, y) && !at(x - 2, y)) || (at(x, y - 1) && !at(x, y - 2))) { if (bay(X + 1, Y) < 0.8) { c = C.ember; ember.push(Y * r.w + X); } }   // the ember line, lit edge only
+    else if (!at(x + 2, y) || !at(x, y + 2)) c = bay(X, Y) < 0.5 ? C.slate : c;                  // a second step of shade
     r.px(X, Y, c, 6);
     face.push(Y * r.w + X);
   }
-  return { face, x0, y0, w, h };
+  return { face, ember, x0, y0, w, h };
+}
+
+/** The glint that sweeps along the carved face every 5.5 s: a snow edge with a lifted wake. Call from a variant's anim() with the paint-time logo info. */
+export function animLogo(r, L, t) {
+  if (!L) return;
+  const W = r.w, u = (t % 5.5) / 5.5;
+  if (u >= 0.35) return;
+  const pos = (u / 0.35) * (L.w + L.h * 1.2) - L.h;
+  for (const i of L.face) {
+    const d = (i % W - L.x0) - (((i / W) | 0) - L.y0) * 0.7 - pos;
+    if (d > 0 && d < 5) r.d[i] = C.snow;
+    else if (d > -3 && d <= 0) r.d[i] = liftG(r.d[i]);
+  }
 }
 
 // ================================================================================= shared scenery
@@ -648,8 +680,8 @@ function paintC(r, spec, S) {
 
 // ================================================================================= registry
 const PAINT = { A: paintA, B: paintB, C: paintC };
-export function paintTitleArt(r, spec, S) {
-  const v = TITLE_VARIANTS.includes(spec.variant) ? spec.variant : TITLE_DEFAULT;
+export function paintLegacyTitleArt(r, spec, S) {
+  const v = LEGACY_TITLE_VARIANTS.includes(spec.variant) ? spec.variant : LEGACY_TITLE_DEFAULT;
   S.variant = v;
   (PAINT[v] || paintA)(r, spec, S);
 }
@@ -662,7 +694,7 @@ function pulseEmbers(r, st, t) {
     r.d[y * W + x] = k > 0.88 ? C.flame : k > 0.55 ? C.lamp : k > 0.22 ? C.ember : (g > 0.3 ? C.rust : C.blood);
   }
 }
-export function animTitleArt(r, spec, S, t) {
+export function animLegacyTitleArt(r, spec, S, t) {
   const W = r.w;
   pulseEmbers(r, S.stone, t);
   for (const s of S.stars || []) { const k = Math.sin(t * 1.5 + s.ph); if (k < 0.7 && r.lay[s.y * W + s.x] === 0 && r.d[s.y * W + s.x] === C.ink) r.d[s.y * W + s.x] = k > 0.1 ? C.paper2 : C.rock; }
