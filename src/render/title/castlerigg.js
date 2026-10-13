@@ -213,6 +213,11 @@ export function paintRidge(r, crest, next, o) {
     }, hazeV,
   });
   if (o.soft) softContours(r, res, rect, o.soft, layer);
+  if (o.edge) for (let x = 0; x < W; x++) {                                    // a darker rim along the crest: the silhouette reads against the sky
+    const y0 = Math.ceil(crest[x]);
+    if (y0 >= bot[x]) continue;
+    for (let k = 0; k < o.edge; k++) if (bay(x + k, y0 + k) < 0.85 - k * 0.3) r.px(x, y0 + k, sinkG(r.get(x, y0 + k)), layer);
+  }
   return res;
 }
 

@@ -52,7 +52,7 @@ function paintSceneInOpening(r, S, sd) {
     if (y < rA[x]) continue;
     if (y < rB[x]) {                                                    // the far moorland ridge: pale, hazy
       const s = y - rA[x], mott = (fbm(x * 0.04, y * 0.12, sd + 31, 2) - 0.5) * 0.08;
-      strip(r, x, y, s / 6, 0.8, 0.028, { lw: 0.2, mottle: mott, dens: 0.7 });
+      strip(r, x, y, s / 6, 0.7 - 0.06 * smooth(0, 14, s), 0.026, { lw: 0.2, mottle: mott, dens: 0.75 });
     } else {                                                            // the moor, in perspective: bands crowd towards the horizon
       const t = clamp((y - GZ) / (H - GZ), 0, 1);
       const warp = (fbm(x * 0.014 + 4, y * 0.05, sd + 12, 3) - 0.5) * 2 * (3 + 18 * t) + (fbm(x * 0.004, 3, sd + 14, 2) - 0.5) * 10 * t;
@@ -71,8 +71,8 @@ function paintSceneInOpening(r, S, sd) {
     r.px(x, y, sinkG(r.get(x, y)), r.layer(x, y));
   }
   // spot heights
-  for (const [x, txt] of [[146, '412'], [234, '387']]) {
-    const y = Math.round(rA[x]) + 3;
+  for (const [x, txt] of [[138, '412'], [236, '387']]) {
+    const y = Math.round(rA[x]) + 9;
     r.rect(x - 1, y - 1, 2, 2, C.ink, 1);
     stampSmall(r, txt, x + 3, y - 3, C.ink, C.fog, 1);
   }
@@ -126,20 +126,28 @@ function paintRing(r, S, sd) {
   // big soft tors
   const tors = [];
   for (let p = 0; p < 12; p++) tors.push([rng() * W, rng() * H, 26 + rng() * 40, (rng() - 0.35) * 40]);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+  const low = (x, y) => {                                                                                // the broad lumps and the crevice: smooth, so sampled on a coarse grid
     const wx = x + 40 * (fbm(x * 0.007, y * 0.007, sd + 1, 2) - 0.5), wy = y + 40 * (fbm(x * 0.007 + 5, y * 0.007, sd + 2, 2) - 0.5);
     let h = 46 * fbm(wx * 0.012, wy * 0.012, sd + 3, 3);
     for (const [tx, ty, tr, ta] of tors) { const q = ((x - tx) * (x - tx) + (y - ty) * (y - ty)) / (tr * tr); if (q < 4) h += ta * Math.exp(-q * 1.2); }
-    h += 1.7 * fbm(x * 0.07, y * 0.07, sd + 4, 3);
-    h += 0.8 * fbm(x * 0.33, y * 0.33, sd + 5, 2);
-    const dx = x - OC.x, dy = y - OC.y, d = Math.hypot(dx, dy), q = d - R1;
-    if (q < 40) h -= 24 * Math.exp(-Math.max(0, q) / 7);
-    // a crevice running round the top of the hole (the dark swath of the photograph), broken and warped
+    const dx = x - OC.x, dy = y - OC.y, d = Math.hypot(dx, dy);
     const ang = Math.atan2(dy, dx), rr = R1 + 25 + 11 * (fbm(Math.cos(ang) * 1.6 + 2, Math.sin(ang) * 1.6, sd + 8, 3) - 0.5) * 2;
     const arc = smooth(0.15, -0.9, Math.sin(ang)) * (0.55 + 0.45 * fbm(ang * 2.2 + 9, 1.5, sd + 9, 2));
     const gv = Math.exp(-Math.pow((d - rr) / (5 + 4 * arc), 2)) * arc;
-    groove[y * W + x] = gv;
-    h -= 26 * gv;
+    return [h - 26 * gv, gv];
+  };
+  const ST = 3, GW = Math.ceil(W / ST) + 2, GH = Math.ceil(H / ST) + 2, gl = new Float32Array(GW * GH * 2);
+  for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) { const [h, g] = low(i * ST, j * ST); gl[(j * GW + i) * 2] = h; gl[(j * GW + i) * 2 + 1] = g; }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const fx = x / ST, fy = y / ST, i0 = Math.floor(fx), j0 = Math.floor(fy), ax = fx - i0, ay = fy - j0;
+    const g00 = (j0 * GW + i0) * 2, g10 = g00 + 2, g01 = g00 + GW * 2, g11 = g01 + 2;
+    const lerp2 = (o) => (gl[g00 + o] * (1 - ax) + gl[g10 + o] * ax) * (1 - ay) + (gl[g01 + o] * (1 - ax) + gl[g11 + o] * ax) * ay;
+    let h = lerp2(0);
+    groove[y * W + x] = lerp2(1);
+    h += 1.7 * fbm(x * 0.07, y * 0.07, sd + 4, 3);
+    h += 0.8 * fbm(x * 0.33, y * 0.33, sd + 5, 2);
+    const d = Math.hypot(x - OC.x, y - OC.y), q = d - R1;
+    if (q < 40) h -= 24 * Math.exp(-Math.max(0, q) / 7);
     Hm[y * W + x] = h;
   }
   const stamp = (px, py, rad, depth, ex = 1, rot = 0) => {                                                // a bowl in the surface
@@ -190,7 +198,7 @@ function paintRing(r, S, sd) {
       v *= (1.22 - 0.42 * x / W) * (1 - 0.6 * groove[i]);
       v *= (1 - 0.5 * smooth(110, 60, y)) * (1 - 0.7 * smooth(140, 200, y));                               // calm dark ground for the logo and the subtitle, and for the foot lines
     }
-    V[i] = v;
+    V[i] = Math.min(v, k === 2 ? 1 : 0.86);
   }
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = y * W + x;
@@ -209,8 +217,8 @@ function paintRing(r, S, sd) {
     paintLichen(r, { x: 0, y: 0, w: W, h: H, data: mask }, sd + 21 + Math.round(lo * 10), { density: dens, size: [1.2, 4.2], tone, light: [-0.7, -0.5], layer: 5, skip: (x, y) => V[y * W + x] < lo || V[y * W + x] >= hi });
   }
   for (let a = 0; a < 6.2832; a += 0.0185) {                                                                // a thin survey ring round the opening, in ember
-    const rr = R1 + 8 + 1.2 * Math.sin(a * 5), X = Math.round(OC.x + Math.cos(a) * rr), Y = Math.round(OC.y + Math.sin(a) * rr);
-    if (X >= 0 && Y >= 0 && X < W && Y < H && kind[Y * W + X] === 0) r.px(X, Y, C.ember, 5);
+    const rr = R1 + 6 + 1.2 * Math.sin(a * 5), X = Math.round(OC.x + Math.cos(a) * rr), Y = Math.round(OC.y + Math.sin(a) * rr);
+    if (X >= 0 && Y >= 0 && X < W && Y < 172 && kind[Y * W + X] === 0) r.px(X, Y, C.ember, 5);
   }
   S.kind = kind;
 }

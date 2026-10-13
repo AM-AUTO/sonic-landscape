@@ -143,10 +143,12 @@ function paintStone(r, S, st, sd) {
     const wrap = clamp((nx * lx + ny * ly) / Math.hypot(lx, ly), 0, 1);
     let v = 0.07 + 0.2 * Math.exp(-dist / 70) * (0.55 + 0.9 * wrap) + 0.09 * sky * sky + 1.9 * Math.pow(sun, 0.8) * (0.14 + 1.0 * Math.exp(-dist / 60));
     v += (hash2f(X, Y, sd + seed + 90) - 0.5) * 0.05 + 0.3 * smooth(0.45, 0.95, sky) * smooth(5, 0.5, dep[j * w + i]);
-    v -= crack[j * w + i] * 0.1;
     const tt = (j - colTop[i]) / Math.max(8, colBot[i] - colTop[i] + 1);
     v += 0.16 * Math.pow(1 - clamp(tt, 0, 1), 1.6) * (st.foot == null ? 1.1 : 0.8) - 0.06 * smooth(0.7, 1, tt);   // the sky lights the upper faces; the foot lies in the dark
     const d = dep[j * w + i];
+    v *= 1 - 0.55 * smooth(4.5, 0, d) * (1 - smooth(0.1, 0.5, sun));                                    // the edges turned from the sun fall into shadow: a firm outline
+    if (crack[j * w + i] > 0) v = Math.min(v, 0.035 + (1 - crack[j * w + i]) * 0.2);
+    else if (j > 0 && crack[(j - 1) * w + i] > 0 && SY > Y) v += 0.1;                                    // a pale lip below the joint
     if (d <= 1.45 && sun > 0.4 && dist < 150) rim.push([X, Y, sun]);
     r.px(X, Y, rampG(v, X, Y), 3);
   }
