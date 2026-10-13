@@ -21,30 +21,54 @@ export const TEXTURE_DEFAULTS = Object.freeze({
 // per-kind output compensation so equal `level` sounds equally loud
 const COMP = { wind: 1.0, water: 1.3, rustle: 1.7, crackle: 1.6, hiss: 0.5 };
 
-function buildCrackle(ctx, seconds, seed, rate) {
+/**
+ * Crackle buffer as an incremental builder: step() does a slice of the work and returns true when finished, so the Score can make
+ * it over many updates (a whole buffer in one go is ~15 ms of main thread). build-to-completion gives the identical buffer.
+ */
+function crackleBuilder(ctx, seconds, seed, rate) {
   const sr = ctx.sampleRate, len = Math.floor(seconds * sr);
   const b = ctx.createBuffer(1, len, sr);
   const d = b.getChannelData(0);
   const r = mulberry32(seed);
-  let t = 0;
-  while (t < seconds) {
-    // clustered Poisson: occasionally a burst of several close pops
-    t += -Math.log(1 - r()) / rate;
-    const cluster = r() < 0.2 ? 2 + Math.floor(r() * 4) : 1;
-    for (let c = 0; c < cluster; c++) {
-      const start = Math.floor((t + c * (0.004 + r() * 0.02)) * sr);
-      const amp = Math.pow(r(), 2.5) * 0.9 + 0.04;
-      const tau = (0.0003 + r() * 0.0014) * sr;
-      const n = Math.floor(tau * 7);
-      const sign = r() < 0.5 ? -1 : 1;
-      for (let i = 0; i < n && start + i < len; i++) {
-        d[start + i] += amp * Math.exp(-i / tau) * (i < 2 ? sign : (r() * 2 - 1));
+  let t = 0, ci = 0;
+  return {
+    buffer: b,
+    step(slice = 1.2) {
+      if (t < seconds) {
+        const limit = t + slice;
+        while (t < seconds && t < limit) {
+          // clustered Poisson: occasionally a burst of several close pops
+          t += -Math.log(1 - r()) / rate;
+          const cluster = r() < 0.2 ? 2 + Math.floor(r() * 4) : 1;
+          for (let c = 0; c < cluster; c++) {
+            const start = Math.floor((t + c * (0.004 + r() * 0.02)) * sr);
+            const amp = Math.pow(r(), 2.5) * 0.9 + 0.04;
+            const tau = (0.0003 + r() * 0.0014) * sr;
+            const n = Math.floor(tau * 7);
+            const sign = r() < 0.5 ? -1 : 1;
+            for (let i = 0; i < n && start + i < len; i++) {
+              d[start + i] += amp * Math.exp(-i / tau) * (i < 2 ? sign : (r() * 2 - 1));
+            }
+          }
+        }
+        return false;
       }
-    }
-  }
-  for (let i = 0; i < len; i++) d[i] = clamp(d[i], -1, 1);
-  return b;
+      const end = Math.min(len, ci + 160000);
+      for (; ci < end; ci++) d[ci] = clamp(d[ci], -1, 1);
+      return ci >= len;
+    },
+  };
 }
+function buildCrackle(ctx, seconds, seed, rate) {
+  const bld = crackleBuilder(ctx, seconds, seed, rate);
+  while (!bld.step(1e9)) { /* run to completion */ }
+  return bld.buffer;
+}
+
+const CRACKLE_SPECS = [[7.3, 4242, 11], [11.1, 2424, 7]];
+
+/** every (kind, seconds) noise buffer the texture kinds loop: the Score pre-warms these gradually */
+export const TEXTURE_NOISE = [['brown', 8], ['pink', 6], ['white', 3], ['white', 5], ['white', 4]];
 
 export class Texture {
   constructor(engine, channel, patch = {}) {
@@ -104,6 +128,22 @@ export class Texture {
     this.chain.sc.onDispose = () => { try { master.disconnect(); lvl.disconnect(); } catch (e) { /* gone */ } };
     this.chain.sc.stopAll(end);
     return this;
+  }
+
+  /** the two pop buffers (built once per voice; warmCrackle() lets the Score make them ahead of need, a slice per call) */
+  _crackle(i) {
+    if (!this.crackleBufs) this.crackleBufs = [];
+    if (!this.crackleBufs[i]) { const s = CRACKLE_SPECS[i]; this.crackleBufs[i] = buildCrackle(this.ctx, s[0], s[1], s[2]); this._crackleB = null; }
+    return this.crackleBufs[i];
+  }
+  /** one slice of building pop buffer `i`; true when it is complete */
+  warmCrackle(i) {
+    if (this.crackleBufs && this.crackleBufs[i]) return true;
+    if (!this._crackleB || this._crackleB.i !== i) { const s = CRACKLE_SPECS[i]; this._crackleB = { i, bld: crackleBuilder(this.ctx, s[0], s[1], s[2]) }; }
+    if (!this._crackleB.bld.step()) return false;
+    if (!this.crackleBufs) this.crackleBufs = [];
+    this.crackleBufs[i] = this._crackleB.bld.buffer; this._crackleB = null;
+    return true;
   }
 
   _noise(sc, kind, seconds, t) {
@@ -190,13 +230,11 @@ export class Texture {
         hp.frequency.cancelScheduledValues(tt); hp.frequency.setTargetAtTime(fclamp(900 + tone * 2400, 200, 8000), tt, tc);
       };
     } else if (kind === 'crackle') {
-      if (!this.crackleBufs) {
-        this.crackleBufs = [buildCrackle(ctx, 7.3, 4242, 11), buildCrackle(ctx, 11.1, 2424, 7)];
-      }
+      const crackles = [this._crackle(0), this._crackle(1)];
       const sum = sc.gain(1);
       const hp = sc.biquad('highpass', 900, -3);
       const bp = sc.biquad('peaking', 3000, 0.8, 5);
-      this.crackleBufs.forEach((b, i) => {
+      crackles.forEach((b, i) => {
         const s = sc.buf(b, t, null, { loop: true, offset: rnd() * b.duration, rate: 1 });
         const g = sc.gain(i === 0 ? 1.4 : 0.9);
         s.connect(g); g.connect(sum);

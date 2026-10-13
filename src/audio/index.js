@@ -21,6 +21,7 @@
  */
 import { createEngine } from './engine.js';
 import { Score } from './score.js';
+import { TEXTURE_NOISE } from './voices/texture.js';
 
 /** shallow copy of a GameState with a replaced `events` array */
 export function withEvents(state, events) {
@@ -29,6 +30,10 @@ export function withEvents(state, events) {
 
 export async function createAudio(ctx, { seed = 1 } = {}) {
   const engine = await createEngine(ctx, { seed });
+  // the noise buffers the percussion and the texture layers loop: made once, here, while the caller is still loading (~150 ms),
+  // so the first updates of a level never have to synthesise them
+  engine.noiseBuffer('white', 12); engine.noiseBuffer('pink', 12);
+  for (const [k, sec] of TEXTURE_NOISE) engine.noiseBuffer(k, sec);
   const score = new Score(engine);
   let volume = 1;
   const seen = new Set();

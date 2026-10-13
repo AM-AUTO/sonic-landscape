@@ -117,3 +117,53 @@ test('every artefact lasts 20–45 s in every level, partials ~4 s; a cut-short 
   assert.equal(audio.score.keyShift, 0);
   assert.equal(audio.score.modeOverride, null);
 });
+
+test('back-to-back artefacts release the previous piece over a few seconds (no hard cut) and never leave a non-finite control', async () => {
+  const types = ['trig', 'cairn', 'lochan', 'waterfall', 'bothy', 'stone', 'crag', 'summit'];
+  for (const li of [1, 4, 7]) {
+    ctx.currentTime = 0;
+    const audio = await createAudio(ctx, { seed: 21 });
+    const g = new Game({ levels: LEVELS, progress: { unlocked: LEVELS.map((l) => l.id), completed: [], fragments: [], notes: [] } });
+    g.loadLevel(li); audio.setLevel(g.level);
+    const art = audio.score.art;
+    for (let i = 0; i < types.length; i++) {
+      ctx.currentTime += 0.5; audio.update(withEvents(g.state, []));
+      const prev = art.pieces.filter((p) => !p.ended && !p.fade && p.kind === 'artefact');
+      art.play(types[i], { t: ctx.currentTime });
+      if (prev.length) {
+        assert.ok(prev.every((p) => p.fade && !p.ended), 'the previous piece is releasing, not cut');
+        assert.equal(art.activeCount, 1, 'only the new piece counts as sounding');
+      }
+      for (let k = 0; k < 140; k++) {                 // 7 s of audio time per piece: the release ends, the new piece plays on
+        ctx.currentTime += 0.05; audio.update(withEvents(g.state, []));
+        const A = art.cached || {};
+        for (const key of ['energy', 'energyFloor', 'energyMax', 'frontGain', 'reverbWet']) if (A[key] !== undefined) assert.ok(Number.isFinite(A[key]), `${key} finite (${types[i]})`);
+        assert.ok(Number.isFinite(audio.score.cond.energy), 'energy finite');
+      }
+      assert.ok(art.pieces.every((p) => !p.fade), 'releases finished');
+    }
+    assert.deepEqual(audio.errors, []);
+  }
+});
+
+test('pre-warming makes the expensive buffers ahead of need: the queue drains a few items at a time and nothing is made at trigger time', async () => {
+  ctx.currentTime = 0;
+  const audio = await createAudio(ctx, { seed: 31 });
+  const g = new Game({ levels: LEVELS, progress: { unlocked: LEVELS.map((l) => l.id), completed: [], fragments: [], notes: [] } });
+  g.loadLevel(3); audio.setLevel(g.level);                       // cairngorm: harp plucks
+  const sc = audio.score;
+  audio.update(withEvents(g.state, []));
+  const n0 = sc.warmQ.length;
+  assert.ok(n0 > 15, 'a queue of buffers to make');
+  ctx.currentTime += 0.05; audio.update(withEvents(g.state, []));
+  assert.ok(sc.warmQ.length >= n0 - 1, 'at most one item per update');
+  for (let i = 0; i < 1200 && sc.warmQ.length; i++) { ctx.currentTime += 0.05; audio.update(withEvents(g.state, [])); }
+  assert.equal(sc.warmQ.length, 0, 'the queue drains');
+  assert.ok(audio.engine.pluckCache.size >= 10, 'KS buffers are cached for the level');
+  const tex = sc.stage.v.texture;
+  assert.ok(tex.crackleBufs && tex.crackleBufs[0] && tex.crackleBufs[1], 'crackle buffers made ahead');
+  // a note in the level's scale is then served from the cache
+  const before = audio.engine.pluckCache.size;
+  sc.stage.v.pluck.note(sc.profile.lead.base + sc.profile.mode[2], ctx.currentTime + 0.1, 1, 0.5);
+  assert.equal(audio.engine.pluckCache.size, before, 'no buffer synthesised at trigger time');
+});

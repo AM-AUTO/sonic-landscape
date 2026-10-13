@@ -221,7 +221,7 @@ export const PROFILES = {
 
   // ============================================================================ IV. Cairngorm Plateau
   cairngorm: mk({
-    id: 'cairngorm', loud: -2, bedDb: -1, title: 'Arctic and glacial. Frozen granular, snow hiss, the slowest pulse.',
+    id: 'cairngorm', loud: -2, bedDb: -3, title: 'Arctic and glacial. Frozen granular, snow hiss, the slowest pulse.',
     root: 52, modeName: 'aeolian', mode: M.aeolian, dawn: M.dorian, night: M.phrygian,
     bpm: 56, swing: 0.0, phraseBars: 4, nightTempo: 0.9,
     motifOp: 'augment',
@@ -252,13 +252,13 @@ export const PROFILES = {
       granular: { density: 7, size: 0.55, pitch: 12, pitchSpread: 3, spray: 4.2, reverse: 0.35, mix: 0.9, feedback: 0.36 },
       master: { drive: [0.0, 0.1], lowCut: [30, 60], highCut: [10500, 19000], gain: 1, dark: 1.0 },
     },
-    ch: { bell: { reverb: 0.8, delay: 0.55, cutoff: 18000 }, texture: { gain: 0.34, grain: 0.42 }, pad: { chorus: 0.5, reverb: 0.65 }, ghost: { reverb: 0.95 }, drone: { reverb: 0.45 } },
+    ch: { lead: { gain: 0.6, delay: 0.4, grain: 0.1 }, bell: { reverb: 0.8, delay: 0.55, cutoff: 18000 }, texture: { gain: 0.34, grain: 0.42 }, pad: { chorus: 0.5, reverb: 0.65 }, ghost: { reverb: 0.95 }, drone: { reverb: 0.45 } },
     glitch: 0,
   }),
 
   // ============================================================================ V. Torridon
   torridon: mk({
-    id: 'torridon', loud: 2, title: 'Monumental. Brass-like saw pads, terraced rhythm.',
+    id: 'torridon', loud: 0, bedDb: -4.5, title: 'Monumental. Brass-like saw pads, terraced rhythm.',
     root: 48, modeName: 'mixolydian', mode: M.mixolydian, dawn: M.ionian, night: M.dorian,
     bpm: 68, swing: 0.0, phraseBars: 4, nightTempo: 0.94, terraced: true,
     motifOp: 'rotate:3',
@@ -338,7 +338,7 @@ export const PROFILES = {
 
   // ============================================================================ VII. Assynt
   assynt: mk({
-    id: 'assynt', loud: -3, bedDb: -2.5, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
+    id: 'assynt', loud: -3, bedDb: -4, frontDb: -3, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
     root: 51, modeName: 'pentMajor', mode: M.pentMajor, dawn: [0, 2, 4, 6, 9], night: [0, 2, 3, 7, 9],
     bpm: 60, swing: 0.0, phraseBars: 4, nightTempo: 0.88,
     motifOp: 'augment+retro',
@@ -365,7 +365,7 @@ export const PROFILES = {
     },
     fx: {
       reverb: { min: 6, max: 16, wet: 1.05, damp: [4200, 9800], pre: [0.08, 0.12] },
-      delay: { beats: 3, fb: [0.4, 0.82], tone: [1800, 4200], wet: 0.62, mod: [0.1, 0.45], pingPong: true, spread: [1, 1.33] },
+      delay: { beats: 3, fb: [0.4, 0.82], tone: [1800, 4200], wet: 0.4, mod: [0.1, 0.45], pingPong: true, spread: [1, 1.33] },
       granular: { density: 4.5, size: 0.8, pitch: -12, pitchSpread: 2, spray: 5, reverse: 0.4, mix: 0.9, feedback: 0.38 },
       master: { drive: [0.0, 0.08], lowCut: [26, 44], highCut: [8800, 15500], gain: 1, dark: 0.28 },
     },

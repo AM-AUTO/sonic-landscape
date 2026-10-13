@@ -137,6 +137,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   const audio = await createAudio(ctx, { seed: game.level.seed });
   audio.setLevel(game.level);
   if (opts.mute && opts.mute.length) audio.score.mute = new Set(opts.mute);
+  if (opts.tweak) new Function('audio', 'score', opts.tweak)(audio, audio.score);          // diagnostic hook (--tweak 'js')
   const quantum = 128 / SR;
   const afterRender = () => { for (const e of audio.errors) errors.push('audio.update: ' + e); };
   const perSecNodes = [];
@@ -144,6 +145,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   let lastNodes = nodeCount, lastSecT = 0;
   let k = 0;
   const upd = { n: 0, sum: 0, max: 0, slow: [] };
+  const ctl = [];                            // diagnostic trace: [t, energy, drift, altitude, section, leveler trim, active artefacts, front gain, fast level, pieces:servo]
   const step = () => {
     const u0 = performance.now();
     try {
@@ -152,7 +154,11 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     const du = performance.now() - u0; upd.n++; upd.sum += du; if (du > upd.max) upd.max = du;
     if (du > 25) upd.slow.push([+(k * UPDATE).toFixed(2), Math.round(du), buckets[k].events.map((e) => e.type).filter((x) => x !== 'step' && x !== 'cover').join('+')]);
     const t = k * UPDATE;
-    if (t - lastSecT >= 1) { perSecNodes.push(nodeCount - lastNodes); lastNodes = nodeCount; lastSecT = t; }
+    if (t - lastSecT >= 1) {
+      perSecNodes.push(nodeCount - lastNodes); lastNodes = nodeCount; lastSecT = t;
+      const sc = audio.score, C = sc.C;
+      ctl.push([Math.round(t), +C.e.toFixed(2), +C.d.toFixed(2), +C.a.toFixed(2), sc.cond.section, +(sc.trimDb || 0).toFixed(1), sc.art.activeCount, +((sc.art.cached && sc.art.cached.frontGain) ?? 1).toFixed(2), +sc.heardFastDb.toFixed(1), sc.art.pieces.filter((p) => !p.ended).map((p) => p.type + (p.fade ? '~' : '') + ':' + p.servoDb.toFixed(1)).join('+')]);
+    }
   };
   step();                                   // t = 0 before rendering starts
   const t0 = performance.now();
@@ -235,14 +241,58 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     wrongApproach: ps.wrong, planWarnings: ps.warnings, renderMs: Math.round(renderMs),
     peakDb: +total.peakDb.toFixed(2), rmsDb: +total.rmsDb.toFixed(2), nan: total.nan, silentPct: +((100 * silent) / wins).toFixed(2),
     dynRangeDb: +dyn.toFixed(1), dynP90P10: +dynP.toFixed(1), codaDb: ps.completeT ? +codaDb.toFixed(1) : null, centroidMean: Math.round(centroidMean),
-    rmsCurve: perSec,
+    rmsCurve: perSec, ctl,
     chroma: Array.from(ch, (v) => +v.toFixed(4)), chromaTop: names[top], rootTriad: triad.map((p) => names[p]), chromaInTriad: triad.includes(top),
     artefacts: arts, gameEvents,
     nodes: { perSecMean: +nodesMean.toFixed(1), perSecMedian: nodeMedian(), perSecMax: perSecNodes.length ? Math.max(...perSecNodes) : 0, total: nodeCount - nodeStart, by: Object.fromEntries(Object.entries(nodesBy).sort((a, b) => b[1] - a[1]).slice(0, 14)) },
-    stats: ins.stats, timeline: ins.timeline.filter((e) => ['level', 'artefact', 'boost', 'partial', 'section', 'cadence', 'finale', 'concord', 'gate-open', 'level-complete', 'mode', 'ghost', 'quote', 'transition'].includes(e.kind)).slice(0, 400),
+    stats: ins.stats, timeline: ins.timeline.filter((e) => ['level', 'artefact', 'boost', 'servo', 'partial', 'section', 'cadence', 'finale', 'concord', 'gate-open', 'level-complete', 'mode', 'ghost', 'quote', 'transition'].includes(e.kind)).slice(0, 400),
     updateMs: { mean: +(upd.sum / Math.max(1, upd.n)).toFixed(2), max: +upd.max.toFixed(1), calls: upd.n, slow: upd.slow.slice(0, 24) },
     audit, errors, uploaded: upload,
   };
+};
+
+/**
+ * Artefact calibration: each full artefact played alone (bed muted, no servo, no entry boost) in a quiet idle state;
+ * returns the RMS of its first six seconds (dBFS) per type. src/audio/artcal.js is generated from this by
+ * tools/calibrate-artefacts.mjs, and is what Artefacts.play() uses to aim the entry (the servo then trims).
+ */
+window.calibrateArtefacts = async function calibrateArtefacts(id, types) {
+  const idx = LEVELS.findIndex((l) => l.id === id);
+  const ps = presim(idx, { seconds: 4, noWrong: true, idle: 4 });
+  const out = {};
+  const BED = ['drone', 'pad', 'bass', 'bell', 'pluck', 'texture', 'kmain', 'kcym', 'ktex', 'ghost'];
+  for (const type of types) {
+    const total = 3 + 14;
+    const ctx = new OfflineAudioContext(2, Math.ceil(total * SR), SR);
+    const audio = await createAudio(ctx, { seed: ps.game.level.seed });
+    audio.setLevel(ps.game.level);
+    audio.score.mute = new Set(BED);
+    const seq = ps.buckets;
+    const quantum = 128 / SR;
+    let k = 0, played = false;
+    const step = () => {
+      const st = seq[Math.min(k, seq.length - 1)];
+      try { audio.update({ ...st, events: [] }); } catch (e) { /* reported by audio.errors */ }
+      if (!played && k * UPDATE >= 3) {
+        played = true;
+        const P = audio.score.art.play(type, { t: audio.score.now + 0.05 });
+        if (P) { P.boostDb = 0; P.servoDb = 0; P.targetDb = null; P.calibrating = true; }
+      }
+    };
+    step();
+    const schedule = () => {
+      k++;
+      if (k * UPDATE > total - 0.2) return;
+      const at = Math.max(ctx.currentTime + quantum, Math.round((k * UPDATE) / quantum) * quantum);
+      ctx.suspend(at).then(() => { step(); schedule(); ctx.resume(); });
+    };
+    schedule();
+    const buf = await ctx.startRendering();
+    const chs = [buf.getChannelData(0), buf.getChannelData(1)];
+    out[type] = +analyse(chs, SR, 3.05, 9.05).rmsDb.toFixed(1);
+    out[type + '@late'] = +analyse(chs, SR, 9.05, 15.05).rmsDb.toFixed(1);       // seconds 6-12 of the piece: how far it settles
+  }
+  return out;
 };
 
 /**

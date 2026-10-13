@@ -86,46 +86,69 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
 
   // ---------------------------------------------------------------- noise cache
   const noiseCache = new Map();
+  const noiseJobs = new Map();
+  /**
+   * A noise buffer is built by a resumable job (fill → remove DC → normalise to RMS 0.3), so the Score can make one over several
+   * updates (noiseWarm) instead of stalling a frame; noiseBuffer runs the same job to completion when a voice needs one now.
+   */
+  function noiseJob(kind, seconds, key) {
+    const sr = ctx.sampleRate;
+    const len = Math.max(64, Math.floor(seconds * sr));
+    const b = ctx.createBuffer(1, len, sr);
+    const d = b.getChannelData(0);
+    const r = mulberry32((seed * 7919 + kind.length * 104729 + len) >>> 0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0;
+    let phase = 0, i = 0, mean = 0, e = 0, k = 1;
+    return {
+      buffer: b,
+      /** do up to `n` samples of work; true when the buffer is finished */
+      step(n) {
+        const stop = Math.min(len, i + n);
+        if (phase === 0) {
+          if (kind === 'pink') {
+            for (; i < stop; i++) {
+              const w = r() * 2 - 1;
+              b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
+              b2 = 0.969 * b2 + w * 0.153852; b3 = 0.8665 * b3 + w * 0.3104856;
+              b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+              d[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362; b6 = w * 0.115926;
+            }
+          } else if (kind === 'brown') {
+            for (; i < stop; i++) { const w = r() * 2 - 1; last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+          } else {
+            for (; i < stop; i++) d[i] = r() * 2 - 1;
+          }
+          if (i >= len) { phase = 1; i = 0; for (let j = 0; j < len; j++) mean += d[j]; mean /= len; }     // DC: one cheap pass
+        } else if (phase === 1) {
+          for (; i < stop; i++) { d[i] -= mean; e += d[i] * d[i]; }
+          if (i >= len) { phase = 2; i = 0; k = 0.3 / (Math.sqrt(e / len) || 1); }
+        } else {
+          for (; i < stop; i++) d[i] = clamp(d[i] * k, -1, 1);
+          if (i >= len) { noiseCache.set(key, b); noiseJobs.delete(key); return true; }
+        }
+        return false;
+      },
+    };
+  }
+  const noiseKey = (kind, seconds) => kind + ':' + clamp(num(seconds, 2), 0.05, 30).toFixed(2);
   function noiseBuffer(kind = 'white', seconds = 2) {
     seconds = clamp(num(seconds, 2), 0.05, 30);
     const key = kind + ':' + seconds.toFixed(2);
-    let b = noiseCache.get(key);
-    if (b) return b;
-    const sr = ctx.sampleRate;
-    const len = Math.max(64, Math.floor(seconds * sr));
-    b = ctx.createBuffer(1, len, sr);
-    const d = b.getChannelData(0);
-    const r = mulberry32((seed * 7919 + kind.length * 104729 + len) >>> 0);
-    if (kind === 'pink') {
-      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-      for (let i = 0; i < len; i++) {
-        const w = r() * 2 - 1;
-        b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
-        b2 = 0.969 * b2 + w * 0.153852; b3 = 0.8665 * b3 + w * 0.3104856;
-        b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
-        d[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362; b6 = w * 0.115926;
-      }
-    } else if (kind === 'brown') {
-      let last = 0;
-      for (let i = 0; i < len; i++) {
-        const w = r() * 2 - 1;
-        last = (last + 0.02 * w) / 1.02;
-        d[i] = last * 3.5;
-      }
-    } else {
-      for (let i = 0; i < len; i++) d[i] = r() * 2 - 1;
-    }
-    // remove DC, normalise RMS to 0.3, hard-bound at +-1
-    let mean = 0;
-    for (let i = 0; i < len; i++) mean += d[i];
-    mean /= len;
-    let e = 0;
-    for (let i = 0; i < len; i++) { d[i] -= mean; e += d[i] * d[i]; }
-    const rms = Math.sqrt(e / len) || 1;
-    const k = 0.3 / rms;
-    for (let i = 0; i < len; i++) d[i] = clamp(d[i] * k, -1, 1);
-    noiseCache.set(key, b);
-    return b;
+    const hit = noiseCache.get(key);
+    if (hit) return hit;
+    let job = noiseJobs.get(key);
+    if (!job) { job = noiseJob(kind, seconds, key); noiseJobs.set(key, job); }
+    while (!job.step(1e9)) { /* run to completion */ }
+    return noiseCache.get(key);
+  }
+  /** one slice (~100k samples) of building a noise buffer ahead of need; true when it is in the cache */
+  function noiseWarm(kind = 'white', seconds = 2) {
+    seconds = clamp(num(seconds, 2), 0.05, 30);
+    const key = noiseKey(kind, seconds);
+    if (noiseCache.has(key)) return true;
+    let job = noiseJobs.get(key);
+    if (!job) { job = noiseJob(kind, seconds, key); noiseJobs.set(key, job); }
+    return job.step(100000);
   }
 
   // ---------------------------------------------------------------- shared curves
@@ -150,6 +173,12 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   bus.connect(glue); glue.connect(glueMakeup); glueMakeup.connect(lowcut); lowcut.connect(highcut);
   highcut.connect(mDrive); mDrive.connect(clip); clip.connect(finalGain); finalGain.connect(analyser);
   analyser.connect(ctx.destination);
+  // per-channel meters: the mono analyser above averages L and R (wide reverb / ping-pong content partly cancels), so the Score's
+  // level reading (leveler, artefact servo) uses these two instead and matches the true stereo RMS of the render
+  const meterSplit = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
+  const meterL = new AnalyserNode(ctx, { fftSize: 4096, smoothingTimeConstant: 0 });      // ~93 ms: covers the Score's 100 ms reading interval
+  const meterR = new AnalyserNode(ctx, { fftSize: 4096, smoothingTimeConstant: 0 });
+  finalGain.connect(meterSplit); meterSplit.connect(meterL, 0); meterSplit.connect(meterR, 1);
 
   const out = new GainNode(ctx, { gain: 1 });       // ducked bed input
   const outFront = new GainNode(ctx, { gain: 1 });  // un-ducked input
@@ -286,7 +315,7 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
       name, input, output: gain, filter, panner, gain, nodes: { pre, shaper, post, crusher, filter, cDelay, panner, gain },
       state: {},
       set(v = {}, t = now(), tc = 0.05) {
-        if (v.gain !== undefined) H.gain.set(num(v.gain, 0.8, 0, 2), t, tc);
+        if (v.gain !== undefined) H.gain.set(num(v.gain, 0.8, 0, 3.2), t, tc);
         if (v.pan !== undefined) H.pan.set(num(v.pan, 0, -1, 1), t, tc);
         if (v.reverb !== undefined) H.reverb.set(num(v.reverb, 0, 0, 2), t, tc);
         if (v.delay !== undefined) H.delay.set(num(v.delay, 0, 0, 2), t, tc);
@@ -331,15 +360,15 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   }
 
   const engine = {
-    ctx, rng, seed, out, outFront, sends, bus, analyser,
+    ctx, rng, seed, out, outFront, sends, bus, analyser, meterL, meterR,
     masterNodes: { glue, glueMakeup, lowcut, highcut, drive: mDrive, clip, finalGain },
     fx: { reverb, delay, granular, master },
     channel, channels,
     param, record, auditReport, audit: auditReport,
-    noiseBuffer, ready,
+    noiseBuffer, noiseWarm, ready,
     /** release the master graph (voices should be stopped first) */
     dispose() {
-      try { bus.disconnect(); analyser.disconnect(); out.disconnect(); outFront.disconnect(); } catch (e) { /* already gone */ }
+      try { bus.disconnect(); analyser.disconnect(); meterSplit.disconnect(); out.disconnect(); outFront.disconnect(); } catch (e) { /* already gone */ }
     },
     /** cached lookup of a bitcrush curve (shared by voices) */
     crushCurve,

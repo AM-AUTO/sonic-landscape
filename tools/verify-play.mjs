@@ -160,9 +160,18 @@ if (doAudio && (only == null || args.includes('--perf'))) {
     const c = window.__contours, a = c.audio;
     c.__upd = []; c.__frames = [];
     const orig = a.update.bind(a);
-    a.update = (s) => { const t0 = performance.now(); const r = orig(s); c.__upd.push(performance.now() - t0); return r; };
+    c.__slow = [];
+    a.update = (s) => {
+      const t0 = performance.now(); const r = orig(s); const du = performance.now() - t0; c.__upd.push(du);
+      if (du > 12) {                       // what was going on in an update that took longer than a frame's share
+        const sc = a.score, ev = (s.events || []).map((e) => e.type).filter((x) => x !== 'step' && x !== 'cover');
+        c.__slow.push({ at: Math.round(t0), t: +s.t.toFixed(1), ms: +du.toFixed(1), ev: ev.join('+'), sec: sc.cond.section, art: sc.art.pieces.filter((p) => !p.ended).map((p) => p.type + '@' + (sc.now - p.t0).toFixed(1)).join(','), lvl: sc.levelId });
+      }
+      return r;
+    };
     let last = performance.now();
-    const tick = () => { const n = performance.now(); c.__frames.push(n - last); last = n; requestAnimationFrame(tick); };
+    c.__long = [];
+    const tick = () => { const n = performance.now(); c.__frames.push(n - last); if (n - last > 40 && c.__frames.length > 30) c.__long.push({ at: Math.round(n), dt: Math.round(n - last) }); last = n; requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
   });
   await page.waitForTimeout(60000);
@@ -174,7 +183,7 @@ if (doAudio && (only == null || args.includes('--perf'))) {
       level: c.game.level.id, simT: +c.game.state.t.toFixed(1), fires: c.game.state.discovered.length,
       updates: u.length, updP50: +q(u, 0.5).toFixed(2), updP99: +q(u, 0.99).toFixed(2), updMax: +Math.max(...u).toFixed(1),
       frameP50: +q(f, 0.5).toFixed(1), frameP99: +q(f, 0.99).toFixed(1), longFrames: f.filter((x) => x > 50).length,
-      ctx: c.audio.ctx.state, audioErrors: (c.audio.errors || []).length,
+      ctx: c.audio.ctx.state, audioErrors: (c.audio.errors || []).length, slow: c.__slow.slice(0, 20), longFrameList: c.__long.slice(0, 20),
     };
   });
   perf.errors = errors.slice(0, 5);

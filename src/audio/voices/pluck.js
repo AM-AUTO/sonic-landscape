@@ -29,7 +29,8 @@ export const PLUCK_DEFAULTS = Object.freeze({
   drift: 3,           // random cents of detune per note
 });
 
-function renderKS(sr, freq, { damping, decay, pos, bright, tine }, seed) {
+/** the Karplus-Strong render as a generator: it yields every ~50k samples so the Score can spread a pre-warm over several updates */
+function* renderKSGen(sr, freq, { damping, decay, pos, bright, tine }, seed) {
   const rnd = mulberry32(seed >>> 0);
   const period = sr / freq;
   const tuneDelay = 0.5 * clamp(damping * 2, 0, 1);       // group delay of the loop averager (~samples)
@@ -63,7 +64,9 @@ function renderKS(sr, freq, { damping, decay, pos, bright, tine }, seed) {
     line[idx] = z;
     idx++; if (idx >= N) idx = 0;
     out[n] = x;
+    if ((n & 0xffff) === 0xffff) yield;
   }
+  yield;
   if (tine > 0) {
     // kalimba tine: short inharmonic partial
     const tf = freq * 5.4, tl = Math.min(len, Math.floor(sr * 0.18));
@@ -71,6 +74,7 @@ function renderKS(sr, freq, { damping, decay, pos, bright, tine }, seed) {
   }
   // normalise and fade tail
   let m = 1e-6; for (let n = 0; n < len; n++) m = Math.max(m, Math.abs(out[n]));
+  yield;
   const k = 0.9 / m;
   const fade = Math.floor(sr * 0.04);
   for (let n = 0; n < len; n++) {
@@ -83,6 +87,12 @@ function renderKS(sr, freq, { damping, decay, pos, bright, tine }, seed) {
   for (let n = 0; n < len; n++) { const x = out[n]; hy = hc * (hy + x - hx); hx = x; out[n] = hy; }
   return out;
 }
+function renderKS(sr, freq, kp, seed) {
+  const g = renderKSGen(sr, freq, kp, seed);
+  let r = g.next();
+  while (!r.done) r = g.next();
+  return r.value;
+}
 
 export class Pluck {
   constructor(engine, channel, patch = {}) {
@@ -90,39 +100,73 @@ export class Pluck {
     this.ctx = engine.ctx;
     this.dest = destOf(channel);
     this.p = { ...PLUCK_DEFAULTS, ...patch };
-    this.cache = new Map();
+    // one cache for every Pluck on an engine (the album's three pluck voices share a timbre): the Score pre-warms it
+    this.cache = engine.pluckCache || (engine.pluckCache = new Map());
   }
   set(patch = {}) { Object.assign(this.p, patch); recordPatch(this.engine, 'pluck', patch); return this; }
 
-  _buffer(midi, kp) {
-    // Synthesising a KS buffer costs milliseconds of main thread, so the timbre params are
-    // quantised coarsely: continuous modulation then reuses a small set of cached buffers.
+  /** cache key + the coarsely quantised timbre parameters for a note (continuous modulation reuses a small set of buffers) */
+  _keyed(midi, kp) {
     const q = (v, step) => Math.round(v / step) * step;
     kp = { ...kp, damping: q(kp.damping, 0.05), decay: Math.max(0.5, q(kp.decay, 0.5)), pos: q(kp.pos, 0.05), bright: q(kp.bright, 0.1) };
     const key = [this.p.kind, midi, kp.damping.toFixed(2), kp.decay.toFixed(1), kp.pos.toFixed(2), kp.bright.toFixed(1)].join('|');
-    let b = this.cache.get(key);
-    if (b) return b;
+    return { key, kp };
+  }
+  _store(key, data) {
     const sr = this.ctx.sampleRate;
-    const data = renderKS(sr, fclamp(midiToHz(midi), 30, 6000), kp, (midi * 7919 + 13) ^ Math.round(kp.decay * 100));
-    b = this.ctx.createBuffer(1, data.length, sr);
+    const b = this.ctx.createBuffer(1, data.length, sr);
     b.getChannelData(0).set(data);
     if (this.cache.size > 240) this.cache.delete(this.cache.keys().next().value);
     this.cache.set(key, b);
     return b;
   }
+  _buffer(midi, kp) {
+    // Synthesising a KS buffer costs milliseconds of main thread; the Score pre-warms the level's scale (warm()), so a note
+    // normally finds its buffer in the shared cache.
+    const k = this._keyed(midi, kp);
+    const hit = this.cache.get(k.key);
+    if (hit) return hit;
+    const sr = this.ctx.sampleRate;
+    return this._store(k.key, renderKS(sr, fclamp(midiToHz(midi), 30, 6000), k.kp, (midi * 7919 + 13) ^ Math.round(k.kp.decay * 100)));
+  }
 
-  note(midi, t = this.ctx.currentTime, dur = 1, vel = 0.8) {
-    const { ctx, engine } = this, p = this.p;
-    const midiF = num(midi, 69, 24, 108) + num(p.tune, 0, -1200, 1200) / 100;
-    midi = Math.round(midiF); dur = Math.max(0.05, num(dur, 1)); vel = clamp(num(vel, 0.8), 0, 1.2);
+  /** timbre parameters for the current patch */
+  _kp() {
+    const p = this.p;
     const kind = PLUCK_KINDS[p.kind] || PLUCK_KINDS.string;
-    const kp = {
+    return {
       damping: num(p.damping ?? kind.damping, 0.4, 0.02, 0.5 + 0.2),
       decay: num(p.decay ?? kind.decay, 3.5, 0.3, 12),
       pos: num(p.pos ?? kind.pos, 0.2, 0.02, 0.9),
       bright: num(p.bright ?? kind.bright, 0.7, 0, 1),
       tine: kind.tine,
     };
+  }
+
+  /**
+   * Synthesise (and cache) the buffer for a note ahead of time, a slice per call, so it is never made at trigger time and no one
+   * update carries a whole string. Returns true when the note's buffer is in the cache (call again while false).
+   */
+  warm(midi) {
+    midi = Math.round(num(midi, 69, 24, 108) + num(this.p.tune, 0, -1200, 1200) / 100);
+    const k = this._keyed(midi, this._kp());
+    if (this.cache.has(k.key)) return true;
+    if (!this._job || this._job.key !== k.key) {
+      const sr = this.ctx.sampleRate;
+      this._job = { key: k.key, gen: renderKSGen(sr, fclamp(midiToHz(midi), 30, 6000), k.kp, (midi * 7919 + 13) ^ Math.round(k.kp.decay * 100)) };
+    }
+    const r = this._job.gen.next();
+    if (!r.done) return false;
+    this._store(k.key, r.value);
+    this._job = null;
+    return true;
+  }
+
+  note(midi, t = this.ctx.currentTime, dur = 1, vel = 0.8) {
+    const { ctx, engine } = this, p = this.p;
+    const midiF = num(midi, 69, 24, 108) + num(p.tune, 0, -1200, 1200) / 100;
+    midi = Math.round(midiF); dur = Math.max(0.05, num(dur, 1)); vel = clamp(num(vel, 0.8), 0, 1.2);
+    const kp = this._kp();
     recordPatch(engine, 'pluck', p);
     engine.record('pluck.vel', vel); engine.record('pluck.dur', dur); engine.record('pluck.midi', midi);
     engine.record('pluck.dampingUsed', kp.damping); engine.record('pluck.decayUsed', kp.decay);

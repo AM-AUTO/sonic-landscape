@@ -205,7 +205,7 @@ export function applyChannelMods(o, name, A) {
   if (m) for (const k of Object.keys(m)) if (o[k] !== undefined) o[k] *= m[k];
   if (ad) for (const k of Object.keys(ad)) if (o[k] !== undefined) o[k] += ad[k];
   if (st) for (const k of Object.keys(st)) o[k] = st[k];
-  o.gain = clamp(o.gain, 0, 1.8); o.pan = clamp(o.pan, -1, 1);
+  o.gain = clamp(o.gain, 0, 3.2); o.pan = clamp(o.pan, -1, 1);
   o.reverb = clamp(o.reverb, 0, 1.6); o.delay = clamp(o.delay, 0, 1.4); o.grain = clamp(o.grain, 0, 1.4);
   o.cutoff = clamp(o.cutoff, 300, 19500); o.resonance = clamp(o.resonance, -6, 14);
   o.drive = clamp(o.drive, 0, 0.95); o.crush = clamp(o.crush, 0, 1); o.chorus = clamp(o.chorus, 0, 0.95);

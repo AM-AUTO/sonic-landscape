@@ -18,6 +18,7 @@ import { degreeToMidi } from './theory.js';
 import { clamp, lerp } from './macros.js';
 import { patchesFor } from './levelmusic.js';
 import { RESONANCE_SECONDS } from '../world/codes.js';
+import { ART_NOMINAL } from './artcal.js';
 
 const LA = 0.18;       // action lookahead (s)
 const ramp = (x, lo, hi) => clamp((x - lo) / (hi - lo), 0, 1);
@@ -30,11 +31,43 @@ const NOMINAL_DB = { trig: -15.5, cairn: -19.5, lochan: -20, waterfall: -18, bot
 
 /** bloom and settle: the foreground enters at full level, then hangs ~5 dB lower, with a modest lift for the closing gesture */
 const settle = (rel, dur) => {
-  const down = smoothstep((rel - 2.5) / 5);
-  let g = lerp(1.0, 0.32, down);
+  const down = smoothstep((rel - 2.0) / 4);
+  let g = lerp(1.0, 0.26, down);
   const up = smoothstep((rel - (dur - 10)) / 4) * (1 - smoothstep((rel - (dur - 3)) / 3));
   return g + (0.85 - g) * up * 0.6;
 };
+
+/** a spec for macros.ovr: number (hard override) or {v, w}; returns it with its weight scaled by f */
+const scaleSpec = (sp, f) => (typeof sp === 'number' ? { v: sp, w: f } : sp && typeof sp === 'object' && 'v' in sp ? { v: sp.v, w: sp.w * f } : sp);
+/** two overlapping pieces' specs for the same parameter: weighted by their own weights, so a hand-over is continuous */
+function blendSpec(a, b) {
+  const sa = typeof a === 'number' ? { v: a, w: 1 } : a, sb = typeof b === 'number' ? { v: b, w: 1 } : b;
+  if (!sa || !sb || typeof sa !== 'object' || typeof sb !== 'object' || !('v' in sa) || !('v' in sb)) return b;
+  const ws = sa.w + sb.w;
+  return ws < 1e-6 ? b : { v: (sa.v * sa.w + sb.v * sb.w) / ws, w: Math.max(sa.w, sb.w) };
+}
+/** a releasing piece's modifiers at fade factor f (1 → 0): every kind of modifier eases toward neutral */
+function scaleMods(m, f) {
+  if (!m || f >= 0.999) return m;
+  const o = {};
+  for (const k of Object.keys(m)) {
+    const v = m[k];
+    if (v === undefined || v === null) continue;
+    if (k === 'chMul') { o.chMul = {}; for (const c of Object.keys(v)) { o.chMul[c] = {}; for (const q of Object.keys(v[c])) o.chMul[c][q] = Math.pow(Math.max(1e-3, v[c][q]), f); } }
+    else if (k === 'chAdd') { o.chAdd = {}; for (const c of Object.keys(v)) { o.chAdd[c] = {}; for (const q of Object.keys(v[c])) o.chAdd[c][q] = v[c][q] * f; } }
+    else if (k === 'chSet') { if (f > 0.5) o.chSet = v; }
+    else if (k === 'gran') { o.gran = {}; for (const q of Object.keys(v)) o.gran[q] = scaleSpec(v[q], f); }
+    else if (k === 'drone') { o.drone = {}; for (const q of Object.keys(v)) o.drone[q] = Math.pow(Math.max(1e-3, v[q]), f); }
+    else if (k === 'texture') { if (f > 0.5) o.texture = v; }
+    else if (k === 'reverbWet' || k === 'delayWet' || k === 'gain' || k === 'tempoMul') o[k] = 1 + (v - 1) * f;
+    else if (k === 'masterDrive' || k === 'energy' || k === 'energyFloor') o[k] = v * f;
+    else if (k === 'energyMax') o[k] = 1 - (1 - v) * f;                      // a ceiling relaxes toward 1
+    else if (typeof v === 'boolean') { if (f > 0.5) o[k] = v; }
+    else if (typeof v === 'number' || (typeof v === 'object' && 'v' in v)) o[k] = scaleSpec(v, f);
+  }
+  return o;
+}
+const FADE_SECONDS = 2.6;
 
 /** signature scale degree of each artefact type (the concord pitch set and pre-echo notes) */
 export const SIGNATURE = { trig: 0, cairn: 2, lochan: 4, waterfall: 1, bothy: 3, stone: 5, crag: 6, summit: 7 };
@@ -50,6 +83,7 @@ class Piece {
     this.flags = {}; this.state = {};
     this.dead = false; this.ended = false;
     this.boostDb = 0; this.shape = null;
+    this.servoDb = 0; this.targetDb = null; this.heardFast = null;
   }
   at(rel, fn) { this.acts.push({ rel, fn }); return this; }
   /** repeat fn(t, rel, k) every dt s (number or fn(rel)) from..to */
@@ -76,7 +110,7 @@ export class Artefacts {
   }
 
   get active() { return this.pieces.filter((p) => !p.ended); }
-  get activeCount() { return this.pieces.filter((p) => !p.ended && p.kind === 'artefact' && !p.partial).length; }
+  get activeCount() { return this.pieces.filter((p) => !p.ended && !p.fade && p.kind === 'artefact' && !p.partial).length; }
   get pulseHold() { return this.pieces.some((p) => !p.ended && p.flags.pulseHold); }
 
   // ------------------------------------------------------------------------------------------------
@@ -93,8 +127,13 @@ export class Artefacts {
     if (gate) this._appendCadence(P);
     P.finish();
     P.poi = poi;
-    // entry boost: when the bed is already loud (a previous artefact, a climb) the new piece enters further above it
-    P.boostDb = clamp(S.heardDb + 5.5 - (NOMINAL_DB[type] ?? -16), 0, 10);
+    // consequence aim: the piece's first six seconds should sit ~5 dB above what was heard just before it (never louder than
+    // -10.5 dBFS, with a floor so a hushed bed still gets a present entry). The entry is aimed from the measured unity level of
+    // this piece in this level (artcal.js); the servo (update) trims the remainder while it plays.
+    P.targetDb = clamp(S.heardDb + 5.3, -19 + (S.profile.frontDb || 0), -11.5);
+    const nominal = (ART_NOMINAL[S.levelId] && ART_NOMINAL[S.levelId][type]) ?? NOMINAL_DB[type] ?? -16;
+    P.boostDb = 0;
+    P.servoDb = clamp(P.targetDb - nominal, -12, 10);
     this.pieces.push(P);
     S.log('artefact', { type, dur: +P.dur.toFixed(1) });
     S.count('notes', 'artefacts');
@@ -187,12 +226,25 @@ export class Artefacts {
           st.next += typeof st.dt === 'function' ? st.dt(r) : st.dt;
         }
       }
-      if (rel > p.dur && p.i >= p.acts.length) this._end(p, now);
+      if (p.targetDb !== null && !p.fade && rel > 0.25 && rel < 6.4) this._servo(p, rel, dt);
+      if (p.fade ? now - p.fade.t0 >= p.fade.dur : rel > p.dur && p.i >= p.acts.length) this._end(p, now);
     }
     this.pieces = this.pieces.filter((p) => !p.ended);
     if (this.pendingCadence && !this.activeCount) { const c = this.pendingCadence; this.pendingCadence = null; this._playCadence(now + 0.4); }
     if (this.pendingConcord && !this.activeCount) { const c = this.pendingConcord; this.pendingConcord = null; this._concordChime(c.types, now + 0.2); }
     this._resonance(now, state);
+  }
+
+  /** steer a piece's foreground weight (±) so its short-term level reaches the target during its first six seconds */
+  _servo(p, rel, dt) {
+    const S = this.S;
+    const db = S.heardFastDb;
+    if (!Number.isFinite(db)) return;
+    p.heardFast = p.heardFast === null ? db : p.heardFast;
+    if (rel < 0.8) return;                                   // the entry's strike must have arrived before the level is read
+    let err = clamp(p.targetDb - db, -6, 6);
+    if (rel < 2.6 && err > 0) err = 0;                       // the piece is still gathering: it may be turned down early, but only turned up once it has bloomed
+    p.servoDb = clamp(p.servoDb + err * 2.0 * dt, -12, 10);
   }
 
   _run(fn, t, rel, piece, k) {
@@ -205,13 +257,27 @@ export class Artefacts {
   _end(p, now, silent) {
     if (p.ended) return;
     p.ended = true;
+    if (p.targetDb !== null && !p.partial) this.S.log('servo', { type: p.type, servo: +p.servoDb.toFixed(1), boost: +p.boostDb.toFixed(1), target: +p.targetDb.toFixed(1) });
     if (p.onEnd) { try { p.onEnd(now); } catch (e) { console.error('[artefacts] onEnd', e); } }
   }
 
+  /**
+   * Back-to-back artefacts: the previous piece is not cut. It stops scheduling new events and its modifiers (space, filter,
+   * foreground weight) ease out over FADE_SECONDS while the new piece's ease in; its already-sounding notes ring on. The
+   * 'finale' / 'all' case releases everything in the same way. Pieces with no sound of their own to carry (cadences,
+   * partials) end at once.
+   */
   _cutAll(t, which) {
     for (const p of this.pieces) {
       if (p.ended) continue;
-      if (which === 'all' || p.kind === 'artefact' || p.kind === 'partial' || p.kind === 'cadence') { p.dead = true; this._end(p, t); }
+      if (which === 'all' || p.kind === 'artefact' || p.kind === 'partial' || p.kind === 'cadence') {
+        p.dead = true;
+        if (p.kind === 'artefact' && !p.partial && p.modsFn && !p.fade) {
+          p.fade = { t0: t, dur: FADE_SECONDS }; p.i = p.acts.length; for (const st of p.steps) st.next = Infinity;
+          if (p.onEnd) { const f = p.onEnd; p.onEnd = null; try { f(t); } catch (e) { console.error('[artefacts] onEnd', e); } }       // harmony can't crossfade: a lifted key comes home at once
+        }
+        else if (!p.fade) this._end(p, t);
+      }
     }
     this.pieces = this.pieces.filter((p) => !p.ended);
   }
@@ -221,6 +287,8 @@ export class Artefacts {
   // ------------------------------------------------------------------------------------------------
   mods(now) {
     const A = { chMul: {}, chAdd: {}, chSet: {}, fast: false };
+    const owned = new Set();            // keys already set by a piece: a later piece blends with them rather than replacing them
+    let fromPiece = false;
     const merge = (m) => {
       if (!m) return;
       for (const k of Object.keys(m)) {
@@ -237,22 +305,29 @@ export class Artefacts {
         else if (k === 'energy' || k === 'energyFloor') A[k] = Math.max(A[k] ?? 0, v);
         else if (k === 'energyMax') A[k] = Math.min(A[k] ?? 1, v);
         else if (k === 'freeze') A.freeze = A.freeze || v;
+        else if (fromPiece && owned.has(k)) A[k] = blendSpec(A[k], v);
         else A[k] = v;
+        if (fromPiece) owned.add(k);
       }
     };
     merge(this._proxMods());
+    fromPiece = true;
     for (const p of this.pieces) {
       if (p.ended || !p.modsFn) continue;
       A.fast = true;
       const rel = now - p.t0;
-      merge(p.modsFn(rel, p));
+      const fade = p.fade ? Math.pow(clamp(1 - (now - p.fade.t0) / p.fade.dur, 0, 1), 1.3) : 1;         // 1 → 0 while released
+      merge(scaleMods(p.modsFn(rel, p), fade));
       if (p.kind === 'artefact' && !p.partial) {
         const g = p.shape ? p.shape(rel, p.dur) : settle(rel, p.dur);
-        const boost = Math.pow(10, (p.boostDb * clamp(1 - (rel - 4) / 6, 0, 1)) / 20);
-        merge({ frontGain: g * boost });
+        const boost = Math.pow(10, ((p.boostDb + p.servoDb) * clamp(1 - (rel - 6.2) / 4, 0, 1)) / 20);
+        const room = rel > 4 ? lerp(1, 0.45, smoothstep((this.S.proxMax - 0.25) / 0.45)) : 1;        // the piece steps back as the next place comes near
+        const fg = g * boost * fade * room;
+        A.frontGain = A.frontGain === undefined ? fg : Math.max(A.frontGain, fg);
         // the piece's wash (extra reverb / delay / grain level) settles with its foreground, so a long bloom doesn't stay at entry loudness
-        const ws = clamp(0.45 + 0.55 * g, 0.5, 1);
-        if (A.reverbWet !== undefined) A.reverbWet = 1 + (A.reverbWet - 1) * ws;
+        const sv = (p.boostDb + p.servoDb) * clamp(1 - (rel - 6.2) / 4, 0, 1);
+        const ws = clamp(0.32 + 0.68 * g, 0.4, 1) * (sv < 0 ? Math.pow(10, (sv * 0.8) / 20) : 1);       // a piece steered down takes its wash with it
+        if (A.reverbWet !== undefined) A.reverbWet = 1 + (A.reverbWet - 1) * Math.max(ws, 0.55);
         if (A.delayWet !== undefined) A.delayWet = 1 + (A.delayWet - 1) * ws;
         if (A.gran && A.gran.mix && typeof A.gran.mix === 'object') A.gran = { ...A.gran, mix: { v: A.gran.mix.v * ws, w: A.gran.mix.w } };
       }
@@ -651,13 +726,13 @@ export class Artefacts {
       if (i === 0 && sec > 0) draw();                       // mutation every 16 steps
       const x = clamp(rel / (P.dur - 3), 0, 1);
       const o = (p) => rng.float() < p;
-      if (pats.kick[i] && o(0.9)) kit('kick', t, 0.5 + 0.3 * rng.float(), { decay: 0.3 + 0.3 * rng.float() });
-      if (pats.snare[i] && o(0.85)) kit('snare', t, 0.4 + 0.3 * rng.float(), { tone: rng.float(), decay: 0.12 + 0.12 * rng.float(), pitch: 0.9 + 0.3 * rng.float() });
-      if (pats.hat[i] && o(0.7)) kit('hatC', t, 0.15 + 0.25 * rng.float(), { tone: rng.float(), pan: (rng.float() * 2 - 1) * 0.5, decay: 0.03 + 0.03 * rng.float() });
-      if (pats.snap[i] && o(0.62)) kit('snap', t, 0.35 + 0.3 * rng.float(), { tone: rng.float(), pitch: 0.8 + 0.8 * rng.float() });
-      if (pats.rim[i] && o(0.5)) kit('rim', t, 0.35 + 0.25 * rng.float(), { pan: (rng.float() * 2 - 1) * 0.5, pitch: 0.8 + 0.5 * rng.float() });
-      if (pats.grain[i] && o(0.45)) kit('grainBurst', t, 0.4, { length: 0.1 + 0.25 * rng.float(), tone: rng.float() });
-      if (pats.tom[i] && o(0.5)) kit(rng.pick(['tomH', 'tomM', 'tomL']), t, 0.5 + 0.3 * rng.float(), { midi: S.rootNow() - 12 + rng.pick([0, 7, 12]), pan: (rng.float() * 2 - 1) * 0.4 });
+      if (pats.kick[i] && o(0.9)) kit('kick', t, 0.8 + 0.2 * rng.float(), { decay: 0.3 + 0.3 * rng.float() });
+      if (pats.snare[i] && o(0.85)) kit('snare', t, 0.7 + 0.25 * rng.float(), { tone: rng.float(), decay: 0.12 + 0.12 * rng.float(), pitch: 0.9 + 0.3 * rng.float() });
+      if (pats.hat[i] && o(0.7)) kit('hatC', t, 0.3 + 0.3 * rng.float(), { tone: rng.float(), pan: (rng.float() * 2 - 1) * 0.5, decay: 0.03 + 0.03 * rng.float() });
+      if (pats.snap[i] && o(0.62)) kit('snap', t, 0.6 + 0.3 * rng.float(), { tone: rng.float(), pitch: 0.8 + 0.8 * rng.float() });
+      if (pats.rim[i] && o(0.5)) kit('rim', t, 0.6 + 0.3 * rng.float(), { pan: (rng.float() * 2 - 1) * 0.5, pitch: 0.8 + 0.5 * rng.float() });
+      if (pats.grain[i] && o(0.45)) kit('grainBurst', t, 0.7, { length: 0.1 + 0.25 * rng.float(), tone: rng.float() });
+      if (pats.tom[i] && o(0.5)) kit(rng.pick(['tomH', 'tomM', 'tomL']), t, 0.8 + 0.2 * rng.float(), { midi: S.rootNow() - 12 + rng.pick([0, 7, 12]), pan: (rng.float() * 2 - 1) * 0.4 });
       // crash accents each two bars of the original grid
       if (k % 64 === 0 && k > 0) kit('crash', t, 0.65, { tone: 0.8, decay: 3 });
       if (k % 32 === 16) kit('metal', t, 0.35, { midi: S.midi(rng.int(0, 5), 24), decay: 0.5, tone: rng.float() });
@@ -678,8 +753,8 @@ export class Artefacts {
       const kc = { crush: cr };
       return {
         pulseHold: true, energyFloor: 0.6 * w,
-        chAdd: { fmain: kc, fcym: { crush: cr * 0.7 }, ftex: kc, kmain: kc, kcym: { crush: cr * 0.6 }, ktex: kc, lead: { crush: cr * 0.25 }, fore: { crush: cr * 0.4 } },
-        masterDrive: 0.07 * w, lowCut: { v: 380, w }, reverbSize: { v: 4.5, w }, reverbWet: 1 - 0.15 * w + 0.6 * ramp(rel, P.dur - 3, P.dur),
+        chAdd: { fmain: { ...kc, drive: 0.3 * w }, fcym: { crush: cr * 0.7, drive: 0.15 * w }, ftex: { ...kc, drive: 0.25 * w }, kmain: kc, kcym: { crush: cr * 0.6 }, ktex: kc, lead: { crush: cr * 0.25 }, fore: { crush: cr * 0.4 } },
+        masterDrive: 0.07 * w, lowCut: { v: 230, w }, chMul: { fmain: { gain: 1 + 0.4 * w }, fcym: { gain: 1 + 0.25 * w }, ftex: { gain: 1 + 0.3 * w } }, reverbSize: { v: 4.5, w }, reverbWet: 1 - 0.15 * w + 0.6 * ramp(rel, P.dur - 3, P.dur),
         gran: { size: { v: 0.04, w }, density: { v: 45, w }, reverse: { v: 0.6, w }, pitchSpread: { v: 14, w }, mix: { v: 1.0, w } },
       };
     });
@@ -701,13 +776,13 @@ export class Artefacts {
     // timpani roll, accelerating
     P.every(0.5, 5.6, (rel) => lerp(b * 0.8, 0.065, Math.pow(clamp((rel - 0.5) / 5, 0, 1), 1.25)), (t, rel, k) => {
       const x = clamp((rel - 0.5) / 5, 0, 1);
-      kit('timp', t, lerp(0.3, 1.0, x), { midi: S.rootNow() - 12 + (k % 2 ? 7 : 0), decay: 1.4 + 2 * x, pan: (k % 2 ? 0.3 : -0.3) });
+      kit('timp', t, lerp(0.25, 0.72, x), { midi: S.rootNow() - 12 + (k % 2 ? 7 : 0), decay: 1.4 + 2 * x, pan: (k % 2 ? 0.3 : -0.3) });
     });
     // ride crescendo with open hats on the off-beats
     P.every(1.5, 19, b * 0.5, (t, rel, k) => {
       const x = clamp((rel - 1.5) / 17, 0, 1);
-      kit('ride', t, lerp(0.2, 0.8, x), { tone: 0.35 + 0.5 * x, decay: 1.8 + x });
-      if (k % 2 === 1) kit('hatO', t, 0.2 + 0.2 * x, { tone: 0.6 + 0.3 * S.rng.float(), pan: (S.rng.float() * 2 - 1) * 0.5 });
+      kit('ride', t, lerp(0.2, 0.5, x), { tone: 0.35 + 0.5 * x, decay: 1.8 + x });
+      if (k % 2 === 1) kit('hatO', t, 0.15 + 0.15 * x, { tone: 0.6 + 0.3 * S.rng.float(), pan: (S.rng.float() * 2 - 1) * 0.5 });
     });
     P.every(4, P.dur - 8, b * 4, (t, rel, k) => { kit('kick', t, 0.8, { decay: 0.5 }); kit('snare', t + b * 2, 0.7, { tone: 0.7 }); if (k % 2 === 0) kit('crash', t, 0.5, { tone: 0.7 }); });
     // the motif in octaves on lead and bass (whole in nevis: identity transform), three times, climbing a step each
@@ -717,25 +792,25 @@ export class Artefacts {
       for (let i = 0; i < M.degrees.length; i++) {
         const d = M.degrees[i] + r;
         P.at(start + onset[i], (t) => {
-          lead(lm(d, 0), t, b * M.durations[i] * 0.95, 0.9); bell(lm(d, 1), t, 2.4, 0.55); bell(lm(d, 2), t + 0.02, 2, 0.3);
+          lead(lm(d, 0), t, b * M.durations[i] * 0.95, 0.72); bell(lm(d, 1), t, 2.4, 0.45); bell(lm(d, 2), t + 0.02, 2, 0.24);
           let bm = S.midi(d, -24); while (bm < 28) bm += 12; while (bm > 52) bm -= 12;
-          bass(bm, t, b * M.durations[i] * 0.95, 0.85);
+          bass(bm, t, b * M.durations[i] * 0.95, 0.7);
         });
       }
     }
     // tutti pads
     P.every(2.5, P.dur - 9, b * 8, (t, rel, k) => {
       const c = S.chordTonesForPad(0, [0, 2, 4, 8]);
-      pad(c, t, b * 8 + 2, 0.8); cpad(c.map((m) => m + 12), t + 0.1, b * 8, 0.45);
+      pad(c, t, b * 8 + 2, 0.66); cpad(c.map((m) => m + 12), t + 0.1, b * 8, 0.36);
     });
     P.at(P.dur - 8, (t) => { kit('crash', t, 1.0, { tone: 0.75, decay: 8 }); kit('gong', t, 0.8, { midi: S.rootNow() - 12, decay: 13 }); kit('timp', t, 1.0, { midi: S.rootNow() - 12 }); lead(lm(0, 1), t + 0.2, 6, 0.85); bell(lm(0, 2), t + 0.2, 8, 0.5); });
-    P.shape = (rel) => (rel < 2.5 ? 1 : rel < 5 ? lerp(1, 0.78, (rel - 2.5) / 2.5) : rel < P.dur - 9 ? 0.82 + 0.1 * Math.sin(rel * 0.7) : lerp(0.82, 1, ramp(rel, P.dur - 9, P.dur - 7)) * (1 - 0.4 * ramp(rel, P.dur - 3, P.dur)));
+    P.shape = (rel) => (rel < 2.5 ? 1 : rel < 5 ? lerp(1, 0.58, (rel - 2.5) / 2.5) : rel < P.dur - 9 ? 0.58 + 0.06 * Math.sin(rel * 0.7) : lerp(0.58, 1, ramp(rel, P.dur - 9, P.dur - 7)) * (1 - 0.4 * ramp(rel, P.dur - 3, P.dur)));
     P.mods((rel) => {
       const w = env(rel, 2.5, P.dur - 9, 7);
       return {
         reverbSize: { v: 16, w }, reverbWet: 1 + 0.25 * w, delayFb: { v: 0.62, w }, delayWet: 1 + 0.25 * w, delayTime: { v: b * 0.75, w },
         gran: { pitch: { v: 12, w }, pitchSpread: { v: 7, w }, mix: { v: 0.95, w }, density: { v: 30, w } },
-        energyFloor: 0.97 * Math.min(1, w * 2), masterDrive: 0.1 * w,
+        energyFloor: 0.97 * Math.min(1, w * 2) * (1 - 0.24 * ramp(rel, 5, 9) * (1 - ramp(rel, P.dur - 9, P.dur - 7))), masterDrive: 0.1 * w,       // the tutti bed relaxes to flow in the body, back to swell for the close
         chMul: { pad: { cutoff: 1 + 0.5 * w }, drone: { cutoff: 1 + 0.4 * w } }, drone: { levelMul: 1 + 0.25 * w, cutMul: 1 + 0.5 * w },
       };
     });
@@ -872,7 +947,7 @@ export class Artefacts {
       const v = voiceChord(this.concordState.prev, pcs.map((p) => p + 36), center - 3, center + 14);
       this.concordState.prev = v;
       const q = S.cond.quantise(now + 0.05);
-      V.cPad.chord(v, S.at(q.t), 11, 0.42);
+      V.cPad.chord(v, S.at(q.t), 11, 0.24 * (1 - 0.35 * S.C.d));
       S.count('notes', 'cPad');
       this.concordState.next = now + 9;
       S.log('concord-pad', { n });
@@ -896,7 +971,7 @@ export class Artefacts {
     const q = S.cond.quantise(now + 0.05);
     let t = q.t;
     const type = r.type;
-    const vel = 0.1 + 0.2 * clamp(r.strength, 0, 1);
+    const vel = (0.07 + 0.15 * clamp(r.strength, 0, 1)) * (1 - 0.4 * S.C.d);
     let M = S.motif();
     const op = { trig: null, cairn: 'retro', lochan: 'invert', waterfall: 'rotate:2', bothy: null, stone: null, crag: null, summit: null }[type];
     if (op) M = transformMotif(M, op);

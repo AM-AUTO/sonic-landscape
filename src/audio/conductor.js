@@ -160,7 +160,8 @@ export class Conductor {
     if (phraseBars) this.phraseBars = phraseBars;
   }
 
-  setEnergy(e) { this.energyTarget = Math.max(0, Math.min(1, e)); }
+  /** `fallTc`: seconds the smoothed energy takes to fall (drift passes a short one so the pulse really lets go) */
+  setEnergy(e, fallTc = 7) { if (Number.isFinite(e)) this.energyTarget = Math.max(0, Math.min(1, e)); this.fallTc = Number.isFinite(fallTc) ? fallTc : 7; }
 
   /** force a section immediately (artefacts like Apex), no fill */
   forceSection(sec) {
@@ -207,7 +208,9 @@ export class Conductor {
     const k = (tc) => 1 - Math.exp(-dt / tc);
     this.bpm += (this.bpmTarget - this.bpm) * k(6);
     this.swing += (this.swingTarget - this.swing) * k(4);
-    this.energy += (this.energyTarget - this.energy) * k(this.energyTarget > this.energy ? 2.2 : 7);
+
+    if (!Number.isFinite(this.energy)) this.energy = this.energyTarget;
+    this.energy += (this.energyTarget - this.energy) * k(this.energyTarget > this.energy ? 2.2 : (this.fallTc || 7));
 
     // large gap or fallen far behind: skip ahead rather than burst
     const behind = now - this.nextTime;

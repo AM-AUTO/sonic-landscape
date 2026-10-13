@@ -6,14 +6,16 @@
 //   node tools/render-audio.mjs [--level <id[,id]>] [--seconds N] [--no-wrong] [--no-wav] [--parallel N (default 3)] [--stems]
 //                               [--mute ch,ch --tag name]  (diagnostic stems: mute channels, write <id>.<name>.wav)
 //                               [--switch | --switch-only]  (also / only run the rannoch -> affric hand-over check; always run on a full album)
+//                               [--tweak 'js']  (diagnostic: run js(audio, score) after setLevel)
 //                               [--stroll]  (diagnostic: walk instead of run between waypoints)
 //                               [--idle N]  (diagnostic: stand still for N s from the spawn instead of walking — Eno / Drift check)
 //
 // FAILS (exit 1) if: any NaN; peak > -0.3 dBFS; > 5 % silent 100 ms windows (< -60 dBFS); a full artefact rises < +4 dB RMS
 // versus the preceding 6 s AND is not (>= +2 dB with >= 30 % spectral-centroid change); P90 - P10 of the 1 s RMS curve < 14 dB;
-// the Drift coda (20 s of standing still after the finale) is above -24 dBFS; assynt's mean RMS is above -21 dBFS; the chroma's
+// the Drift coda (20 s of standing still after the finale) is above -24 dBFS; assynt's mean RMS is above -22 dBFS; the chroma's
 // top pitch class is outside the level's root triad; (full album) the union parameter-audit dead list is not empty; the level
-// hand-over glitches; or any console error.
+// hand-over glitches; a smoothed control (energy / drift / altitude) goes non-finite; or any console error.
+// Also prints the level by section (ebb / flow / swell / while an artefact sounds; targets -26..-30 / ~-20 / ~-15 / -11..-15 peaks).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,7 +108,7 @@ try {
     while (next < levels.length) {
       const id = levels[next++];
       const t0 = Date.now();
-      const r = await pg.evaluate(([i, o]) => window.renderLevel(i, o), [id, { seconds, noWrong: flag('--no-wrong'), upload: !flag('--no-wav'), idle: val('--idle') ? Number(val('--idle')) : 0, mute: muteList, stroll: flag('--stroll') }]);
+      const r = await pg.evaluate(([i, o]) => window.renderLevel(i, o), [id, { seconds, noWrong: flag('--no-wrong'), upload: !flag('--no-wav'), idle: val('--idle') ? Number(val('--idle')) : 0, mute: muteList, stroll: flag('--stroll'), tweak: val('--tweak') || '' }]);
       console.log(`rendered ${id}: ${r.duration.toFixed(0)} s audio in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
       done.set(id, r);
     }
@@ -127,13 +129,14 @@ try {
     fs.writeFileSync(path.join(outDir, id + tag + '.json'), JSON.stringify({ ...rest, auditDead: audit.dead }, null, 1));
     for (const e of r.errors) failures.push(`${id}: ${e}`);
     if (r.nan) failures.push(`${id}: ${r.nan} NaN samples`);
+    if (r.ctl.some((c) => c.slice(1, 4).some((v) => !Number.isFinite(v)))) failures.push(`${id}: a smoothed control (energy / drift / altitude) went non-finite`);
     if (!(r.peakDb <= -0.3)) failures.push(`${id}: peak ${r.peakDb} dBFS > -0.3`);
     if (r.silentPct > 5) failures.push(`${id}: ${r.silentPct}% silent 100 ms windows (> 5%)`);
     for (const a of r.artefacts) if (a.full && !a.pass) failures.push(`${id}: artefact ${a.type}@${a.t}s weak (dRMS ${a.dRmsDb} dB, dCentroid ${a.dCentroidPct}%)`);
     if (!idleRun) {
       if (r.dynP90P10 < 14) failures.push(`${id}: dynamics P90-P10 of 1 s RMS is ${r.dynP90P10} dB (< 14)`);
       if (r.codaDb !== null && r.codaDb > -24) failures.push(`${id}: Drift coda ${r.codaDb} dBFS (> -24)`);
-      if (id === 'assynt' && r.rmsDb > -21) failures.push(`assynt: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
+      if (id === 'assynt' && r.rmsDb > -22) failures.push(`assynt: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
     }
     if (!r.chromaInTriad) failures.push(`${id}: chroma top ${r.chromaTop} not in root triad ${r.rootTriad.join('-')}`);
   }
@@ -156,6 +159,16 @@ try {
     const fulls = r.artefacts.filter((a) => a.full);
     const minA = fulls.length ? fulls.map((a) => `${a.type}:${a.dRmsDb >= 0 ? '+' : ''}${a.dRmsDb.toFixed(1)}dB/${a.dCentroidPct >= 0 ? '+' : ''}${a.dCentroidPct.toFixed(0)}%`).join(' ') : '-';
     console.log(r.id.padEnd(10) + (r.root + ' ' + r.mode).padEnd(10) + f(r.bpm, 4, 0) + f(r.duration, 6, 0) + f(r.peakDb, 7) + f(r.rmsDb, 7) + f(r.dynP90P10, 7) + f(r.codaDb ?? NaN, 6) + f(r.silentPct, 6) + f(r.centroidMean, 6, 0) + ('  ' + r.chromaTop + '|' + r.rootTriad.join('-')).padEnd(22) + (f(r.nodes.perSecMean, 4, 0) + '/' + String(r.nodes.perSecMedian).padStart(3)).padStart(10) + ' ' + minA);
+  }
+
+  // ---- level by section: mean 1 s RMS (power-averaged) of the seconds spent in each conductor section, and while an artefact sounds
+  console.log('\nLEVEL BY SECTION (dBFS, 1 s RMS power-mean; [seconds])');
+  console.log('level'.padEnd(10) + 'ebb'.padStart(14) + 'flow'.padStart(14) + 'swell'.padStart(14) + 'artefact'.padStart(14) + 'max 1 s'.padStart(10));
+  for (const r of results) {
+    const b = { ebb: [], flow: [], swell: [], art: [] };
+    for (const c of r.ctl) { const t = c[0]; if (t < 3 || t >= r.rmsCurve.length - 5) continue; const v = r.rmsCurve[t]; (c[6] > 0 ? b.art : b[c[4]] || []).push(v); }
+    const pm = (a) => (a.length ? (10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length)).toFixed(1) + ' [' + a.length + ']' : 'n/a');
+    console.log(r.id.padEnd(10) + pm(b.ebb).padStart(14) + pm(b.flow).padStart(14) + pm(b.swell).padStart(14) + pm(b.art).padStart(14) + Math.max(...r.rmsCurve.slice(3, r.rmsCurve.length - 5)).toFixed(1).padStart(10));
   }
 
   // ---- audit (union over levels)

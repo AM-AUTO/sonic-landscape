@@ -16,6 +16,7 @@
  */
 import { degreeToMidi } from './theory.js';
 import { Drone } from './voices/drone.js';
+import { TEXTURE_NOISE } from './voices/texture.js';
 import { Conductor, PatternGen, MelodyMarkov, humanise } from './conductor.js';
 import { pickChordIndex, chordTones, chordRoot, voiceChord, droneNotes, nearestTone, pc } from './harmony.js';
 import {
@@ -89,7 +90,7 @@ export class Score {
     this.heading = 0; this.phase = 'dawn';
     this.prox = {};      // type → closeness 0..1
     this.proxMax = 0;
-    this.heardPow = 1e-3; this.heardDb = -30; this.rawPow = 0; this.levelHoldUntil = 0;
+    this.heardPow = 1e-3; this.heardDb = -30; this.heardFastPow = 1e-3; this.heardFastDb = -30; this.rawPow = 0; this.levelHoldUntil = 0;
     this.lvPow = Math.pow(10, -24 / 10); this.trimDb = 0; this._lvBuf = null; this.gainNow = 1; this.gainNom = 1;
     this.lastNow = null; this.lastCtl = -1; this.lastFxSlow = -99; this.lastReverbT = -99; this.lastReverbSize = 0; this.lastDelayTime = 0;
     this.lastPingPong = null; this.lastScaleKey = ''; this.frozen = false;
@@ -219,6 +220,37 @@ export class Score {
     this.art.reset();
     this.log('level', { id: prof.id, root: prof.root, bpm: prof.bpm });
     this.levelStartT = t;
+    this._queueWarm(prof);
+  }
+
+  /**
+   * Pre-warming: everything that is expensive to make on the main thread (noise buffers, Karplus-Strong pluck buffers) is made
+   * ahead of need, one slice every 0.05–0.1 s after a level starts, so no update has to synthesise a buffer at trigger time.
+   */
+  _queueWarm(prof) {
+    const eng = this.engine, q = [];
+    for (const [k, s] of TEXTURE_NOISE) q.push(() => eng.noiseWarm(k, s));
+    const tex = this.stage.v.texture;
+    q.push(() => tex.warmCrackle(0), () => tex.warmCrackle(1));      // an item returning false is run again on the next tick (incremental work)
+    const pl = this.stage.v.pluck;
+    const modes = [prof.mode, prof.dawn, prof.night].filter(Boolean);
+    const seen = new Set();
+    for (let m = prof.lead.base - 14; m <= prof.lead.base + 26; m++) {
+      const rel = (((m - prof.root) % 12) + 12) % 12;
+      if (!modes.some((md) => md.includes(rel)) || seen.has(m)) continue;
+      seen.add(m);
+      q.push(() => pl.warm(m));
+    }
+    this.warmQ = q; this.lastWarm = this.now;
+  }
+  _warm(now) {
+    if (!this.warmQ || !this.warmQ.length || now - this.lastWarm < (this.warmBusy ? 0.05 : 0.1)) return;
+    this.lastWarm = now;
+    try {
+      const done = this.warmQ[0]() !== false;          // an item returning false is incremental work: run again at the next tick
+      if (done) this.warmQ.shift();
+      this.warmBusy = !done;
+    } catch (e) { this.warmQ.length = 0; }
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -233,14 +265,18 @@ export class Score {
     this.lastNow = now;
     this.state = state;
     this._read(state, dt, now);
-    this.cond.setEnergy(this._energyTarget());
+    this.cond.setEnergy(this._energyTarget(), 7 - 4.5 * this.C.d);
     this.cond.setTempo(this.profile.bpm * this._tempoMul(), this.profile.swing);
     if (!this.cond.started) this.cond.update(now);       // establish the grid before quantising events
     if (this.initChord) { this.initChord = false; this._applyChord(this.profile.chords[0], now + 0.12, { reason: 'init' }); }
     this._events(state.events || [], now, state);
     this.cond.update(now);
     this.art.update(now, state, dt);
-    if (now - this.lastCtl >= 0.1) { this.lastCtl = now; this._control(now, dt); }
+    this._warm(now);
+    if (now - this.lastCtl >= 0.1) {
+      const cdt = this.lastCtl < 0 ? 0.1 : clamp(now - this.lastCtl, 0.1, 1);        // time since the previous control tick (the smoothers inside are per tick, not per update)
+      this.lastCtl = now; this._control(now, cdt);
+    }
   }
 
   _read(state, dt, now) {
@@ -330,7 +366,7 @@ export class Score {
         case 'slide-start': this._slide(true, now); break;
         case 'slide-end': this._slide(false, now); break;
         case 'poi':
-          if (ev.full) { const P = this.art.play(ev.poi.type, { t: now, quality: ev.quality, poi: ev.poi, gate: gateNow }); if (P) { this.levelHoldUntil = now + 9; this.log('boost', { type: ev.poi.type, boost: +P.boostDb.toFixed(1), heard: +this.heardDb.toFixed(1) }); } }
+          if (ev.full) { const P = this.art.play(ev.poi.type, { t: now, quality: ev.quality, poi: ev.poi, gate: gateNow }); if (P) { this.levelHoldUntil = now + 9; this.log('boost', { type: ev.poi.type, boost: +(P.boostDb + P.servoDb).toFixed(1), target: +P.targetDb.toFixed(1), heard: +this.heardDb.toFixed(1) }); } }
           else this.art.playPartial(ev.poi.type, { t: now, quality: ev.quality, missing: ev.missing, poi: ev.poi });
           this.log('poi', { type: ev.poi.type, full: ev.full });
           break;
@@ -871,9 +907,16 @@ export class Score {
 
     // --- channels: all ten parameters, baseline from the level's colouring
     const bedMul = Math.pow(10, ((prof.bedDb || 0) + bedCurveDb(C.e)) / 20);
+    // front channels (lead, resonance echoes, the concord pad, artefact bodies) step back while the land is quiet and no
+    // artefact sounds, and a little more in drift: the 'calm' is what makes an artefact's arrival an event
+    const calmDb = this.art.activeCount ? 0 : -6.5 * (1 - smoothstep(C.e / 0.5)) - 3 * C.d;
+    const frontMul = Math.pow(10, ((prof.frontDb || 0) + calmDb) / 20);
+    const leadMul = frontMul;
     for (const name of CHANNEL_NAMES) {
       const o = applyChannelMods(channelTarget(name, this.base[name], C, prof), name, A);
       if (bedMul !== 1 && !FRONT_CHANNELS.includes(name)) o.gain *= bedMul;
+      else if (name === 'lead') o.gain *= leadMul;
+      else if (frontMul !== 1) o.gain *= frontMul;
       if (this.mute && this.mute.has(name)) o.gain = 0;
       const cur = ch[name].state;
       const diff = {};
@@ -932,7 +975,7 @@ export class Score {
     if (!!F.freeze !== this.frozen) { gr.freeze(F.freeze, ts); this.frozen = !!F.freeze; }
     ms.setDrive(F.master.drive, ts); ms.setLowCut(F.master.lowCut, ts); ms.setHighCut(F.master.highCut, ts);
     const trim = this._leveler(now, dt);
-    this.gainNom = this.volume * F.master.gain * 0.84;
+    this.gainNom = this.volume * F.master.gain * 0.8 * Math.pow(10, -5 * C.d / 20);
     this.gainNow = this.gainNom * Math.pow(10, trim / 20);
     ms.setGain(this.gainNow, ts);
   }
@@ -944,18 +987,27 @@ export class Score {
    * quiet; short swells and artefact blooms pass untouched; sustained tutti is eased down and kept out of the limiter.
    */
   _leveler(now, dt) {
-    const an = this.engine.analyser;
-    if (!an || typeof an.getFloatTimeDomainData !== 'function') return 0;
-    if (!this._lvBuf || this._lvBuf.length !== an.fftSize) this._lvBuf = new Float32Array(an.fftSize);
-    an.getFloatTimeDomainData(this._lvBuf);
+    const eng = this.engine;
+    const aL = eng.meterL || eng.analyser, aR = eng.meterR || null;
+    if (!aL || typeof aL.getFloatTimeDomainData !== 'function') return 0;
+    if (!this._lvBuf || this._lvBuf.length !== aL.fftSize) { this._lvBuf = new Float32Array(aL.fftSize); this._lvBuf2 = new Float32Array(aL.fftSize); }
+    aL.getFloatTimeDomainData(this._lvBuf);
     let e = 0;
     const buf = this._lvBuf;
     for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+    if (aR && typeof aR.getFloatTimeDomainData === 'function') {            // stereo power: the mean of both channels
+      aR.getFloatTimeDomainData(this._lvBuf2);
+      let e2 = 0; const b2 = this._lvBuf2;
+      for (let i = 0; i < b2.length; i++) e2 += b2[i] * b2[i];
+      e = 0.5 * (e + e2);
+    }
     // the analyser sits after the final gain: refer the reading back to the level the mix would have with no trim
     const g = Math.max(1e-3, this.gainNow || 1);
     this.rawPow = e / buf.length;
     this.heardPow += (this.rawPow - this.heardPow) * (1 - Math.exp(-dt / 3));      // ≈ the last six seconds, as heard
     this.heardDb = 10 * Math.log10(this.heardPow + 1e-12);
+    this.heardFastPow += (this.rawPow - this.heardFastPow) * (1 - Math.exp(-dt / 0.8));
+    this.heardFastDb = 10 * Math.log10(this.heardFastPow + 1e-12);
     const p = e / buf.length / (g * g);
     if (Number.isFinite(p)) this.lvPow += (p - this.lvPow) * (1 - Math.exp(-dt / (p > this.lvPow ? 9 : 16)));
     const db = 10 * Math.log10(this.lvPow + 1e-12) + 20 * Math.log10(this.gainNom || 1);
