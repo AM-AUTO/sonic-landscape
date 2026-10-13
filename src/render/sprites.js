@@ -544,3 +544,31 @@ export function allSprites() {
   out.push(walkerSprite('E', 'slide'), walkerSprite('S', 'wade', 0), walkerSprite('S', 'wade', 1), walkerSprite('E', 'mud', 0));
   return out;
 }
+
+// ------------------------------------------------------------ bearing arrows
+/** 0=E, 1=SE, 2=S, 3=SW, 4=W, 5=NW, 6=N, 7=NE (screen space, y down). */
+export function octantOf(bearing) { return (((Math.round(bearing / (Math.PI / 4)) % 8) + 8) % 8); }
+const ARROW_V = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+/** 7x7 pixel arrow pointing in one of 8 directions, single colour. Cached. */
+export function arrowSprite(oct, color) {
+  const key = 'arrow' + oct + color;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const c = makeCanvas(7, 7);
+  const x = c.getContext('2d');
+  x.fillStyle = color;
+  const [dx, dy] = ARROW_V[oct & 7];
+  const pt = (px, py) => x.fillRect(3 + px, 3 + py, 1, 1);
+  for (let i = -3; i <= 3; i++) pt(dx * i, dy * i);
+  // head: two prongs trailing back from the tip, one step off the shaft axis
+  const tx = dx * 3, ty = dy * 3;
+  if (dx && dy) { pt(tx - dx, ty); pt(tx - 2 * dx, ty); pt(tx, ty - dy); pt(tx, ty - 2 * dy); }
+  else if (dx) { pt(tx - dx, ty - 1); pt(tx - dx, ty + 1); pt(tx - 2 * dx, ty - 2); pt(tx - 2 * dx, ty + 2); }
+  else { pt(tx - 1, ty - dy); pt(tx + 1, ty - dy); pt(tx - 2, ty - 2 * dy); pt(tx + 2, ty - 2 * dy); }
+  cache.set(key, c);
+  return c;
+}
+
+/** 5x4 ink tick (woken marker). */
+const TICK_ART = ['....k', '...k.', 'k.k..', '.k...'];
+export function tickSprite(color = PAL.ink) { return artCanvas('tick' + color, TICK_ART, { mono: color }); }

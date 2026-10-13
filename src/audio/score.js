@@ -85,7 +85,7 @@ export class Score {
     this.slideUntil = 0;
 
     // controls (smoothed)
-    this.C = { a: 0.3, e: 0.1, d: 0, s: 0, v: 0, sw: 0, n: 0, w: 0, water: 0, snow: 0, bog: 0, scree: 0, rock: 0, wood: 0, path: 0, glitch: 0, slide: 0, t: 0, leadPan: 0 };
+    this.C = { a: 0.3, e: 0.1, d: 0, s: 0, v: 0, m: 0, run: 0, sw: 0, n: 0, w: 0, water: 0, snow: 0, bog: 0, scree: 0, rock: 0, wood: 0, path: 0, glitch: 0, slide: 0, t: 0, leadPan: 0 };
     this.cov = { key: 'moor', pending: 'moor', since: 0, appliedKey: null, lastTexChange: -99 };
     this.heading = 0; this.phase = 'dawn';
     this.prox = {};      // type → closeness 0..1
@@ -286,6 +286,9 @@ export class Score {
     C.a = smooth(C.a, altRaw, dt, 3);
     C.s = smooth(C.s, clamp((p.slope || 0) / 0.6, 0, 1), dt, 0.8, 1.6);
     C.v = smooth(C.v, clamp((p.speed || 0) / 8.5, 0, 1), dt, 0.4, 1.2);
+    // momentum: sustained movement builds (≈1.6 s) and is forgotten slowly (≈3 s), so a brief pause doesn't drop the pulse
+    C.m = smooth(C.m, clamp(((p.speed || 0) - 0.6) / 1.4, 0, 1), dt, 1.6, 3.0);
+    C.run = smooth(C.run, clamp(((p.speed || 0) - 5.5) / 2.5, 0, 1), dt, 0.8, 1.5);
     const driftRaw = clamp(((p.still || 0) - 4) / 3, 0, 1) * (this.art.activeCount ? 0.35 : 1);   // an artefact sounding holds the pulse
     C.d = smooth(C.d, smoothstep(driftRaw), dt, 2.5, 0.6);
     this.heading = p.heading ?? 0;
@@ -331,8 +334,11 @@ export class Score {
   }
 
   _energyTarget() {
-    const C = this.C, st = this.state, p = st.player;
-    let e = 0.06 + 0.30 * C.v + 0.35 * C.s * Math.min(1, C.v * 1.5) + 0.12 * C.slide + 0.22 * this.proxMax;
+    const C = this.C;
+    // energy answers movement first (momentum: steady walking on flat ground reaches flow, running approaches swell);
+    // slope, slides and nearby artefacts add on top
+    const lift = this.profile.moveLift ?? 1;
+    let e = 0.06 + 0.22 * C.v + 0.36 * C.m * lift + 0.10 * C.run * lift + 0.35 * C.s * Math.min(1, C.v * 1.5) + 0.12 * C.slide + 0.22 * this.proxMax;
     e *= 1 - 0.95 * C.d;
     const A = this.art.cached;
     if (A && A.energy !== undefined) e = Math.max(e, A.energy);

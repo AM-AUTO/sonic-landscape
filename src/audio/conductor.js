@@ -210,7 +210,7 @@ export class Conductor {
     this.swing += (this.swingTarget - this.swing) * k(4);
 
     if (!Number.isFinite(this.energy)) this.energy = this.energyTarget;
-    this.energy += (this.energyTarget - this.energy) * k(this.energyTarget > this.energy ? 2.2 : (this.fallTc || 7));
+    this.energy += (this.energyTarget - this.energy) * k(this.energyTarget > this.energy ? 1.6 : (this.fallTc || 7));
 
     // large gap or fallen far behind: skip ahead rather than burst
     const behind = now - this.nextTime;
@@ -235,7 +235,7 @@ export class Conductor {
   _evalSection() {
     const e = this.energy, s = this.section;
     const held = this.step - this.sectionStartStep;
-    if (this.pending || held < 24) return null;
+    if (this.pending || held < (s === 'ebb' ? 8 : 24)) return null;       // waking from ebb is quick: movement should be answered in a few seconds
     let to = s;
     if (s === 'ebb') { if (e > 0.3) to = 'flow'; }
     else if (s === 'flow') { if (e > 0.7) to = 'swell'; else if (e < 0.19) to = 'ebb'; }
@@ -270,6 +270,8 @@ export class Conductor {
       // land on a bar line at least half a bar away
       let apply = (Math.floor(step / 16) + 1) * 16;
       if (apply - step < 8) apply += 16;
+      // ebb → flow lands on the next half-bar (at least 4 steps away) rather than waiting for a whole bar line
+      if (this.section === 'ebb' && to === 'flow') { apply = (Math.floor(step / 8) + 1) * 8; if (apply - step < 4) apply += 8; }
       const tApply = this.nextTime + (apply - step) * sd;
       this.pending = { to, applyStep: apply };
       if (this.hooks.onTransition) this.hooks.onTransition({ from: this.section, to, t, tApply, lenSec: tApply - t, step, applyStep: apply });
