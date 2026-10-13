@@ -8,8 +8,8 @@
  * Also exports `shadedRock` (a lit, weathered stone of any shape from a rounded boulder to a flat slab) which shelter.js builds on.
  */
 import {
-  paintGreyGradient, paintMistBands, makeMistBands, animMistBands, paintTitleLogo, animLogo, pulseEmbers, paintFootPlate, textClear, paintContourField, paintLichen, paintStrata,
-  stoneMask, monoStone, paintDitherGlow, GREY, liftG, sinkG, bay, clamp, smooth, mix, vnoise, fbm, rampAt, hash2f, mulberry32, C, fieldOf,
+  paintMistBands, makeMistBands, animMistBands, paintTitleLogo, animLogo, pulseEmbers, paintFootPlate, textClear, paintContourField, paintLichen, paintStrata,
+  monoStone, paintDitherGlow, GREY, liftG, sinkG, bay, clamp, smooth, mix, vnoise, fbm, rampAt, hash2f, mulberry32, C,
 } from './kit.js';
 
 export const layout = { prompt: { x: 192, y: 177 }, colors: { subtitle: 'snow' } };
@@ -17,6 +17,10 @@ export const levels = [];
 
 const ROCK_LICHEN = [[C.slate, C.ash, C.fog, C.snow], [C.char, C.slate, C.ash, C.rock], [C.slate, C.ash, C.rock, C.fog]];
 // ===================================================================================== shaded rock
+const POOL = { u8: [], f32: [] };
+/** Reusable zeroed work buffers (a rock needs five grids; painting a hundred of them should not make garbage). */
+function scratchU8(i, n) { let b = POOL.u8[i]; if (!b || b.length < n) b = POOL.u8[i] = new Uint8Array(Math.max(n, 4096)); b.fill(0, 0, n); return b; }
+function scratchF32(i, n) { let b = POOL.f32[i]; if (!b || b.length < n) b = POOL.f32[i] = new Float32Array(Math.max(n, 4096)); b.fill(0, 0, n); return b; }
 /**
  * One lit stone, painted per pixel from a little height map of its own.
  *   o.cx o.cy        centre;  o.rx o.ry  half extents (px) before rotation;  o.rot  radians, lean (positive = clockwise on screen)
@@ -35,35 +39,37 @@ export function shadedRock(r, o) {
   const {
     cx, cy, rx, ry, seed = 1, rot = 0, p = 2.6, planes = 3, rough = 0.5, bevel = Math.min(rx, ry), H = Math.min(rx, ry) * 0.9, bump = 0.5, facet = 2.2,
     strata = 0, spacing = 7, sang = 0, light = [0.8, -0.55], elev = 0.45, tone = 0.45, contrast = 1, grain = 0.1, rim = 1, glow = 0,
-    lichen = 0, cracks = 0, base = 0.2, layer, shadow, haze = 0, lichenTone = 0.5, lichenSize = [1.6, 4.5], clip, flat = 0, taper = 1,
+    lichen = 0, cracks = 0, base = 0.2, layer, shadow, haze = 0, lichenTone = 0.5, lichenSize = [1.6, 4.5], clip, flat = 0, taper = 1, shear = 0, streaks = 0,
   } = o;
   const ll = Math.hypot(light[0], light[1]) || 1, lx = light[0] / ll, ly = light[1] / ll;
   const cosE = Math.sqrt(1 - elev * elev), Lx = lx * cosE, Ly = ly * cosE, Lz = elev;
-  const rr = Math.max(rx, ry) * 1.15 + 6;
-  const x0 = Math.floor(cx - rr), y0 = Math.floor(cy - rr), W = Math.ceil(rr * 2) + 1, Hh = W;
   const cr = Math.cos(rot), sr = Math.sin(rot);
+  const ex = rx * (1 + Math.abs(shear)) * 1.12 + 6, ey = ry * 1.12 + 6;
+  const hx = Math.abs(ex * cr) + Math.abs(ey * sr), hy = Math.abs(ex * sr) + Math.abs(ey * cr);
+  const x0 = Math.floor(cx - hx), y0 = Math.floor(cy - hy), Wd = Math.ceil(hx * 2) + 1, Hd = Math.ceil(hy * 2) + 1;
   const rng = mulberry32(seed * 977 + 13);
   const cuts = [];
   for (let k = 0; k < planes; k++) cuts.push({ a: rng() * Math.PI * 2, d: 0.8 + rng() * 0.2 });
   for (const [a, d] of o.cuts || []) cuts.push({ a, d });
-  const inside = new Uint8Array(W * Hh), sdfIn = new Float32Array(W * Hh);
+  const inside = scratchU8(0, Wd * Hd), sdfIn = scratchF32(0, Wd * Hd);
   const sFreq = 0.07 + rng() * 0.03;
-  for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) {
+  for (let j = 0; j < Hd; j++) for (let i = 0; i < Wd; i++) {
     const X = x0 + i, Y = y0 + j, dx = X - cx, dy = Y - cy;
     let u = (dx * cr + dy * sr) / rx, v = (-dx * sr + dy * cr) / ry;                    // rock-local, normalised
+    u += shear * v;                                                                      // slanted ends: a parallelogram
     if (v > 0) v /= 1 - 0.3 * flat;                                                     // a flatter foot: it sits on the ground
     if (taper !== 1) u /= taper + (1 - taper) * clamp((v + 1) / 2, 0, 1);               // head narrower than the foot
     let f = 1 - Math.pow(Math.pow(Math.abs(u), p) + Math.pow(Math.abs(v), p), 1 / p);
     for (const c of cuts) f = Math.min(f, (c.d - (u * Math.cos(c.a) + v * Math.sin(c.a))) * 0.8);
     f += (fbm(X * sFreq * 0.55, Y * sFreq * 0.55, seed + 3, 2) - 0.5) * rough * 0.7;
-    if (f > 0 && (!clip || clip(X, Y))) inside[j * W + i] = 1;
+    if (f > 0 && (!clip || clip(X, Y))) inside[j * Wd + i] = 1;
   }
   // distance to the outline (chamfer, 2 passes)
   for (let k = 0; k < sdfIn.length; k++) sdfIn[k] = inside[k] ? 1e4 : 0;
-  for (let j = 1; j < Hh - 1; j++) for (let i = 1; i < W - 1; i++) { const k = j * W + i; if (!inside[k]) continue; sdfIn[k] = Math.min(sdfIn[k], sdfIn[k - 1] + 1, sdfIn[k - W] + 1, sdfIn[k - W - 1] + 1.414, sdfIn[k - W + 1] + 1.414); }
-  for (let j = Hh - 2; j > 0; j--) for (let i = W - 2; i > 0; i--) { const k = j * W + i; if (!inside[k]) continue; sdfIn[k] = Math.min(sdfIn[k], sdfIn[k + 1] + 1, sdfIn[k + W] + 1, sdfIn[k + W + 1] + 1.414, sdfIn[k + W - 1] + 1.414); }
-  let minX = W, maxX = -1, minY = Hh, maxY = -1;
-  for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) if (inside[j * W + i]) { if (i < minX) minX = i; if (i > maxX) maxX = i; if (j < minY) minY = j; if (j > maxY) maxY = j; }
+  for (let j = 1; j < Hd - 1; j++) for (let i = 1; i < Wd - 1; i++) { const k = j * Wd + i; if (!inside[k]) continue; sdfIn[k] = Math.min(sdfIn[k], sdfIn[k - 1] + 1, sdfIn[k - Wd] + 1, sdfIn[k - Wd - 1] + 1.414, sdfIn[k - Wd + 1] + 1.414); }
+  for (let j = Hd - 2; j > 0; j--) for (let i = Wd - 2; i > 0; i--) { const k = j * Wd + i; if (!inside[k]) continue; sdfIn[k] = Math.min(sdfIn[k], sdfIn[k + 1] + 1, sdfIn[k + Wd] + 1, sdfIn[k + Wd + 1] + 1.414, sdfIn[k + Wd - 1] + 1.414); }
+  let minX = Wd, maxX = -1, minY = Hd, maxY = -1;
+  for (let j = 0; j < Hd; j++) for (let i = 0; i < Wd; i++) if (inside[j * Wd + i]) { if (i < minX) minX = i; if (i > maxX) maxX = i; if (j < minY) minY = j; if (j > maxY) maxY = j; }
   if (maxX < 0) return null;
   // cast shadow first
   if (shadow) {
@@ -71,9 +77,9 @@ export function shadedRock(r, o) {
     const hMax = baseY - (y0 + minY);
     for (let hh = 0; hh <= hMax; hh += 0.5) {
       const j = Math.round(baseY - hh - y0);
-      if (j < 0 || j >= Hh) continue;
+      if (j < 0 || j >= Hd) continue;
       let lo = 1e9, hi = -1e9;
-      for (let i = 0; i < W; i++) if (inside[j * W + i]) { if (i < lo) lo = i; if (i > hi) hi = i; }
+      for (let i = 0; i < Wd; i++) if (inside[j * Wd + i]) { if (i < lo) lo = i; if (i > hi) hi = i; }
       if (lo > hi) continue;
       const Y = Math.round(baseY + hh * sy), a = Math.round(x0 + lo + hh * sx), b = Math.round(x0 + hi + hh * sx);
       for (let X = a; X <= b; X++) {
@@ -89,10 +95,10 @@ export function shadedRock(r, o) {
     }
   }
   // height map
-  const Z = new Float32Array(W * Hh);
+  const Z = scratchF32(1, Wd * Hd);
   const sc = Math.cos(sang + rot), ss = Math.sin(sang + rot);
-  for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) {
-    const k = j * W + i;
+  for (let j = 0; j < Hd; j++) for (let i = 0; i < Wd; i++) {
+    const k = j * Wd + i;
     if (!inside[k]) continue;
     const X = x0 + i, Y = y0 + j;
     const t = clamp(sdfIn[k] / bevel, 0, 1);
@@ -108,19 +114,19 @@ export function shadedRock(r, o) {
     Z[k] = z;
   }
   const embers = [];
-  const region = new Uint8Array(W * Hh);
-  const ox = new Float32Array(W * Hh);
-  for (let j = 1; j < Hh - 1; j++) for (let i = 1; i < W - 1; i++) {
-    const k = j * W + i;
+  const region = scratchU8(1, Wd * Hd);
+  for (let j = 1; j < Hd - 1; j++) for (let i = 1; i < Wd - 1; i++) {
+    const k = j * Wd + i;
     if (!inside[k]) continue;
     const X = x0 + i, Y = y0 + j;
     if (clip && !clip(X, Y)) continue;
-    const zl = inside[k - 1] ? Z[k - 1] : 0, zr = inside[k + 1] ? Z[k + 1] : 0, zu = inside[k - W] ? Z[k - W] : 0, zd = inside[k + W] ? Z[k + W] : 0;
+    const zl = inside[k - 1] ? Z[k - 1] : 0, zr = inside[k + 1] ? Z[k + 1] : 0, zu = inside[k - Wd] ? Z[k - Wd] : 0, zd = inside[k + Wd] ? Z[k + Wd] : 0;
     const gx = (zr - zl) * 0.5, gy = (zd - zu) * 0.5;
     const nl = Math.hypot(gx, gy, 1), lam = (-gx * Lx - gy * Ly + Lz) / nl;
     const dl = lam - Lz;
-    let v = tone + contrast * (dl > 0 ? dl * 0.95 : dl * 0.6);
+    let v = tone + contrast * (dl > 0 ? dl * 0.95 : dl * 0.44);
     v += (hash2f(X, Y, seed + 31) - 0.5) * grain;
+    if (streaks > 0) v += (vnoise(X * 0.28, Y * 0.035, seed + 33) - 0.5) * streaks;              // rain-washed streaks down the face
     v -= base * smooth(0.45, 1, (Y - (cy - ry)) / (2 * ry)) * 0.9;                             // the foot sits in its own shadow
     const d = sdfIn[k];
     let c = rampAt(GREY, v, X, Y);
@@ -131,17 +137,15 @@ export function shadedRock(r, o) {
       else if (d <= 2.6 && glow > 0 && bay(X + 2, Y + 3) < glow * (0.4 + 0.55 * s)) { embers.push([X, Y, (X * 7 + Y * 13) % 17, c]); c = C.ember; }
     }
     if (d <= 1.2 && face < 0.15) c = bay(X, Y) < 0.55 ? C.ink : sinkG(c);                       // the shadow edge closes dark
-    ox[k] = lam;
     r.px(X, Y, c, layer);
     region[k] = 1;
   }
   const bw = maxX - minX + 1, bh = maxY - minY + 1, data = new Uint8Array(bw * bh);
-  for (let j = 0; j < bh; j++) for (let i = 0; i < bw; i++) data[j * bw + i] = region[(minY + j) * W + minX + i];
+  for (let j = 0; j < bh; j++) for (let i = 0; i < bw; i++) data[j * bw + i] = region[(minY + j) * Wd + minX + i];
   const mask = { x: x0 + minX, y: y0 + minY, w: bw, h: bh, data };
-  if (strata > 0.01 && false) paintStrata(r, mask, seed, { layer });
   if (cracks > 0) paintStrata(r, mask, seed + 5, { spacing: [9999, 9999], slope: 0, warp: 0, tone: 0, joint: 0, cracks, crackLen: [8, Math.max(12, rx * 0.8)], light: [lx, ly], layer });
-  if (lichen > 0) paintLichen(r, mask, seed + 7, { ramps: ROCK_LICHEN, rim: C.slate, density: lichen, size: lichenSize, tone: lichenTone, light: [lx, ly], strata: sang + rot, layer, skip: (X, Y) => { const i = X - x0, j = Y - y0; return i < 0 || j < 0 || i >= W || j >= Hh || sdfIn[j * W + i] < 1.5; } });
-  if (haze > 0) for (let j = minY; j <= maxY; j++) for (let i = minX; i <= maxX; i++) if (region[j * W + i]) {
+  if (lichen > 0) paintLichen(r, mask, seed + 7, { ramps: ROCK_LICHEN, rim: C.slate, density: lichen, size: lichenSize, tone: lichenTone, light: [lx, ly], strata: sang + rot, layer, skip: (X, Y) => { const i = X - x0, j = Y - y0; return i < 0 || j < 0 || i >= Wd || j >= Hd || sdfIn[j * Wd + i] < 1.5; } });
+  if (haze > 0) for (let j = minY; j <= maxY; j++) for (let i = minX; i <= maxX; i++) if (region[j * Wd + i]) {
     const X = x0 + i, Y = y0 + j;
     if (bay(X + 1, Y + 3) < haze) r.px(X, Y, liftG(r.get(X, Y)), layer);
     if (haze > 0.5 && bay(X + 5, Y + 1) < haze - 0.5) r.px(X, Y, liftG(r.get(X, Y)), layer);
@@ -254,14 +258,17 @@ export function flattenMask(r, m, k, layer) {
     r.px(X, Y, rampAt(GREY, mix(gi / 6, 0.34, k), X, Y), layer);
   }
 }
-/** Veil a painted region with a dithered lift of mist (distance). */
-export function liftMask(r, m, k, layer) {
-  for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) {
-    if (!m.data[j * m.w + i]) continue;
-    const X = m.x + i, Y = m.y + j;
-    if (bay(X + 1, Y + 3) < k) r.px(X, Y, liftG(r.get(X, Y)), layer);
-    if (k > 0.4 && bay(X + 5, Y + 1) < k - 0.3) r.px(X, Y, liftG(r.get(X, Y)), layer);
+/** Pale blade tips of a region, remembered so anim() can run a slow wave of wind glints through them (a pixel one step lighter as the wave passes). */
+export function collectGlints(r, rect, seed, density, minGrey = 4) {
+  const out = [];
+  for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) {
+    const c = r.get(x, y), gi = GREY.indexOf(c);
+    if (gi >= minGrey && gi < 6 && hash2f(x, y, seed) < density) out.push([y * r.w + x, x, y, liftG(c)]);
   }
+  return out;
+}
+export function animGlints(r, list, t, speed = 1.3) {
+  for (const [i, x, y, c1] of list) if (Math.sin(t * speed - x * 0.045 - y * 0.03) > 0.78) r.d[i] = c1;
 }
 
 /** A tuft of blades fanning from (x, y): dark at the root, lit at the tip, the tips on the sunward side glinting. */
@@ -309,7 +316,7 @@ export function paint(r, spec, S) {
   paintRidge(r, c1, c2, { tints: [0.74, 0.52], hazeV: 0.88, layer: 2, step: 5, soft: 3, seed: seed + 200, grid: 48, spots: 1, shade: 0.28, avoid: noText, metres: [520, 900] });
   paintRidge(r, c2, c3, { tints: [0.62, 0.42], hazeV: 0.8, layer: 2, step: 4.5, soft: 3, seed: seed + 300, grid: 48, shade: 0.3 });
   paintRidge(r, c3, c4, { tints: [0.5, 0.26], hazeV: 0.68, layer: 3, step: 4.5, fine: true, index: 4, accent: 0.55, seed: seed + 400, grid: 48, shade: 0.35 });
-  paintRidge(r, c4, null, { tints: [0.34, 0.16], hazeV: 0.5, foot: 0.5, layer: 3, step: 4, fine: true, index: 4, seed: seed + 500, grid: 48, shade: 0.35 });
+  paintRidge(r, c4, null, { tints: [0.34, 0.16], hazeV: 0.5, foot: 0.5, layer: 3, step: 5, soft: 4, seed: seed + 500, grid: 48, shade: 0.35 });
   paintGrass(r, seed);
 
   // the sun's haze lifts the greys behind the ground; the faintest ember in the mist right round it
@@ -325,9 +332,9 @@ export function paint(r, spec, S) {
     }
   }
   S.embers = [];
-  const rockBase = { light: L_DIR, elev: 0.28, layer: 5, rim: 1, contrast: 0.95, lichenSize: [1.2, 3.4], shadow: { sx: -1.4, sy: 0.3, dens: 0.85, layerMax: 5 } };
+  const rockBase = { light: L_DIR, elev: 0.28, layer: 5, rim: 1, contrast: 0.95, lichenSize: [0.9, 2.5], shadow: { sx: -1.4, sy: 0.3, dens: 0.85, layerMax: 5 } };
   const place = (st) => {
-    const info = shadedRock(r, { ...rockBase, planes: 3, rough: 0.45, facet: 3.2, bevel: st.rx * 0.85, H: st.rx * 0.9, strata: 1.0, spacing: 5.5, tone: 0.36, lichen: 0.8, cracks: 2, glow: st.far ? 0 : 0.55,
+    const info = shadedRock(r, { ...rockBase, planes: 3, rough: 0.45, facet: 3.2, streaks: 0.3, bevel: st.rx * 0.85, H: st.rx * 0.9, strata: 1.0, spacing: 5.5, tone: 0.36, lichen: 0.65, cracks: 2, glow: st.far ? 0 : 0.55,
       ...st, cy: st.cy == null ? st.foot - st.ry : st.cy, layer: st.far ? 4 : 5 });
     if (info) { if (st.far) flattenMask(r, info, 0.55, 4); S.embers.push(...info.embers); }
   };
@@ -337,7 +344,7 @@ export function paint(r, spec, S) {
     { cx: 178, foot: 151, rx: 16, ry: 15, rot: 0, p: 2.8, taper: 0.7, seed: 32, far: 1 },
     { cx: 274, foot: 159, rx: 24, ry: 22, rot: 0.05, p: 4, taper: 0.9, planes: 1, cuts: [[-1.8, 0.82]], seed: 35, tone: 0.3 },
     { cx: 136, foot: 160, rx: 21, ry: 32, rot: -0.05, p: 2.6, taper: 0.62, planes: 1, seed: 34, tone: 0.34 },
-    { cx: 78, foot: 168, rx: 28, ry: 42, rot: 0.05, p: 4, taper: 0.82, planes: 2, cuts: [[-1.25, 0.84]], seed: 33, strata: 1.2, tone: 0.38 },
+    { cx: 78, foot: 168, rx: 28, ry: 38, rot: 0.05, p: 4, taper: 0.82, planes: 2, cuts: [[-1.25, 0.84]], seed: 33, strata: 1.2, tone: 0.32 },
   ];
   ring.filter((q) => q.far).forEach(place);
   ring.filter((q) => !q.far && q.foot < 164).forEach(place);
@@ -358,6 +365,7 @@ export function paint(r, spec, S) {
   }
   paintFootPlate(r, 170);
   textClear(r, { x: 0, y: 186, w: W, h: 30 }, 0.5);
+  S.glints = collectGlints(r, { x: 0, y: HZ + 2, w: W, h: 50 }, seed + 97, 0.5, 3).filter((g) => r.layer(g[1], g[2]) === 4);
   // the sun's halo breathes: its outer dither is remembered so anim() can dim a few pixels at a time
   S.halo = [];
   for (let y = SUN.y - 22; y <= SUN.y + 22; y++) for (let x = SUN.x - 22; x <= SUN.x + 22; x++) {
@@ -372,6 +380,7 @@ export function paint(r, spec, S) {
 }
 export function anim(r, spec, S, t) {
   pulseEmbers(r, S.embers, t);
+  animGlints(r, S.glints, t);
   for (const [x, y, ph, dim] of S.halo) if (Math.sin(t * 0.7 + ph) < -0.35) r.d[y * r.w + x] = dim;
   animMistBands(r, S.bands, t);
   animLogo(r, S.logo, t);
