@@ -109,7 +109,7 @@ const mk = (p) => p;
 export const PROFILES = {
   // ============================================================================ I. Rannoch Moor
   rannoch: mk({
-    id: 'rannoch', loud: 0, kitLift: 4.5, title: 'Vast and sparse. Glass bells, long lochan delays.',
+    id: 'rannoch', loud: 0, kitLift: 6, title: 'Vast and sparse. Glass bells, long lochan delays.',
     root: 50, modeName: 'dorian', mode: M.dorian, dawn: [0, 2, 3, 6, 7, 9, 10], night: [0, 1, 3, 5, 7, 9, 10],
     bpm: 64, swing: 0.0, phraseBars: 4, nightTempo: 0.9,
     motifOp: 'invert',
@@ -160,7 +160,7 @@ export const PROFILES = {
 
   // ============================================================================ II. Glen Affric
   affric: mk({
-    id: 'affric', loud: 0, title: 'Bright pinewood. Pluck arpeggios, shimmering water grains.',
+    id: 'affric', loud: 0, kitLift: 4, title: 'Bright pinewood. Pluck arpeggios, shimmering water grains.',
     root: 55, modeName: 'lydian', mode: M.lydian, dawn: [0, 2, 4, 6, 8, 9, 11], night: M.lydianDom,
     bpm: 72, swing: 0.12, phraseBars: 4, nightTempo: 0.92,
     motifOp: 'rotate:1',
@@ -235,7 +235,7 @@ export const PROFILES = {
 
   // ============================================================================ IV. Cairngorm Plateau
   cairngorm: mk({
-    id: 'cairngorm', loud: -2, bedDb: -3, title: 'Arctic and glacial. Frozen granular, snow hiss, the slowest pulse.',
+    id: 'cairngorm', loud: -2, bedDb: -3, kitLift: 5, title: 'Arctic and glacial. Frozen granular, snow hiss, the slowest pulse.',
     root: 52, modeName: 'aeolian', mode: M.aeolian, dawn: M.dorian, night: M.phrygian,
     bpm: 56, swing: 0.0, phraseBars: 4, nightTempo: 0.9,
     motifOp: 'augment',
@@ -258,6 +258,13 @@ export const PROFILES = {
     kit: {
       patch: { level: 0.8, humanize: 0.04, kickFreq: null, kickDecay: 1.0, kickClick: 0.1, kickSweep: 2.0, snareFreq: 230, snareNoise: 0.5, snareDecay: 0.3, hatBright: 1.3, hatDecay: 0.08, hatOpenDecay: 0.6, crashDecay: 8, crashBright: 1.3, rideDecay: 3.6, tomDecay: 0.7, timpDecay: 5.5, gongDecay: 13, grainCount: 8, swellLength: 4.2, breathLength: 3.4 },
       favour: MIX({ shaker: 0.4, click: 0.9, rim: 0.3, kick: 0.45, snare: 0.15, clap: 0.1, hatC: 0.3, hatO: 0.2, ride: 0.8, tomL: 0.5, tomM: 0.3, tomH: 0.3, snap: 0.9, grainBurst: 1.5, metal: 0.5, breath: 1.8 }),
+      // glacial: sparse ticks of ice, frozen grain bursts and long breaths; a ride wash now and then
+      over: {
+        click: { flow: { p: 0.55, k: [3, 5], n: 12 } }, shaker: { flow: { p: 0.5, k: [3, 5], n: 16 } },
+        grainBurst: { flow: { p: 0.4, k: [1, 2], n: 32 } }, breath: { flow: { p: 0.45, k: [1], n: 32 } },
+        ride: { flow: { p: 0.4, k: [2], n: 32 } }, snap: { flow: { p: 0.25, k: [3, 5] } },
+      },
+      flowMul: 1.0, spacious: true,
       crash: { phrase: 0.4, ride: true, swellFill: 1, gong: 0.3, timp: 0.08 },
     },
     fx: {
@@ -314,7 +321,7 @@ export const PROFILES = {
 
   // ============================================================================ VI. The Cuillin
   cuillin: mk({
-    id: 'cuillin', loud: 1, title: 'Jagged and metallic. FM rock percussion, bitcrush glitch.',
+    id: 'cuillin', loud: 1, kitLift: 5, title: 'Jagged and metallic. FM rock percussion, bitcrush glitch.',
     root: 54, modeName: 'lydianDom', mode: M.lydianDom, dawn: M.lydian, night: M.octatonic,
     bpm: 84, swing: 0.18, phraseBars: 4, nightTempo: 0.92,
     motifOp: 'invert+retro',
@@ -352,7 +359,7 @@ export const PROFILES = {
 
   // ============================================================================ VII. Assynt
   assynt: mk({
-    id: 'assynt', loud: -3, bedDb: -4, frontDb: -3, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
+    id: 'assynt', loud: -3, bedDb: -4, kitLift: 5.5, moveLift: 0.85, frontDb: -3, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
     root: 51, modeName: 'pentMajor', mode: M.pentMajor, dawn: [0, 2, 4, 6, 9], night: [0, 2, 3, 7, 9],
     bpm: 60, swing: 0.0, phraseBars: 4, nightTempo: 0.88,
     motifOp: 'augment+retro',
@@ -375,6 +382,9 @@ export const PROFILES = {
     kit: {
       patch: { level: 0.75, humanize: 0.06, kickFreq: null, kickDecay: 1.2, kickClick: 0.05, kickSweep: 1.8, snareFreq: 160, snareNoise: 0.35, snareDecay: 0.35, hatBright: 0.7, hatDecay: 0.1, hatOpenDecay: 0.8, crashDecay: 9, crashBright: 0.7, rideDecay: 4.2, tomDecay: 0.9, timpDecay: 6.5, gongDecay: 14, grainCount: 7, swellLength: 4.8, breathLength: 4.0 },
       favour: MIX({ shaker: 0.2, click: 0.7, rim: 0.2, kick: 0.25, snare: 0.05, clap: 0.05, hatC: 0.1, hatO: 0.05, ride: 0.3, tomL: 0.5, tomM: 0.2, tomH: 0.2, snap: 0.3, grainBurst: 0.9, metal: 0.4, breath: 2.0 }),
+      // stillness: a few dry ticks and breaths, the odd grain; nothing that reads as a groove
+      over: { click: { flow: { p: 0.45, k: [3, 5], n: 12 } }, breath: { flow: { p: 0.4, k: [1, 2], n: 32 } }, grainBurst: { flow: { p: 0.3, k: [1, 2], n: 32 } }, shaker: { flow: { p: 0.35, k: [3, 5] } } },
+      flowMul: 0.9, spacious: true,
       crash: { phrase: 0.2, ride: false, swellFill: 1, gong: 0.7, timp: 0.35 },
     },
     fx: {

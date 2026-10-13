@@ -145,11 +145,11 @@ try {
       if (id === 'assynt' && r.rmsDb > -22) failures.push(`assynt: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
     }
     {
-      // kit presence: the kit's dry channels vs the mix, over the seconds spent in flow (power means)
+      // kit presence: the kit's dry channels vs the mix, over the seconds spent in flow while the walker is moving, i.e. not drifting or under an artefact (power means; seconds with an artefact piece still sounding or fading are left out)
       const fl = [], kl = [];
-      for (const c of r.ctl) { const t = c[0]; if (t < 3 || t >= r.rmsCurve.length - 5 || c[4] !== 'flow' || c[6] > 0) continue; fl.push(r.rmsCurve[t]); kl.push(r.kitCurve[t]); }
+      for (const c of r.ctl) { const t = c[0]; if (t < 3 || t >= r.rmsCurve.length - 5 || c[4] !== 'flow' || c[6] > 0 || c[2] >= 0.2 || c[9]) continue; fl.push(r.rmsCurve[t]); kl.push(r.kitCurve[t]); }
       const pmean = (a) => (a.length ? 10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length) : NaN);
-      r.kitFlow = { n: fl.length, kitDb: +pmean(kl).toFixed(1), mixDb: +pmean(fl).toFixed(1), gap: +(pmean(kl) - pmean(fl)).toFixed(1), hitsPerMin: fl.length ? +((r.kitHitTimes.filter((tt) => r.ctl.some((c) => c[0] === Math.floor(tt) && c[4] === 'flow')).length) / (fl.length / 60)).toFixed(0) : 0 };
+      r.kitFlow = { n: fl.length, kitDb: +pmean(kl).toFixed(1), mixDb: +pmean(fl).toFixed(1), gap: +(pmean(kl) - pmean(fl)).toFixed(1), hitsPerMin: fl.length ? +((r.kitHitTimes.filter((tt) => r.ctl.some((c) => c[0] === Math.floor(tt) && c[4] === 'flow' && c[6] === 0 && c[2] < 0.2 && !c[9])).length) / (fl.length / 60)).toFixed(0) : 0 };
       if (fl.length >= 10 && !(r.kitFlow.gap >= -18)) failures.push(`${id}: kit-channel RMS in flow is ${r.kitFlow.gap} dB re the mix (must be within 18 dB)`);
     }
     if (!r.chromaInTriad) failures.push(`${id}: chroma top ${r.chromaTop} not in root triad ${r.rootTriad.join('-')}`);
@@ -173,6 +173,7 @@ try {
       const r = await page.evaluate((i) => window.renderStroll(i), id);
       console.log(id.padEnd(10) + String(r.firstHit ?? 'none').padStart(9) + String(r.flowAt ?? 'never').padStart(9) + String(r.hits4to14).padStart(11) + String(r.kitDb).padStart(8) + String(r.mixDb).padStart(8) + `  ${r.endSection} (e ${r.endEnergy})   ` + Object.entries(r.hitNames).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' '));
       for (const e of r.errors) failures.push(`stroll ${id}: ${e}`);
+      if (r.kitDb - r.mixDb < -18) failures.push(`stroll ${id}: kit-channel RMS during steady walking is ${(r.kitDb - r.mixDb).toFixed(1)} dB re the mix (must be within 18 dB)`);
       if (r.firstHit === null || r.firstHit > 10) failures.push(`stroll ${id}: first percussion ${r.firstHit} s after walking began (> 10)`);
       if (r.flowAt === null || r.flowAt > 7) failures.push(`stroll ${id}: flow reached ${r.flowAt} s after walking began (> 7)`);
       if (r.hits4to14 < 8) failures.push(`stroll ${id}: only ${r.hits4to14} percussion hits in seconds 4-14 of steady walking (< 8)`);

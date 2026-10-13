@@ -130,7 +130,7 @@ export class Artefacts {
     // consequence aim: the piece's first six seconds should sit ~5 dB above what was heard just before it (never louder than
     // -10.5 dBFS, with a floor so a hushed bed still gets a present entry). The entry is aimed from the measured unity level of
     // this piece in this level (artcal.js); the servo (update) trims the remainder while it plays.
-    P.targetDb = clamp(S.heardDb + 5.3, -19 + (S.profile.frontDb || 0), -11.5);
+    P.targetDb = clamp(S.heardDb + 6.0, -19 + (S.profile.frontDb || 0), -10.5);
     const nominal = (ART_NOMINAL[S.levelId] && ART_NOMINAL[S.levelId][type]) ?? NOMINAL_DB[type] ?? -16;
     P.boostDb = 0;
     P.servoDb = clamp(P.targetDb - nominal, -12, 10);

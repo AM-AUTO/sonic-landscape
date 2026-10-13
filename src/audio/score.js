@@ -30,13 +30,17 @@ const GRID_CELLS = 25;
 const TAU = Math.PI * 2;
 const CEILING_DB = -13.5;      // sustained long-term level the leveler will not let the mix exceed
 /** the bed's own level against its section: ebb is a whisper, flow sits back, only swell is full (dB, vs the swell reference) */
-const BED_CURVE = [[0, -12], [0.25, -9], [0.45, -5], [0.7, -1.5], [1, 0]];
-function bedCurveDb(e) {
-  for (let i = 1; i < BED_CURVE.length; i++) {
-    if (e <= BED_CURVE[i][0]) { const [x0, y0] = BED_CURVE[i - 1], [x1, y1] = BED_CURVE[i]; return y0 + (y1 - y0) * ((e - x0) / (x1 - x0)); }
+const BED_CURVE = [[0, -12], [0.25, -10], [0.45, -8.5], [0.7, -7], [1, -4]];
+/** the kit answers movement: it comes up well before the pad / drone do (flow is where it is meant to be heard) */
+const KIT_CURVE = [[0, -10], [0.25, -4.5], [0.45, -2], [0.7, -1], [1, 0]];
+function curveDb(curve, e) {
+  for (let i = 1; i < curve.length; i++) {
+    if (e <= curve[i][0]) { const [x0, y0] = curve[i - 1], [x1, y1] = curve[i]; return y0 + (y1 - y0) * ((e - x0) / (x1 - x0)); }
   }
   return 0;
 }
+const bedCurveDb = (e) => curveDb(BED_CURVE, e);
+const kitCurveDb = (e) => curveDb(KIT_CURVE, e);
 const KIT_BED = new Set(['kmain', 'kcym', 'ktex']);
 const BUDGET_RATE = 30, BUDGET_MAX = 80;
 const HIT_COST = { kick: 15, snare: 22, rim: 9, clap: 16, hatC: 12, hatO: 14, ride: 18, crash: 20, tomL: 12, tomM: 12, tomH: 12, timp: 18, gong: 40, click: 7, snap: 9, grainBurst: 35, breath: 7, reverseSwell: 12, metal: 10, shaker: 6 };
@@ -339,8 +343,9 @@ export class Score {
     // energy answers movement first (momentum: steady walking on flat ground reaches flow, running approaches swell);
     // slope, slides and nearby artefacts add on top
     const lift = this.profile.moveLift ?? 1;
-    let e = 0.06 + 0.22 * C.v + 0.36 * C.m * lift + 0.10 * C.run * lift + 0.35 * C.s * Math.min(1, C.v * 1.5) + 0.12 * C.slide + 0.22 * this.proxMax;
+    let e = 0.06 + 0.20 * C.v + 0.30 * C.m * lift + 0.06 * C.run * lift + 0.30 * C.s * Math.min(1, C.v * 1.5) + 0.12 * C.slide + 0.22 * this.proxMax;
     e *= 1 - 0.95 * C.d;
+    if (this.art.activeCount) e = Math.min(e, 0.72);        // while an artefact sounds it sets the level; the walker's own effort doesn't pile on
     const A = this.art.cached;
     if (A && A.energy !== undefined) e = Math.max(e, A.energy);
     else if (this.art.activeCount) e = Math.max(e, 0.62);
@@ -592,11 +597,11 @@ export class Score {
     const vel = (0.09 + 0.08 * C.v + 0.03 * this.rng.float()) * (0.55 + 0.6 * C.m);
     const pan = ev.foot ? 0.25 : -0.25;
     if (ck === 'scree' || ck === 'snow') {
-      this.hit('snap', t, vel * 1.4, { tone: ck === 'snow' ? 0.8 : 0.35, decay: 0.01 + 0.008 * this.rng.float(), pitch: ck === 'snow' ? 1.3 : 0.9, pan });
+      this.hit('snap', t, vel * 1.4, { tone: ck === 'snow' ? 0.8 : 0.35, decay: 0.01 + 0.008 * this.rng.float(), pitch: ck === 'snow' ? 1.3 : 0.9 });
     } else if (ck === 'shallow' || ck === 'deep') {
       this.hit('shaker', t, vel * 1.5, { tone: 0.8, decay: 0.05 + 0.04 * this.rng.float(), pan });
     } else if (ck === 'rock' || ck === 'crag') {
-      this.hit('metal', t, vel * 0.5, { midi: this.midi(this.rng.int(0, 4), 24), decay: 0.12 + 0.1 * this.rng.float(), pan });
+      this.hit('metal', t, vel * 0.5, { midi: this.midi(this.rng.int(0, 4), 24), decay: 0.12 + 0.1 * this.rng.float() });
     } else if (ck === 'path') {
       this.hit('rim', t, vel * 0.7, { pitch: 1.1 + 0.2 * this.rng.float(), pan });
     } else {
@@ -763,7 +768,7 @@ export class Score {
     const bp = prof.kit.spacious ? [1, 0.85, 1, 0.55][s.barInPhrase % 4] : 1;
     const flowMul = (prof.kit.flowMul ?? 0.65) * (0.85 + 0.3 * C.m) * bp;
     const eN = this.terraced ? (C.e < 0.33 ? 0.2 : C.e < 0.66 ? 0.5 : 0.85) : C.e;
-    const dens = 0.45 + 0.9 * eN;
+    const dens = (0.45 + 0.9 * eN) * (1 + 0.5 * C.run);
     const running = C.v > 0.62;
     for (const g of this.gens) {
       const cfg = g.cfg(sec);
@@ -854,8 +859,9 @@ export class Score {
         const mm = m + oct + (rng.chance(0.12) ? 7 : 0);
         V.bass.note(mm, this.at(humanise(s.t, s.sd, rng, 0.015, this.now)), s.sd * (1.5 + 3 * rng.float()), vel);
         this.count('notes', 'bass');
-        if (s.i16 === 8 && rng.chance(0.25)) V.bass.glideTo(m + 7, s.t + s.sd * 3);
       } else if (s.i16 === 0 && s.barInPhrase === 0) { V.bass.note(m, s.t, bd * 0.9, vel); this.count('notes', 'bass'); }
+      // a slow slide up to the fifth or fourth every other bar (bass line moves as the walker moves)
+      if (s.i16 === 8 && (s.barInPhrase & 1) && rng.chance(0.45)) V.bass.glideTo(m + (rng.chance(0.5) ? 7 : 5), s.t + s.sd * 3);
     }
   }
 
@@ -937,9 +943,11 @@ export class Score {
     const tc = A.fast ? 0.25 : 0.6;
 
     // --- channels: all ten parameters, baseline from the level's colouring
-    const bedMul = Math.pow(10, ((prof.bedDb || 0) + bedCurveDb(C.e)) / 20);
+    // the pad / drone bed follows effort less than the kit does: momentum raises the pulse, not the whole wall of sound
+    const eBed = clamp(C.e - 0.15 * C.m - 0.05 * C.run, 0, 1);
+    const bedMul = Math.pow(10, ((prof.bedDb || 0) + bedCurveDb(eBed)) / 20);
     // the kit's own presence: momentum lifts it back out of the flow section's bed pull-down
-    const kitLift = Math.pow(10, ((prof.kitLift ?? 2.5) * C.m * (1 - C.d) * (1 - C.sw)) / 20);
+    const kitLift = Math.pow(10, ((prof.kitLift ?? 1.5) * (C.m + 0.5 * C.run) * (1 - C.d) * (1 - C.sw) + kitCurveDb(C.e) - bedCurveDb(eBed)) / 20);
     // front channels (lead, resonance echoes, the concord pad, artefact bodies) step back while the land is quiet and no
     // artefact sounds, and a little more in drift: the 'calm' is what makes an artefact's arrival an event
     const calmDb = this.art.activeCount ? 0 : -6.5 * (1 - smoothstep(C.e / 0.5)) - 3 * C.d;
