@@ -94,5 +94,5 @@ export default {
     'Liathach is terraced like a stair. Coont ilka step tae the tap.',
     'At the heid o the sea loch, a ruif. Staun still at its door.',
   ],
-  palette: { tint: '#a0523a', paper: '#eddcc0' },
+  palette: { tint: '#a0523a', accent: 'lamp', paper: '#eddcc0' },
 };

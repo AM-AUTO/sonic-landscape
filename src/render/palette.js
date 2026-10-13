@@ -75,25 +75,36 @@ export function quantizeHex(hex, limit = PAL_NAMES.length) {
 }
 
 // ------------------------------------------------------- u32 -> palette idx
-// Perfect-hash the palette colours into a small lookup table so tint passes are
-// branch-light. Non-palette pixels map to 255.
-let HASH_M = 0;
+// Perfect-hash the palette colours into a small lookup table (multiply-shift, found at load
+// time) so tint passes are branch-light. Non-palette pixels map to 255.
+const HASH_KEYS = new Uint32Array(PAL_U32_LIST.map((u) => u & 0xffffff));
+let HASH_MUL = 1, HASH_SHIFT = 26;
 let HASH_LUT = null;
 (function buildHash() {
-  const keys = PAL_U32_LIST.map((u) => u & 0xffffff);
-  for (let m = 31; m < 65536; m++) {
-    const seen = new Set();
-    let ok = true;
-    for (const k of keys) { const h = k % m; if (seen.has(h)) { ok = false; break; } seen.add(h); }
-    if (ok) { HASH_M = m; break; }
+  for (let bits = 6; bits <= 12; bits++) {
+    const shift = 32 - bits;
+    let m = 0x9e3779b1;
+    for (let trial = 0; trial < 20000; trial++) {
+      m = (Math.imul(m, 1664525) + 1013904223) >>> 0;
+      const mul = m | 1;
+      const seen = new Set();
+      let ok = true;
+      for (const k of HASH_KEYS) { const h = Math.imul(k, mul) >>> shift; if (seen.has(h)) { ok = false; break; } seen.add(h); }
+      if (ok) {
+        HASH_MUL = mul; HASH_SHIFT = shift;
+        HASH_LUT = new Uint8Array(1 << bits).fill(255);
+        HASH_KEYS.forEach((k, i) => { HASH_LUT[Math.imul(k, mul) >>> shift] = i; });
+        return;
+      }
+    }
   }
-  HASH_LUT = new Uint8Array(HASH_M).fill(255);
-  keys.forEach((k, i) => { HASH_LUT[k % HASH_M] = i; });
+  throw new Error('palette: no perfect hash found');
 })();
 /** palette index of a pixel (alpha ignored), or 255 if it isn't a palette colour. */
 export function paletteIndexOf(u32) {
-  const i = HASH_LUT[(u32 & 0xffffff) % HASH_M];
-  return i !== 255 && (PAL_U32_LIST[i] & 0xffffff) === (u32 & 0xffffff) ? i : 255;
+  const k = u32 & 0xffffff;
+  const i = HASH_LUT[Math.imul(k, HASH_MUL) >>> HASH_SHIFT];
+  return i !== 255 && HASH_KEYS[i] === k ? i : 255;
 }
 
 // ------------------------------------------------------------ ordered dither
@@ -238,42 +249,50 @@ nightMap('waterInk', 'waterDeep', 'waterDeep', 0);
  * lightMap (optional Uint8Array w*h, 255 = unlit): scales the night amount per pixel, so a
  * lantern or a window can hold the darkness back (see fx.js).
  */
+const WASH_D = new Float64Array(16), WASH_U = new Uint32Array(16);
+const LIST32 = Uint32Array.from(PAL_U32_LIST);      // typed copy: the tint loop reads it per pixel
 export function applyTint(buf, w, h, tint, ox = 0, oy = 0, y0 = 0, y1 = h, lightMap = null) {
   if (!tint) return;
   const night = tint.night, warm = tint.warm;
-  const washes = tint.wash.map((s) => ({ d: s.density, u: PAL_U32[s.color] }));
-  if (night <= 0.004 && warm <= 0.004 && washes.length === 0) return;
+  const nw = Math.min(tint.wash.length, WASH_D.length);
+  for (let k = 0; k < nw; k++) { WASH_D[k] = tint.wash[k].density * 2; WASH_U[k] = PAL_U32[tint.wash[k].color]; }
+  if (night <= 0.004 && warm <= 0.004 && nw === 0) return;
+  const doLight = warm > 0 || nw > 0;
+  const inv255 = 1 / 255, inv64 = 1 / 64, inv16 = 1 / 16;
+  const lut = HASH_LUT, keys = HASH_KEYS, mul = HASH_MUL, shift = HASH_SHIFT;
   for (let y = y0; y < y1; y++) {
     const wy = y + oy;
     const rowB = (wy & 7) << 3;
     const rowB2 = ((wy + 5) & 7) << 3;
     const rowB3 = ((wy + 3) & 7) << 3;
     const row4 = (wy & 3) << 2;
+    const row = y * w;
     for (let x = 0; x < w; x++) {
-      const p = buf[y * w + x];
-      const pi = paletteIndexOf(p);
-      if (pi === 255) continue;
+      const p = buf[row + x];
+      const kk = p & 0xffffff;
+      const pi = lut[Math.imul(kk, mul) >>> shift];
+      if (pi === 255 || keys[pi] !== kk) continue;
       const wx = x + ox;
       let out = p;
-      if (LIGHT[pi]) {
+      if (doLight && LIGHT[pi]) {
         if (warm > 0) {
-          const t = (BAYER8[rowB | (wx & 7)] + 0.5) / 64;
-          if (t < warm) out = PAL_U32_LIST[WARM[pi]];
+          const t = (BAYER8[rowB | (wx & 7)] + 0.5) * inv64;
+          if (t < warm) out = LIST32[WARM[pi]];
         }
-        for (let k = 0; k < washes.length; k++) {
-          const t = (BAYER8[rowB2 | ((wx + 3) & 7)] + 0.5) / 64;
-          if (t < washes[k].d * 2 && ((wx + wy) & 1) === 0) out = washes[k].u;
+        for (let k = 0; k < nw; k++) {
+          const t = (BAYER8[rowB2 | ((wx + 3) & 7)] + 0.5) * inv64;
+          if (t < WASH_D[k] && ((wx + wy) & 1) === 0) out = WASH_U[k];
         }
       }
-      const nt = lightMap ? night * lightMap[y * w + x] * (1 / 255) : night;
+      const nt = lightMap ? night * lightMap[row + x] * inv255 : night;
       if (nt > 0) {
-        const t = (BAYER8[rowB3 | ((wx + 1) & 7)] + 0.5) / 64;
+        const t = (BAYER8[rowB3 | ((wx + 1) & 7)] + 0.5) * inv64;
         if (t < nt) {
-          const m = (BAYER4[row4 | (wx & 3)] + 0.5) / 16;
-          out = PAL_U32_LIST[m < NIGHT_W[pi] ? NIGHT_B[pi] : NIGHT_A[pi]];
+          const m = (BAYER4[row4 | (wx & 3)] + 0.5) * inv16;
+          out = LIST32[m < NIGHT_W[pi] ? NIGHT_B[pi] : NIGHT_A[pi]];
         }
       }
-      buf[y * w + x] = out;
+      buf[row + x] = out;
     }
   }
 }

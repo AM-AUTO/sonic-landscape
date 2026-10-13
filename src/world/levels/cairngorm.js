@@ -100,5 +100,5 @@ export default {
     'The plateau cairns are met on the road doun.',
     'Granite, frost-split. Snaw in the corries intae August.',
   ],
-  palette: { tint: '#8aa4c0', paper: '#eef0ea' },
+  palette: { tint: '#8aa4c0', accent: 'ice', paper: '#eef0ea' },
 };

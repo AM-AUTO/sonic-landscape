@@ -162,15 +162,15 @@ if (!NO_FX && nReal > 0) {
     const t0 = await page.evaluate(() => window.P.strike(1));
     if (t0 != null) {
       save(`${key}-lightning`, await frame({ state: { ...base, tod: 0.86, at, dx: 5, dy: 3 }, ui: { time: t0 + 0.02 }, warm: 2 }));
-      save(`${key}-lightning-bolt`, await frame({ state: { ...base, tod: 0.86, at, dx: 5, dy: 3 }, ui: { time: t0 + 0.11 }, warm: 2 }));
+      save(`${key}-lightning-bolt`, await frame({ state: { ...base, tod: 0.86, at, dx: 5, dy: 3 }, ui: { time: t0 + 0.17 }, warm: 2 }));
       save(`${key}-lightning-day`, await frame({ state: { ...base, tod: 0.33, at, dx: 5, dy: 3 }, ui: { time: t0 + 0.02 }, warm: 2 }));
     } else {
       save(`${key}-weather`, await frame({ state: { ...base, tod: 0.8, at, dx: 5, dy: 3 }, ui: { time: T + 7 } }));
     }
     if (has('bothy')) {
-      save(`${key}-bothy-night`, await frame({ state: { ...base, tod: 0.88, at: 'bothy', dx: -9, dy: 6, heading: 0.2, speed: 0 }, ui: { time: T } }));
-      save(`${key}-bothy-dusk`, await frame({ state: { ...base, tod: 0.63, at: 'bothy', dx: -9, dy: 6, heading: 0.2, speed: 0 }, ui: { time: T } }));
-      save(`${key}-bothy-day`, await frame({ state: { ...base, tod: 0.33, at: 'bothy', dx: -9, dy: 6, heading: 0.2, speed: 0 }, ui: { time: T } }));
+      save(`${key}-bothy-night`, await frame({ state: { ...base, tod: 0.88, at: 'bothy', dx: -24, dy: 9, heading: 0.2, speed: 0 }, ui: { time: T } }));
+      save(`${key}-bothy-dusk`, await frame({ state: { ...base, tod: 0.63, at: 'bothy', dx: -24, dy: 9, heading: 0.2, speed: 0 }, ui: { time: T } }));
+      save(`${key}-bothy-day`, await frame({ state: { ...base, tod: 0.33, at: 'bothy', dx: -24, dy: 9, heading: 0.2, speed: 0 }, ui: { time: T } }));
     }
     // walker crops at 8x (day / night; walking E, idle S)
     const crop = (spec) => cropShot(spec, 160, 84, 64, 48, 8);

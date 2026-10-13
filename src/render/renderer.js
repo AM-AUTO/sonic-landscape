@@ -19,7 +19,7 @@ import { walkerSprite, lanternAnchor, iconSprite, gateSprite, blit, symbolArt, t
 import { createFx } from './fx.js';
 import { drawText } from './font.js';
 import { rect, frame, px, resolveColor, clamp, ditherRect } from './draw.js';
-import { drawHud, STRIP_H } from './hud.js';
+import { drawHud, STRIP_H, SCROLL_H } from './hud.js';
 import { Screens } from './screens.js';
 
 const FLASH_DUR = 0.6;
@@ -113,7 +113,7 @@ export function createRenderer(canvas) {
   function updateCamera(state, dt) {
     const p = state.player, mapPx = R.world.size * CELL_PX;
     const tx = clamp(p.x * CELL_PX - SW / 2, 0, mapPx - SW);
-    const ty = clamp(p.y * CELL_PX - (STRIP_H + (SH - STRIP_H) / 2), 0, mapPx - SH);
+    const ty = clamp(p.y * CELL_PX - (STRIP_H + (SH - STRIP_H - SCROLL_H) / 2), 0, mapPx - SH);   // centred in the visible map: between the top strip and the scroll
     const c = R.cam;
     if (!c.ready) { c.x = tx; c.y = ty; c.ready = true; return; }
     const k = 1 - Math.exp(-Math.max(dt, 0.0001) * 7);
@@ -234,6 +234,7 @@ export function createRenderer(canvas) {
 
   /** pose + animation frame of the wanderer this frame (shared by the lantern light and the sprite) */
   const poseOut = { pose: 'idle', frame: 0 };
+  const anchorTmp = { x: 0, y: 0 };
   function walkerPose(state) {
     const p = state.player, W = R.walker, cov = p.cover;
     let pose = p.moving ? 'walk' : 'idle';
@@ -269,7 +270,7 @@ export function createRenderer(canvas) {
     const bob = (pose === 'walk' && frame === 1) ? -1 : 0;          // the staff lifts, then plants again
     const dx = sx - 6, dy = sy - 11 + bob;
     ctx.drawImage(spr, dx, dy);
-    const la = lanternAnchor(W.dir, pose, frame);
+    const la = lanternAnchor(W.dir, pose, frame, anchorTmp);
     R.fx.paintLantern(ctx, dx + la.x, dy + la.y, R.clock);
     // slide dust
     if (pose === 'slide') {
@@ -414,7 +415,7 @@ export function createRenderer(canvas) {
     } else {
       // the lantern flame is the centre of the walker's pool of light
       const wp = state.player ? walkerPose(state) : { pose: 'idle', frame: 0 };
-      const la = lanternAnchor(ws.dir, wp.pose, wp.frame);
+      const la = lanternAnchor(ws.dir, wp.pose, wp.frame, anchorTmp);
       const lx = Math.round(ppx) - 6 + la.x, ly = Math.round(ppy) - 11 + la.y;
       const pre = FX.prepare(fb, camX, camY, tint, tod, R.clock, lx, ly, R.baked.lvl, R.baked.W);
       applyTint(fb, SW, SH, pre.tint, camX, camY, 0, SH, pre.lightMap);

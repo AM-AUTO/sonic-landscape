@@ -50,19 +50,19 @@ function fract(x) { return x - Math.floor(x); }
 export const WEATHER = Object.freeze({
   rannoch: { mist: 0.55, cloudline: 0.82, woods: 0, shadow: 0.12, rain: 0.34, rainStyle: 'drizzle', snow: 0, wind: [0.8, 0.2], lightning: null, dark: 0.02, stars: false },
   affric: { mist: 0.62, cloudline: 0.72, woods: 0.35, shadow: 0.06, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.5, 0.1], lightning: null, dark: 0, stars: false },
-  coe: { mist: 0.38, cloudline: 0.78, woods: 0.1, shadow: 0.34, rain: 0.82, rainStyle: 'heavy', snow: 0, wind: [1, 0.15], lightning: { min: 8, max: 25 }, dark: 0.14, stars: false },
-  cairngorm: { mist: 0.26, cloudline: 0.6, woods: 0, shadow: 0.1, rain: 0, rainStyle: 'drizzle', snow: 0.78, wind: [1, 0.25], lightning: null, dark: 0.04, stars: false },
-  torridon: { mist: 0.3, cloudline: 0.78, woods: 0.1, shadow: 0.62, rain: 0.16, rainStyle: 'drizzle', snow: 0, wind: [0.9, 0.2], lightning: { min: 14, max: 40 }, dark: 0.16, stars: false },
-  cuillin: { mist: 0.34, cloudline: 0.8, woods: 0, shadow: 0.3, rain: 0.62, rainStyle: 'heavy', snow: 0, wind: [1, 0.2], lightning: { min: 8, max: 25 }, dark: 0.12, stars: false },
+  coe: { mist: 0.38, cloudline: 0.78, woods: 0.1, shadow: 0.34, rain: 0.82, rainStyle: 'heavy', snow: 0, wind: [1, 0.15], lightning: { min: 8, max: 25 }, dark: 0.08, stars: false },
+  cairngorm: { mist: 0.26, cloudline: 0.6, woods: 0, shadow: 0.1, rain: 0, rainStyle: 'drizzle', snow: 0.78, wind: [1, 0.25], lightning: null, dark: 0.03, stars: false },
+  torridon: { mist: 0.3, cloudline: 0.78, woods: 0.1, shadow: 0.5, rain: 0.16, rainStyle: 'drizzle', snow: 0, wind: [0.9, 0.2], lightning: { min: 14, max: 40 }, dark: 0.09, stars: false },
+  cuillin: { mist: 0.34, cloudline: 0.8, woods: 0, shadow: 0.3, rain: 0.62, rainStyle: 'heavy', snow: 0, wind: [1, 0.2], lightning: { min: 8, max: 25 }, dark: 0.07, stars: false },
   assynt: { mist: 0.1, cloudline: 0.7, woods: 0, shadow: 0, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.4, 0.1], lightning: null, dark: 0, stars: true },
-  nevis: { mist: 0.3, cloudline: 0.62, woods: 0, shadow: 0.5, rain: 0, rainStyle: 'drizzle', snow: 0.34, snowAbove: 0.5, wind: [1, 0.3], lightning: null, dark: 0.06, stars: false },
+  nevis: { mist: 0.3, cloudline: 0.62, woods: 0, shadow: 0.5, rain: 0, rainStyle: 'drizzle', snow: 0.34, snowAbove: 0.5, wind: [1, 0.3], lightning: null, dark: 0.03, stars: false },
 });
 export const WEATHER_DEFAULT = Object.freeze({ mist: 0.2, cloudline: 0.75, woods: 0, shadow: 0.1, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.6, 0.1], lightning: null, dark: 0, stars: false });
 
 export function weatherFor(levelId) { return WEATHER[levelId] || WEATHER_DEFAULT; }
 
 /** How dark each phase is (0 = daylight, 1 = full night); blended with the same easing as the tint. */
-export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.62, night: 1 });
+export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.46, night: 1 });
 /** 0..1 darkness for a timeOfDay in [0,1). */
 export function darknessAt(timeOfDay) {
   const { a, b, f } = phaseBlend(timeOfDay);
@@ -71,7 +71,8 @@ export function darknessAt(timeOfDay) {
 /** Night amount (0..0.97, what the tint pass dithers) from the clock-of-day darkness plus weather. */
 export function effectiveNight(tintNight, timeOfDay, weather) {
   const d = clamp(darknessAt(timeOfDay) + (weather ? weather.dark : 0), 0, 1);
-  return Math.max(tintNight, d * 0.97);
+  const n = Math.max(tintNight, d * 0.97);
+  return n < 0.04 ? 0 : n;                          // like the tint itself: no stray lattice dots in full day
 }
 
 // ------------------------------------------------------------------------ noise textures
@@ -151,7 +152,7 @@ export function buildMistField(world, weather = WEATHER_DEFAULT) {
     const c = cover[i];
     const valley = clamp((blur[i] - alt[i]) / 0.10, 0, 1);
     let v = 0.3 + valley * 0.95;
-    if (c === COVER.SHALLOW || c === COVER.DEEP) v += 0.75;
+    if (c === COVER.SHALLOW || c === COVER.DEEP) v += 0.55;
     else if (c === COVER.BOG) v += 0.5;
     else if (c === COVER.WOOD) v += 0.2 + (weather.woods || 0) * 1.6;
     else if (c === COVER.CRAG || c === COVER.ROCK || c === COVER.SCREE) v *= 0.55;
@@ -242,7 +243,7 @@ export function boltPoints(seed, index, out, w = SW, h = SH) {
     const dx = Math.round((rnd() - 0.5) * 18) + (rnd() < 0.3 ? Math.round((rnd() - 0.5) * 16) : 0);
     // a quick sideways kick then a downward run gives the jagged zigzag
     x = clamp(x + dx, 4, w - 5);
-    out[n++] = x; out[n++] = y + 2;
+    out[n++] = x; out[n++] = Math.min(yEnd, y + 2);
     y = Math.min(yEnd, y + dy);
     out[n++] = clamp(x + Math.round((rnd() - 0.5) * 6), 4, w - 5); out[n++] = y;
     x = out[n - 2];
@@ -271,23 +272,38 @@ export function boltPoints(seed, index, out, w = SW, h = SH) {
  * map (0 = none, 255 = full orange). Fully lit inside r0, fading to dark by r1 (smoothstep).
  * Overlapping lights combine by min / max. Pure: used for the lantern pool and the bothy pools.
  */
+const LUT_NV = new Uint8Array(16384), LUT_TV = new Uint8Array(16384);   // by squared distance (radius <= 127)
 export function stampLight(night, tone, w, h, cx, cy, r0, r1, litMax = 0.9, toneMax = 0.5) {
   const x0 = Math.max(0, Math.floor(cx - r1)), x1 = Math.min(w - 1, Math.ceil(cx + r1));
   const y0 = Math.max(0, Math.floor(cy - r1)), y1 = Math.min(h - 1, Math.ceil(cy + r1));
   const r12 = r1 * r1, span = r1 - r0;
+  const useLut = r12 < LUT_NV.length;
+  if (useLut) {
+    for (let d2 = 0; d2 < r12; d2++) {
+      const d = Math.sqrt(d2);
+      let lit = 1;
+      if (d > r0) { const t = (d - r0) / span; lit = 1 - t * t * (3 - 2 * t); }
+      LUT_NV[d2] = Math.round(255 * (1 - lit * litMax));
+      LUT_TV[d2] = Math.round(lit * toneMax * 255);
+    }
+  }
   for (let y = y0; y <= y1; y++) {
     const dy = y - cy;
     const row = y * w;
     for (let x = x0; x <= x1; x++) {
       const dx = x - cx;
-      const d2 = dx * dx + dy * dy;
-      if (d2 >= r12) continue;
-      const d = Math.sqrt(d2);
-      let lit = 1;
-      if (d > r0) { const t = (d - r0) / span; lit = 1 - t * t * (3 - 2 * t); }
-      const nv = Math.round(255 * (1 - lit * litMax));
+      const d2f = dx * dx + dy * dy;
+      if (d2f >= r12) continue;
+      let nv, tv;
+      if (useLut) { const d2 = d2f | 0; nv = LUT_NV[d2]; tv = LUT_TV[d2]; }
+      else {
+        const d = Math.sqrt(d2f);
+        let lit = 1;
+        if (d > r0) { const t = (d - r0) / span; lit = 1 - t * t * (3 - 2 * t); }
+        nv = Math.round(255 * (1 - lit * litMax)); tv = Math.round(lit * toneMax * 255);
+      }
       if (nv < night[row + x]) night[row + x] = nv;
-      if (tone) { const tv = Math.round(lit * toneMax * 255); if (tv > tone[row + x]) tone[row + x] = tv; }
+      if (tone && tv > tone[row + x]) tone[row + x] = tv;
     }
   }
 }
@@ -317,17 +333,17 @@ export function precipitationFor(weather, altFrac = 0, out = {}) {
   let streaks = 0, flakes = 0, dx = 0.22, dy = 1, speed = 200, len = 5, kind = 'rain';
   if (weather.rain > 0) {
     const heavy = weather.rainStyle === 'heavy';
-    streaks = Math.round(weather.rain * (heavy ? 330 : 190));
-    speed = heavy ? 230 : 105; len = heavy ? 6 : 3;
+    streaks = Math.round(weather.rain * (heavy ? 360 : 420));
+    speed = heavy ? 230 : 110; len = heavy ? 7 : 4;
     const w = weather.wind;
     dx = w[0] * (heavy ? 0.3 : 0.2); dy = 1;
   } else if (weather.snow > 0) {
     let k = weather.snow;
     if (weather.snowAbove != null) k *= smooth(weather.snowAbove - 0.06, weather.snowAbove + 0.12, altFrac);
     kind = 'snow';
-    streaks = Math.round(k * 110); flakes = Math.round(k * 200);
+    streaks = Math.round(k * 190); flakes = Math.round(k * 240);
     const w = weather.wind;
-    dx = w[0]; dy = w[1] * 0.32 + 0.1; speed = 170; len = 11;
+    dx = w[0]; dy = w[1] * 0.4 + 0.12; speed = 150; len = 16;
   }
   const m = Math.hypot(dx, dy) || 1;
   out.streaks = Math.min(streaks, 420); out.flakes = Math.min(flakes, 420);
@@ -344,8 +360,8 @@ export function smokePuff(clock, i, n, seedPhase, wind, out = {}) {
   const age = fract(clock * 0.2 + i / n + seedPhase);
   out.age = age;
   out.x = wind * 26 * age * age + Math.sin(age * 7 + seedPhase * 6.283 + i) * (0.8 + age * 1.6);
-  out.y = -age * 36;
-  out.r = 0.9 + age * 3.2;
+  out.y = -age * 46;
+  out.r = 1.6 + age * 5;
   out.d = (1 - age) * (age < 0.08 ? age / 0.08 : 1);
   return out;
 }
@@ -363,15 +379,15 @@ export function visibleBothies(bothies, px, py, maxCells, out) {
 // ------------------------------------------------------------------------------- the fx
 const MISTABLE = new Uint8Array(PAL_COUNT);       // light ground, water, woods and bog take mist; nothing else does
 [I.paper, I.paper2, I.snow, I.water, I.waterDeep, I.wood, I.bog].forEach((i) => { MISTABLE[i] = 1; });
-const WARM_U32 = Array.from(WARM_MAP, (wi) => U[PAL_NAMES[wi]]);   // u32 of the warmer neighbour, by palette index
+const WARM_U32 = Uint32Array.from(Array.from(WARM_MAP, (wi) => U[PAL_NAMES[wi]]));   // u32 of the warmer neighbour, by palette index
 const SMOKE_SKIP = new Uint8Array(PAL_COUNT);     // never smoke over ink (symbols, labels, contours of crags) or magenta
 [I.ink, I.magenta].forEach((i) => { SMOKE_SKIP[i] = 1; });
 
 // mist bands: [texture cell w, cell h, parallax, drift px/s x, drift px/s y, weight]
 const BANDS = [
-  { cx: 96, cy: 20, par: 0.55, sx: 5, sy: 0.5, w: 0.5 },
-  { cx: 60, cy: 14, par: 0.78, sx: 9, sy: -0.7, w: 0.38 },
-  { cx: 36, cy: 9, par: 1.0, sx: 15, sy: 0.9, w: 0.3 },
+  { cx: 150, cy: 18, par: 0.55, sx: 5, sy: 0.5, w: 0.5 },
+  { cx: 96, cy: 14, par: 0.78, sx: 9, sy: -0.7, w: 0.38 },
+  { cx: 60, cy: 9, par: 1.0, sx: 15, sy: 0.9, w: 0.3 },
 ];
 const TW = 256, TH = 128;
 
@@ -399,6 +415,7 @@ export function createFx() {
   let boltInfo = { points: 0, trunk: 0, forkPts: 0 };
   let boltIndex = -1;
   const precip = {};
+  const colF = new Int32Array(GW), xi0 = new Int32Array(GW), xi1 = new Int32Array(GW), xi2 = new Int32Array(GW), xis = new Int32Array(GW);
   const dens = new Uint8Array(GW * GH);
   const shd = new Uint8Array(GW * GH);
   const lightMap = new Uint8Array(SW * SH);
@@ -409,8 +426,9 @@ export function createFx() {
   const shakeTmp = { x: 0, y: 0 };
   const puff = {};
   let lantern = { x: 0, y: 0, on: false };
-  let toneBoxes = [];                                // reused [{x0,y0,x1,y1}]
-  const boxPool = [];
+  let nBoxes = 0;
+  const toneBoxes = [];                              // reused [{x0,y0,x1,y1}], nBoxes of them valid this frame
+  const prepOut = { tint: null, lightMap: null };
   let altFrac = 0;
 
   // ------------------------------------------------------------------ setup
@@ -463,7 +481,7 @@ export function createFx() {
     // walker altitude fraction (for the high-snow levels)
     const w = fx.world;
     altFrac = 0;
-    if (w && state && state.player && w.maxH > w.minH) altFrac = clamp((state.player.elevation - w.minH) / (w.maxH - w.minH), 0, 1);
+    if (w && state && state.player && w.maxH > w.minH) altFrac = clamp((state.player.elevation - w.minH) / (w.maxH - w.minH), 0, 1) || 0;
     fx.shake.x = 0; fx.shake.y = 0; fx.strike = null;
     if (!sched) { fx.lastClock = clock; return; }
     const idx = sched.indexAt(clock);
@@ -504,23 +522,23 @@ export function createFx() {
     fx.night = night;
     tintOut.phase = tint.phase; tintOut.night = night; tintOut.warm = tint.warm; tintOut.wash = tint.wash;
     // ---- lights
-    fx.lit = night > 0.04;
-    toneBoxes = [];
+    fx.lit = night > 0.2;               // light pools only matter once it is properly dark (storm gloom alone does not light the lantern)
+    nBoxes = 0;
     let lm = null;
     if (fx.lit) {
       lightMap.fill(255); toneMap.fill(0);
       const f = flicker(clock, 0);
       const lr0 = 40 * f, lr1 = 90 * f;
       lantern.x = lx; lantern.y = ly; lantern.on = true;
-      stampLight(lightMap, toneMap, SW, SH, lx, ly, lr0, lr1, 0.88, 0.5);
-      toneBoxes.push(box(0, lx - lr1, ly - lr1, lx + lr1, ly + lr1));
+      stampLight(lightMap, toneMap, SW, SH, lx, ly, lr0, lr1, 0.9, 0.8);
+      box(lx - lr1, ly - lr1, lx + lr1, ly + lr1);
       for (let i = 0; i < bothies.length; i++) {
         const b = bothies[i];
         const bx = b.px - camX, by = b.py - camY - 1;
         if (bx < -40 || bx > SW + 40 || by < -40 || by > SH + 40) continue;
         const ff = flicker(clock, b.ph);
         stampLight(lightMap, toneMap, SW, SH, bx, by, 11 * ff, 30 * ff, 0.92, 1);
-        toneBoxes.push(box(toneBoxes.length, bx - 30 * ff, by - 30 * ff, bx + 30 * ff, by + 30 * ff));
+        box(bx - 30 * ff, by - 30 * ff, bx + 30 * ff, by + 30 * ff);
       }
       lm = lightMap;
     } else lantern.on = false;
@@ -528,11 +546,13 @@ export function createFx() {
     nList = 0;
     const wa = fx.weather;
     if (field && (wa.mist > 0.01 || wa.shadow > 0.01)) classify(fb, camX, camY, clock, night, lm, lvl, MW);
-    return { tint: tintOut, lightMap: lm };
+    prepOut.tint = tintOut; prepOut.lightMap = lm;
+    return prepOut;
   };
-  function box(i, x0, y0, x1, y1) {
-    let b = boxPool[i];
-    if (!b) b = boxPool[i] = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  function box(x0, y0, x1, y1) {
+    let b = toneBoxes[nBoxes];
+    if (!b) b = toneBoxes[nBoxes] = { x0: 0, y0: 0, x1: 0, y1: 0 };
+    nBoxes++;
     b.x0 = Math.max(0, Math.floor(x0)); b.y0 = Math.max(0, Math.floor(y0));
     b.x1 = Math.min(SW - 1, Math.ceil(x1)); b.y1 = Math.min(SH - 1, Math.ceil(y1));
     return b;
@@ -541,7 +561,7 @@ export function createFx() {
   function classify(fb, camX, camY, clock, night, lm, lvl, MW) {
     const wa = fx.weather;
     const wdx = wa.wind[0] >= 0 ? 1 : -1;
-    const mistAmt = wa.mist * 255 * 1.05;
+    const mistAmt = wa.mist * 255 * 2.7;
     const shAmt = wa.shadow;
     const fs = fieldSize;
     // base offsets per band (parallax + drift)
@@ -550,27 +570,31 @@ export function createFx() {
     const bu2 = ((camX * BANDS[2].par + clock * BANDS[2].sx * wdx) | 0), bv2 = ((camY * BANDS[2].par * 0.6 + clock * BANDS[2].sy) | 0);
     const su = ((camX + clock * 6 * wdx) | 0), sv = ((camY + clock * 1.5) | 0);
     const t0 = texBands[0], t1 = texBands[1], t2 = texBands[2], ts = texShadow;
-    const w0 = BANDS[0].w, w1 = BANDS[1].w, w2 = BANDS[2].w;
+    const w0 = BANDS[0].w * 256, w1 = BANDS[1].w * 256, w2 = BANDS[2].w * 256;
+    const k = mistAmt / (255 * 255 * 256);                        // fv (0..255) * n (0..255*256*sum w) -> 0..255 density
     const doShadow = shAmt > 0.01 && night < 0.5;
+    const shK = shAmt * 1.5;
+    for (let gx = 0; gx < GW; gx++) {                             // per-column tables, shared by every row
+      const sx = gx * 2 + 1;
+      colF[gx] = clamp(((camX + sx) / CELL_PX) | 0, 0, fs - 1);
+      xi0[gx] = (bu0 + sx) & 255; xi1[gx] = (bu1 + sx) & 255; xi2[gx] = (bu2 + sx) & 255; xis[gx] = (su + sx) & 255;
+    }
     for (let gy = 0; gy < GH; gy++) {
       const sy = gy * 2 + 1;
-      const wy = camY + sy;
-      const cy = (wy / CELL_PX) | 0;
+      const cy = (camY + sy) / CELL_PX | 0;
       const rowF = clamp(cy, 0, fs - 1) * fs;
       const v0 = ((bv0 + sy) & 127) << 8, v1 = ((bv1 + sy) & 127) << 8, v2 = ((bv2 + sy) & 127) << 8, vs = ((sv + sy) & 127) << 8;
+      const gRow = gy * GW, lmRow = sy * SW + 1;
       for (let gx = 0; gx < GW; gx++) {
-        const sx = gx * 2 + 1;
-        const cx = ((camX + sx) / CELL_PX) | 0;
-        const fv = field[rowF + clamp(cx, 0, fs - 1)];
+        const fv = field[rowF + colF[gx]];
         let d = 0;
-        if (fv) {
-          const n = t0[v0 | ((bu0 + sx) & 255)] * w0 + t1[v1 | ((bu1 + sx) & 255)] * w1 + t2[v2 | ((bu2 + sx) & 255)] * w2;
-          d = (fv * n * (1 / 255)) * mistAmt * (1 / 255);
-          if (lm) d *= 0.4 + 0.6 * lm[sy * SW + sx] * (1 / 255);
+        if (fv !== 0) {
+          d = fv * (t0[v0 | xi0[gx]] * w0 + t1[v1 | xi1[gx]] * w1 + t2[v2 | xi2[gx]] * w2) * k;
+          if (lm) d *= 0.4 + 0.6 * lm[lmRow + gx * 2] * (1 / 255);
           if (d > 255) d = 255;
         }
-        dens[gy * GW + gx] = d;
-        shd[gy * GW + gx] = doShadow ? Math.min(255, ts[vs | ((su + sx) & 255)] * shAmt * 1.5) : 0;
+        dens[gRow + gx] = d;
+        shd[gRow + gx] = doShadow ? Math.min(255, ts[vs | xis[gx]] * shK) : 0;
       }
     }
     let n = 0;
@@ -586,12 +610,14 @@ export function createFx() {
         const wx = x + camX;
         let l = 0;
         if (d > 0) {
-          const thr = BAYER8[bRow | (wx & 7)] << 2;
-          if (d > thr) l = d - thr > 90 ? 2 : 1;
+          if (d > (BAYER8[bRow | (wx & 7)] << 2)) {
+            l = 1;                                                // thin haze: paper2 (by day) / dusk (by night)
+            if (d > 135 && d - 135 > (BAYER8[bRow2 | ((wx + 5) & 7)] << 2)) l = 2;   // denser cores: flecks of rock grey
+          }
         }
-        if (l === 0 && s > 0 && ((x + y) & 1) === 0) {
+        if (l === 0 && s > 0) {
           const thr = BAYER8[bRow2 | ((wx + 5) & 7)] << 2;
-          if (s > thr) l = s - thr > 70 ? 4 : 3;
+          if (s > thr) l = s - thr > 120 ? 4 : 3;
         }
         if (l === 0) continue;
         if (lvl[mrow + x] !== 0) continue;                       // never over a contour line
@@ -611,7 +637,7 @@ export function createFx() {
     const lm = fx.lit ? lightMap : null;
     // ---- warm lamp dither in the pools (on light ground the night pass left alone)
     if (fx.lit) {
-      for (let b = 0; b < toneBoxes.length; b++) {
+      for (let b = 0; b < nBoxes; b++) {
         const bx = toneBoxes[b];
         for (let y = bx.y0; y <= bx.y1; y++) {
           const wy = y + camY;
@@ -626,8 +652,8 @@ export function createFx() {
             const night1 = lightMap[i] * (1 / 255) * night;      // darkness left here
             if (night1 > 0.6) continue;
             const lit = t * (1 / 255);
-            if (BAYER8[r1 | (wx & 7)] < lit * 40) fb[i] = WARM_U32[pi];
-            if (((x + y) & 1) === 0 && BAYER8[r2 | ((wx + 4) & 7)] < lit * 15) fb[i] = U.lamp;
+            if (BAYER8[r1 | (wx & 7)] < lit * 52) fb[i] = WARM_U32[pi];
+            if (BAYER8[r2 | ((wx + 4) & 7)] < lit * 9) fb[i] = U.lamp;
           }
         }
       }
@@ -650,7 +676,7 @@ export function createFx() {
         const i = stars.y[s] * SW + stars.x[s];
         if (lm && lm[i] < 150) continue;
         const pi = paletteIndexOf(fb[i]);
-        if (pi !== I.night && pi !== I.ink && pi !== I.waterInk) continue;
+        if (pi !== I.night) continue;                     // dark ground only: never over ink, labels or symbols
         fb[i] = tw > 0.8 ? U.snow : U.ice;
       }
     }
@@ -676,7 +702,7 @@ export function createFx() {
         for (let y = 0; y < SH; y++) {
           const r = (y & 7) << 3;
           for (let x = 0; x < SW; x++) {
-            if (BAYER8[r | (x & 7)] < dd * 64) fb[y * SW + x] = ((x + y) & 1) === 0 ? U.snow : U.bolt;
+            if (BAYER8[r | (x & 7)] < dd * 64) fb[y * SW + x] = BAYER8[(((y + 3) & 7) << 3) | ((x + 5) & 7)] < 30 ? U.snow : U.bolt;
           }
         }
       }
@@ -695,11 +721,11 @@ export function createFx() {
     const dist = Math.hypot(b.x - fx.playerX, b.y - fx.playerY);
     const fade = 1 - smooth(32, 40, dist);
     const dayThin = night > 0.5 ? 1 : 0.55;
-    const N = 8;
+    const N = 12;
     for (let i = 0; i < N; i++) {
       smokePuff(clock, i, N, b.sph, wind, puff);
       const px = cx + puff.x, py = cy + puff.y;
-      const dens = puff.d * fade * dayThin;
+      const dens = puff.d * fade * dayThin * 1.9;
       if (dens <= 0.02) continue;
       const r = puff.r, ri = Math.ceil(r);
       const col1 = U.rock, col2 = night > 0.5 ? U.dusk : U.paper2;
@@ -710,7 +736,7 @@ export function createFx() {
           const X = Math.round(px + xx), Y = Math.round(py + yy);
           if (X < 0 || Y < 0 || X >= SW || Y >= SH) continue;
           const th = BAYER8[((((Y + camY) & 7) << 3) | ((X + camX) & 7))] * (1 / 64);
-          if (th > dens * (1 - rr / (r + 0.5))) continue;
+          if (th > dens * (1 - 0.55 * rr / (r + 0.5))) continue;
           const i = Y * SW + X;
           if (SMOKE_SKIP[paletteIndexOf(fb[i])]) continue;
           fb[i] = (puff.age < 0.6 && th < dens * 0.55) ? col1 : col2;
@@ -723,8 +749,9 @@ export function createFx() {
     if (x >= 0 && y >= 0 && x < SW && y < SH) fb[y * SW + x] = c;
   }
 
-  const RAIN_DAY = [U.waterInk, U.grid], RAIN_NIGHT = [U.grid, U.rock];
-  const SNOW_DAY = [U.ice, U.grid], SNOW_NIGHT = [U.snow, U.ice];
+  // streak = [head, tail]; flakes use both. Colours the map itself never uses (ice) keep rain readable against heather tufts.
+  const RAIN_DAY = [U.waterDeep, U.ice], RAIN_NIGHT = [U.ice, U.grid];
+  const SNOW_DAY = [U.grid, U.ice], SNOW_NIGHT = [U.snow, U.ice];
   function drawPrecip(fb, clock, night) {
     precipitationFor(fx.weather, altFrac, precip);
     const P = parts;
@@ -737,8 +764,11 @@ export function createFx() {
       let x = P.x0[i] + dx * sp * clock, y = P.y0[i] + dy * sp * clock;
       x = ((x % SW) + SW) % SW; y = ((y % SH) + SH) % SH;
       const len = Math.max(2, Math.round(lenBase * (0.6 + P.r[i] * 0.8)));
-      const c = cols[P.r[i] < 0.5 ? 0 : 1];
-      for (let k = 0; k < len; k++) put(fb, Math.round(x - dx * k), Math.round(y - dy * k), c);
+      const fade = len > 8;                                      // blowing-snow streaks thin out toward the tail
+      for (let k = 0; k < len; k++) {
+        if (fade && k > (len >> 1) && ((k + i) & 1) === 1) continue;
+        put(fb, Math.round(x - dx * k), Math.round(y - dy * k), k === 0 || (fade && (i & 3) === 0) ? cols[0] : cols[1]);
+      }
     }
     for (let j = 0; j < precip.flakes; j++) {
       const i = 420 - 1 - j;

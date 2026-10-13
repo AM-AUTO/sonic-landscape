@@ -99,5 +99,5 @@ export default {
     'The buttress wants speed. The tap wants the pillar first.',
     "A'thing ye've heard is on this hill. Walk it hame.",
   ],
-  palette: { tint: '#5a6e8a', paper: '#eeeee6' },
+  palette: { tint: '#5a6e8a', accent: 'flame', paper: '#eeeee6' },
 };

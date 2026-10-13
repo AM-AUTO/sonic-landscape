@@ -175,6 +175,7 @@ export class Game {
       levelIndex: index, level, world,
       player: p,
       timeOfDay: tod, phase: dayPhase(tod),
+      day: 1,                               // +1 each time timeOfDay wraps past 1 (a full day cycle walked)
       events: [],
       proximity: [],
       resonance: this.pois.resonance,
@@ -251,7 +252,9 @@ export class Game {
     if (p.cover !== prevCover) events.push({ type: 'cover', from: prevCover, to: p.cover });
 
     // --- time of day
+    const prevTod = s.timeOfDay;
     s.timeOfDay = mod(s.timeOfDay + (dt / DAY_SECONDS) * (p.resting ? REST_TIME_MULT : 1), 1);
+    if (s.timeOfDay < prevTod) s.day++;
     s.phase = dayPhase(s.timeOfDay);
 
     // --- contour crossings. index = line number (height = index * interval).

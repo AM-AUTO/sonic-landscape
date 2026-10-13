@@ -528,6 +528,25 @@ test('time of day advances 1/DAY_SECONDS per s, x8 while resting and still', () 
   assert.ok(g.state.timeOfDay < 1 && g.state.timeOfDay >= 0);
 });
 
+test('day counter: starts at 1, +1 each time timeOfDay wraps past 1, never on a plain step, resets with the level', () => {
+  const g = mkGame({});
+  assert.equal(g.state.day, 1);
+  run(g, IDLE, 10);
+  assert.equal(g.state.day, 1);
+  g.state.timeOfDay = 0.999;
+  run(g, IDLE, 1);
+  assert.equal(g.state.day, 2);
+  assert.ok(g.state.timeOfDay < 0.1);
+  // resting walks time x8 and so wraps sooner; a whole cycle later it is day 3
+  g.state.timeOfDay = 0.97;
+  run(g, { x: 0, y: 0, run: false, rest: true }, 3);
+  assert.equal(g.state.day, 3);
+  run(g, IDLE, 5);
+  assert.equal(g.state.day, 3);
+  g.loadLevel(0);
+  assert.equal(g.state.day, 1);
+});
+
 test('requires: needs that artefact resonating; partial -> full after visiting it', () => {
   const pois = [
     { id: 'a', type: 'cairn', name: 'A', x: 60, y: 128, condition: {} },

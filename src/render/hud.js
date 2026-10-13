@@ -7,7 +7,7 @@ import { rect, frame, hline, vline, pline, panel, px, clamp, pdisc, pcircle, pci
 import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas, touchIcon, arrowSprite, octantOf } from './sprites.js';
 import { typeShort } from './glyphs.js';
 import { CELL_PX, SCREEN_W, SCREEN_H, RESONANCE_SECONDS } from '../world/codes.js';
-import { HUD, fmt } from '../text.js';
+import { HUD, STORY, fmt } from '../text.js';
 
 export const STRIP_H = 13;
 const MINI = 48;
@@ -126,8 +126,201 @@ function drawMinimap(ctx, st, R) {
   px(ctx, x + ppx, y + ppy, blink ? PAL.snow : PAL.magenta);
 }
 
-export const CELL_H = 24;
-export const CHAIN_W = 40, GATE_W = 46, CHEV = 5;
+// ======================================================================= scroll banner
+// Knight-Lore-style parchment scroll along the foot of the screen: black fill, 1 px line art in the
+// track's accent colour, a rolled scroll end in each corner, long diagonals running down to the
+// centre, where DAY (flame) over the day number (white) sits between two curls. Left: the key bar.
+// Right: a window with the sun or moon, and the resting text beside it.
+export const SCROLL_H = 36;                      // rows reserved at the foot of the screen
+export const SCROLL_Y = SCREEN_H - SCROLL_H;     // top of the corner rolls
+export const SCROLL = Object.freeze({
+  roll: 13,                                       // width of a corner roll
+  drop: 13,                                       // how far the diagonals fall to the centre
+  notch: 14,                                      // half-width of the central notch (curls + day block)
+  vertexY: SCROLL_Y + 13,
+  centreX: SCREEN_W / 2,
+});
+export const CELL_H = 22;                         // key-bar cell: icon row, label row, status row
+export const CHAIN_W = 27, GATE_W = 32, CHEV = 3;
+export const KEYBAR = Object.freeze({
+  x0: 17, y: SCROLL_Y + 13, h: CELL_H,
+  labelW: CHAIN_W,                                // widest label / status line a chain cell takes
+  limit: SCREEN_W / 2 - SCROLL.notch - 8,         // the key bar must end before the curls
+});
+export const WINDOW = Object.freeze({ w: 36, h: 24, y: SCREEN_H - 26, right: SCREEN_W - 15 });
+
+/** Cells of the key bar for a chain of n artefacts (+ the bealach cell). Pure geometry, shared with tests. */
+export function keyBarLayout(n) {
+  const cells = [];
+  let x = KEYBAR.x0;
+  for (let i = 0; i < n; i++) { cells.push({ x, y: KEYBAR.y, w: CHAIN_W, h: CELL_H }); x += CHAIN_W + CHEV; }
+  const gate = { x, y: KEYBAR.y, w: GATE_W, h: CELL_H };
+  return { cells, gate, end: gate.x + gate.w };
+}
+
+/** y of the scroll's top line at column x (the diagonals; flat on the rolls and in the notch). */
+export function scrollTop(x) {
+  const xl = SCROLL.roll - 1, xr = SCREEN_W - SCROLL.roll;
+  const c = SCROLL.centreX, nl = c - SCROLL.notch, nr = c + SCROLL.notch - 1;
+  if (x <= xl || x >= xr) return SCROLL_Y;
+  if (x >= nl && x <= nr) return SCROLL.vertexY;
+  if (x < nl) return SCROLL_Y + Math.round(((x - xl) / (nl - xl)) * SCROLL.drop);
+  return SCROLL_Y + Math.round(((xr - x) / (xr - nr)) * SCROLL.drop);
+}
+
+/** The track's signature hue (a palette name) from palette.accent; magenta when unset or unknown. */
+export function accentName(st) {
+  const lv = (st && ((st.world && st.world.level) || st.level)) || {};
+  const a = lv.palette && lv.palette.accent;
+  return a && PAL[a] ? a : 'magenta';
+}
+export function accentOf(st) { return PAL[accentName(st)]; }
+
+// corner roll, 13 wide, 'a' = accent line (drawn mirrored on the right)
+const ROLL_TOP = [
+  '..aaaaaaaaa..',
+  '.a..aaaaa..a.',
+  'a..a.....a..a',
+  'a.a..aaa..a.a',
+  'a.a.a...a.a.a',
+  '.a..a.a.a.a..',
+  '.a...aa.a.a..',
+  '.a......a.a..',
+];
+const ROLL_BOT = [
+  '.a.......a.a.',
+  '.a.......a.a.',
+  'a.a.....a..a.',
+  'a..aaaaa..a.a',
+  '.a.......a..a',
+  '..aaaaaaaa.a.',
+];
+function drawRoll(ctx, left, color) {
+  const W = 13;
+  ctx.fillStyle = color;
+  const put = (art, y0) => art.forEach((row, j) => { for (let i = 0; i < W; i++) if (row[i] === 'a') ctx.fillRect(left ? i : SCREEN_W - 1 - i, y0 + j, 1, 1); });
+  put(ROLL_TOP, SCROLL_Y);
+  put(ROLL_BOT, SCREEN_H - ROLL_BOT.length);
+  const y0 = SCROLL_Y + ROLL_TOP.length, y1 = SCREEN_H - ROLL_BOT.length;
+  for (const x of [0, 2, 9, 11]) ctx.fillRect(left ? x : SCREEN_W - 1 - x, y0, 1, y1 - y0);
+}
+
+// curl where each diagonal ends beside the day block (the right one is mirrored)
+const CURL = [
+  'aaaaaa.',
+  '.....a.',
+  '..aa.a.',
+  '.a..aa.',
+  '.a.a...',
+  '.a..a..',
+  '..aa...',
+];
+function drawCurl(ctx, left, color) {
+  const x0 = SCROLL.centreX - SCROLL.notch - 6, y0 = SCROLL.vertexY;
+  ctx.fillStyle = color;
+  CURL.forEach((row, j) => {
+    for (let i = 0; i < row.length; i++) if (row[i] === 'a') ctx.fillRect(left ? x0 + i : SCREEN_W - 1 - (x0 + i), y0 + j, 1, 1);
+  });
+}
+
+// ---- the window: a sun or moon crossing it as the day goes
+const SUN_ART = [
+  '....L....',
+  '.L..f..L.',
+  '..fffff..',
+  '..fffff..',
+  'LffffwffL',
+  '..fffff..',
+  '..fffff..',
+  '.L..f..L.',
+  '....L....',
+];
+const SUN_LOW_ART = [
+  '.........',
+  '..L.L.L..',
+  '...LfL...',
+  '..LfffL..',
+  '.LfffffL.',
+  'LfffwfffL',
+  '.........',
+  '.........',
+  '.........',
+];
+const MOON_ART = [
+  '..sswww..',
+  '.swww....',
+  'swww.....',
+  'swww.....',
+  'swww.....',
+  'swww.....',
+  '.swwww...',
+  '..swwwww.',
+  '...ssss..',
+];
+function sunMoonSprite(night, low) {
+  if (night) return artCanvas('hud-moon', MOON_ART);
+  return low ? artCanvas('hud-sun-low', SUN_LOW_ART) : artCanvas('hud-sun', SUN_ART);
+}
+
+function drawWindow(ctx, st, accent, wx, clock) {
+  const { w, h, y } = WINDOW;
+  const x = wx - w;
+  // frame with clipped corners and little studs, as the red window in the reference
+  rect(ctx, x, y, w, h, PAL.ink);
+  ctx.fillStyle = accent;
+  ctx.fillRect(x + 2, y, w - 4, 1); ctx.fillRect(x + 2, y + h - 1, w - 4, 1);
+  ctx.fillRect(x, y + 2, 1, h - 4); ctx.fillRect(x + w - 1, y + 2, 1, h - 4);
+  for (const [a, b] of [[1, 1], [w - 2, 1], [1, h - 2], [w - 2, h - 2]]) ctx.fillRect(x + a, y + b, 1, 1);
+  ctx.fillRect(x + 3, y + 2, w - 6, 1); ctx.fillRect(x + 3, y + h - 3, w - 6, 1);
+  const ix = x + 3, iy = y + 3, iw = w - 6, ih = h - 6;
+  const tod = ((st.timeOfDay || 0) % 1 + 1) % 1;
+  const night = tod >= 0.5;
+  const f = night ? (tod - 0.5) * 2 : tod * 2;
+  const a = clamp(f, 0.04, 0.96) * Math.PI;
+  const cx = ix + iw / 2 - Math.cos(a) * (iw / 2 - 4);
+  const cy = iy + ih - 6 - Math.sin(a) * (ih - 9);
+  if (night) {
+    ctx.fillStyle = PAL.dusk;
+    for (const [sx, sy] of [[4, 2], [10, 7], [24, 3], [27, 9], [16, 1], [20, 10]]) if (((sx * 7 + sy + Math.floor(clock * 1.3)) % 5) !== 0) ctx.fillRect(ix + sx, iy + sy, 1, 1);
+  }
+  const low = !night && (f < 0.16 || f > 0.84);
+  const spr = sunMoonSprite(night, low);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(ix, iy, iw, ih - 1); ctx.clip();
+  ctx.drawImage(spr, Math.round(cx - 4), Math.round(cy - 4));
+  ctx.restore();
+  hline(ctx, ix, iy + ih - 1, iw, PAL.rock);   // the ground line
+}
+
+/** Resting text block beside the window: its width (kept in step with tests/text.test.js). */
+export const RESTING_W = 52;
+export const RESTING_LABEL_X = 0;
+
+function windowRight(R) {
+  return R.touchBottomLeft ? Math.min(WINDOW.right, R.touchBottomLeft - 4) : WINDOW.right;
+}
+
+function drawRightZone(ctx, st, accent, R) {
+  const clock = R.clock || 0;
+  const wx = windowRight(R);
+  drawWindow(ctx, st, accent, wx, clock);
+  const p = st.player;
+  if (p && p.resting) {
+    const x = wx - WINDOW.w - 6 - RESTING_W + RESTING_LABEL_X, y = WINDOW.y + 5;
+    const dots = '.'.repeat(1 + (Math.floor(clock * 2) % 3));
+    const labW = drawText(ctx, HUD.resting, x, y, PAL.snow, { font: 'small', spacing: 0 });
+    drawText(ctx, dots, x + labW + 1, y, accent, { font: 'small' });
+    drawText(ctx, HUD.timeSpeed, x, y + 9, PAL.rock, { font: 'small' });
+    if (Math.floor(clock * 3) % 2 === 0) px(ctx, x + RESTING_W - 3, y + 1, accent);
+  }
+}
+
+function drawDay(ctx, st) {
+  const day = String(Math.max(1, (st.day | 0) || 1));
+  const cx = SCROLL.centreX;
+  drawText(ctx, STORY.dayLabel, cx, SCROLL.vertexY + 4, PAL.flame, { font: 'small', align: 'center', spacing: 1 });
+  drawText(ctx, day, cx, SCROLL.vertexY + 12, PAL.snow, { align: 'center' });
+}
 
 /** km text for a distance in cells (40 m per cell). */
 function kmText(dist) {
@@ -135,96 +328,125 @@ function kmText(dist) {
   return fmt(HUD.km, { km: (dist * 0.04).toFixed(1) });
 }
 
-function lineTwo(ctx, x, y, oct, dist, color, clock) {
-  const near = dist <= 3;
-  if (!near) ctx.drawImage(arrowSprite(oct, color), x + 1, y);
-  else if (Math.floor(clock * 3) % 2 === 0) { rect(ctx, x + 2, y + 2, 3, 3, color); }
-  drawText(ctx, kmText(dist), x + 10, y + 1, PAL.ink, { font: 'small' });
-}
-
-function drainBar(ctx, x, y, w, frac, secs) {
+function drainBar(ctx, x, y, w, frac, secs, accent) {
   const f = clamp(frac, 0, 1);
-  rect(ctx, x, y, w, 5, PAL.paper2);
-  frame(ctx, x, y, w, 5, PAL.rock);
-  const bw = Math.max(f > 0 ? 1 : 0, Math.round((w - 2) * f));
-  rect(ctx, x + 1, y + 1, bw, 3, f > 0.25 ? PAL.magenta : PAL.contourIdx);
-  drawText(ctx, fmt(HUD.seconds, { n: Math.max(0, Math.ceil(secs)) }), x + w + 2, y, PAL.ink, { font: 'small' });
+  rect(ctx, x, y, w, 4, PAL.night);
+  const bw = Math.max(f > 0 ? 1 : 0, Math.round(w * f));
+  rect(ctx, x, y, bw, 4, f > 0.25 ? accent : PAL.lamp);
+  frame(ctx, x - 1, y - 1, w + 2, 6, PAL.rock);
+  drawText(ctx, fmt(HUD.seconds, { n: Math.max(0, Math.ceil(secs)) }), x + w + 3, y - 1, PAL.snow, { font: 'small' });
 }
 
-function drawChain(ctx, st, R) {
+const centred = (cell, text) => cell.x + Math.round((cell.w - measureText(text, { font: 'small' })) / 2);
+
+function drawKeyBar(ctx, st, accent, R) {
   const w = st.world;
   const chain = st.chainProgress || [];
   const res = st.resonance || [];
   const p = st.player;
   const clock = R.clock || 0;
-  let y = SCREEN_H - 3;
-  if (chain.length) {
-    const gate = w && w.gate;
-    let total = 6;
-    for (let i = 0; i < chain.length; i++) total += CHAIN_W + CHEV;
-    total += GATE_W;
-    y -= CELL_H;
-    panel(ctx, 4, y, total, CELL_H, {});
-    const allLit = chain.every((c) => c.resonating);
-    let cx = 7;
-    chain.forEach((c, i) => {
-      const lit = !!c.resonating;
-      // icon box
-      rect(ctx, cx, y + 2, 10, 10, lit ? PAL.paper : PAL.paper2);
-      frame(ctx, cx, y + 2, 10, 10, lit ? PAL.magenta : PAL.rock);
-      ctx.drawImage(iconSprite(c.type, true), cx + 1, y + 3);
-      if (lit && Math.floor(clock * 2 + i) % 2 === 0) px(ctx, cx + 9, y + 2, PAL.snow);
-      drawText(ctx, typeShort(c.type), cx + 12, y + 4, lit ? PAL.ink : PAL.contourIdx, { font: 'small' });
-      // line two
-      const ly = y + 14;
-      if (lit) {
-        let secs = c.remaining;
-        if (secs == null) { const r = res.find((q) => q.type === c.type); secs = r ? (r.strength == null ? 1 : r.strength) * RESONANCE_SECONDS : 0; }
-        drainBar(ctx, cx + 1, ly + 1, 20, secs / RESONANCE_SECONDS, secs);
-      } else if (c.nearest) {
-        const n = c.nearest;
-        const brg = n.bearing != null ? n.bearing : Math.atan2(n.y - p.y, n.x - p.x);
-        const dist = n.dist != null ? n.dist : Math.hypot(n.x - p.x, n.y - p.y);
-        lineTwo(ctx, cx, ly, octantOf(brg), dist, PAL.magenta, clock);
-      } else {
-        hline(ctx, cx + 2, ly + 3, 5, PAL.rock);
-      }
-      // connector chevron
-      const nx = cx + CHAIN_W;
-      const next = chain[i + 1];
-      ctx.fillStyle = (lit && (next ? next.resonating : st.gateOpen)) ? PAL.magenta : PAL.rock;
-      ctx.fillRect(nx, y + 6, 1, 3); ctx.fillRect(nx + 1, y + 7, 1, 1);
-      cx += CHAIN_W + CHEV;
-    });
-    // gate cell
-    const open = !!st.gateOpen;
-    const gs = gateSprite(open);
-    if (open && Math.floor(clock * 3) % 2 === 0) frame(ctx, cx - 1, y + 1, 13, 12, PAL.snow);
-    if (!open && allLit) frame(ctx, cx - 1, y + 1, 13, 12, PAL.magenta);
-    ctx.drawImage(gs, cx, y + 2);
-    drawText(ctx, HUD.gate, cx + 14, y + 4, open ? PAL.magenta : PAL.ink, { font: 'small' });
-    const ly = y + 14;
-    if (open) drawText(ctx, HUD.gateOpen, cx + 3, ly + 1, PAL.magenta, { font: 'small' });
-    else if (gate && p) {
-      const dx = gate.x - p.x, dy = gate.y - p.y;
-      lineTwo(ctx, cx, ly, octantOf(Math.atan2(dy, dx)), Math.hypot(dx, dy), allLit ? PAL.magenta : PAL.waterInk, clock);
+  if (!chain.length) return;
+  const L = keyBarLayout(chain.length);
+  const allLit = chain.every((c) => c.resonating);
+  chain.forEach((c, i) => {
+    const cell = L.cells[i];
+    const lit = !!c.resonating;
+    const bx = cell.x, by = cell.y;
+    // icon tile: paper, so the OS legend symbol reads on black
+    rect(ctx, bx, by, 10, 10, lit ? PAL.paper : PAL.paper2);
+    frame(ctx, bx, by, 10, 10, lit ? accent : PAL.rock);
+    ctx.drawImage(iconSprite(c.type, true), bx + 1, by + 1);
+    if (lit && Math.floor(clock * 2 + i) % 2 === 0) px(ctx, bx + 9, by, PAL.snow);
+    // row one, right: dowsing arrow to the nearest of that type, or a spark while it sounds
+    let dist = null;
+    if (!lit && c.nearest) {
+      const n = c.nearest;
+      const brg = n.bearing != null ? n.bearing : Math.atan2(n.y - p.y, n.x - p.x);
+      dist = n.dist != null ? n.dist : Math.hypot(n.x - p.x, n.y - p.y);
+      if (dist > 3) ctx.drawImage(arrowSprite(octantOf(brg), accent), bx + 14, by + 1);
+      else if (Math.floor(clock * 3) % 2 === 0) rect(ctx, bx + 16, by + 3, 3, 3, accent);
+    } else if (lit) {
+      ctx.fillStyle = Math.floor(clock * 3 + i) % 2 ? PAL.flame : PAL.lamp;
+      ctx.fillRect(bx + 17, by + 3, 1, 5); ctx.fillRect(bx + 15, by + 5, 5, 1); ctx.fillRect(bx + 16, by + 4, 3, 3);
     }
+    // row two: label
+    const lab = typeShort(c.type);
+    drawText(ctx, lab, centred(cell, lab), by + 11, lit ? PAL.snow : PAL.rock, { font: 'small' });
+    // row three: seconds left (bar) or distance
+    if (lit) {
+      let secs = c.remaining;
+      if (secs == null) { const r = res.find((q) => q.type === c.type); secs = r ? (r.strength == null ? 1 : r.strength) * RESONANCE_SECONDS : 0; }
+      drainBar(ctx, bx + 1, by + 18, 13, secs / RESONANCE_SECONDS, secs, accent);
+    } else if (dist != null) {
+      const t = kmText(dist);
+      drawText(ctx, t, centred(cell, t), by + 17, PAL.paper2, { font: 'small' });
+    } else {
+      hline(ctx, bx + 9, by + 19, 8, PAL.rock);
+    }
+    // connector chevron
+    const next = chain[i + 1];
+    ctx.fillStyle = (lit && (next ? next.resonating : st.gateOpen)) ? accent : PAL.rock;
+    ctx.fillRect(bx + cell.w, by + 4, 1, 3); ctx.fillRect(bx + cell.w + 1, by + 5, 1, 1);
+  });
+  // bealach cell
+  const g = L.gate, open = !!st.gateOpen, gate = w && w.gate;
+  if (open && Math.floor(clock * 3) % 2 === 0) frame(ctx, g.x - 1, g.y - 1, 13, 12, PAL.snow);
+  else if (!open && allLit) frame(ctx, g.x - 1, g.y - 1, 13, 12, accent);
+  rect(ctx, g.x, g.y, 11, 10, PAL.paper2);
+  ctx.drawImage(gateSprite(open), g.x, g.y);
+  drawText(ctx, HUD.gate, centred(g, HUD.gate), g.y + 11, open ? accent : PAL.snow, { font: 'small' });
+  if (open) {
+    drawText(ctx, HUD.gateOpen, centred(g, HUD.gateOpen), g.y + 17, accent, { font: 'small' });
+  } else if (gate && p) {
+    const dx = gate.x - p.x, dy = gate.y - p.y, dist = Math.hypot(dx, dy);
+    if (dist > 3) ctx.drawImage(arrowSprite(octantOf(Math.atan2(dy, dx)), allLit ? accent : PAL.waterDeep), g.x + 14, g.y + 1);
+    const t = kmText(dist);
+    drawText(ctx, t, centred(g, t), g.y + 17, PAL.paper2, { font: 'small' });
   }
-  // artefacts sounding that are not part of the key: a slim row above the bar
+}
+
+/** Artefacts sounding that are not part of the key: a slim row above the scroll. */
+function drawExtras(ctx, st) {
+  const chain = st.chainProgress || [], res = st.resonance || [];
   const extra = res.filter((r) => !chain.some((c) => c.type === r.type));
-  if (extra.length) {
-    const rw = 6 + extra.length * 14, rh = 14;
-    y -= rh + 2;
-    panel(ctx, 4, y, rw, rh, {});
-    let ix = 7;
-    for (const r of extra) {
-      const s = clamp(r.strength == null ? 1 : r.strength, 0, 1);
-      ctx.drawImage(iconSprite(r.type, true), ix, y + 2);
-      rect(ctx, ix, y + 11, 8, 2, PAL.rock);
-      rect(ctx, ix, y + 11, Math.max(s > 0 ? 1 : 0, Math.round(8 * s)), 2, s > 0.25 ? PAL.magenta : PAL.contourIdx);
-      ix += 14;
-    }
+  if (!extra.length) return;
+  const rw = 6 + extra.length * 14, rh = 14;
+  const y = SCROLL_Y - rh - 2;
+  panel(ctx, 4, y, rw, rh, {});
+  let ix = 7;
+  for (const r of extra) {
+    const s = clamp(r.strength == null ? 1 : r.strength, 0, 1);
+    ctx.drawImage(iconSprite(r.type, true), ix, y + 2);
+    rect(ctx, ix, y + 11, 8, 2, PAL.rock);
+    rect(ctx, ix, y + 11, Math.max(s > 0 ? 1 : 0, Math.round(8 * s)), 2, s > 0.25 ? PAL.magenta : PAL.contourIdx);
+    ix += 14;
   }
+}
+
+/** The whole scroll: fill, line art, key bar, day block, window. */
+export function drawScroll(ctx, st, ui, R) {
+  const accent = accentOf(st);
+  ctx.fillStyle = PAL.ink;                         // black fill below the top line (the map shows above the diagonals)
+  let x = 0;
+  while (x < SCREEN_W) {
+    const y = scrollTop(x);
+    let x2 = x + 1;
+    while (x2 < SCREEN_W && scrollTop(x2) === y) x2++;
+    ctx.fillRect(x, y, x2 - x, SCREEN_H - y);
+    x = x2;
+  }
+  const xl = SCROLL.roll - 1, xr = SCREEN_W - SCROLL.roll;
+  const nl = SCROLL.centreX - SCROLL.notch, nr = SCROLL.centreX + SCROLL.notch - 1;
+  pline(ctx, xl, SCROLL_Y, nl, SCROLL.vertexY, accent);
+  pline(ctx, xr, SCROLL_Y, nr, SCROLL.vertexY, accent);
+  drawRoll(ctx, true, accent);
+  drawRoll(ctx, false, accent);
+  drawCurl(ctx, true, accent);
+  drawCurl(ctx, false, accent);
+  drawDay(ctx, st);
+  drawKeyBar(ctx, st, accent, R);
+  drawRightZone(ctx, st, accent, R);
+  drawExtras(ctx, st);
 }
 
 // ---- banner layout (exported so tests/text.test.js can check the real text against the real boxes)
@@ -334,39 +556,6 @@ function drawMessage(ctx, ui, R) {
   }
 }
 
-export const RESTING_W = 98;
-export const RESTING_LABEL_X = 50;
-
-function drawResting(ctx, st, R) {
-  const p = st.player;
-  if (!p || !p.resting) return;
-  const clock = R.clock || 0;
-  const w = RESTING_W, h = 27;
-  const x = Math.round(SCREEN_W / 2 - w / 2), y = SCREEN_H - 3 - h;
-  panel(ctx, x, y, w, h, {});
-  // sun / moon arc
-  const tod = ((st.timeOfDay || 0) % 1 + 1) % 1;
-  const cx = x + 25, base = y + 20, rx = 19, ry = 11;
-  hline(ctx, cx - rx - 1, base, rx * 2 + 3, PAL.rock);
-  ctx.fillStyle = PAL.grid;
-  for (let i = 0; i <= 20; i++) {
-    const a = (i / 20) * Math.PI;
-    if (i % 2 === 0) ctx.fillRect(Math.round(cx - Math.cos(a) * rx), Math.round(base - Math.sin(a) * ry), 1, 1);
-  }
-  const day = tod < 0.5;
-  const f = day ? tod * 2 : (tod - 0.5) * 2;
-  const a = clamp(f, 0.03, 0.97) * Math.PI;
-  const sx = Math.round(cx - Math.cos(a) * rx), sy = Math.round(base - Math.sin(a) * ry);
-  ctx.drawImage(timeSprite(day ? 'day' : 'night'), sx - 4, sy - 5);
-  // label
-  const dots = '.'.repeat(1 + (Math.floor(clock * 2) % 3));
-  const labW = drawText(ctx, HUD.resting, x + RESTING_LABEL_X, y + 6, PAL.ink, { font: 'small', spacing: 0 });
-  drawText(ctx, dots, x + RESTING_LABEL_X + labW + 1, y + 6, PAL.magenta, { font: 'small' });
-  drawText(ctx, HUD.timeSpeed, x + RESTING_LABEL_X, y + 15, PAL.contourIdx, { font: 'small' });
-  // small blinking ear tick
-  if (Math.floor(clock * 3) % 2 === 0) px(ctx, x + w - 5, y + 5, PAL.magenta);
-}
-
 /** Virtual stick + buttons. Client-pixel input rects are mapped to framebuffer px via the canvas rect. */
 function drawTouch(ctx, ui, R) {
   const t = ui && ui.touch;
@@ -417,7 +606,7 @@ function drawTouch(ctx, ui, R) {
 
 /** Full HUD. R = { mini, clock } from the renderer. */
 export function drawHud(ctx, st, ui, R) {
-  R.miniY = 0; R.touchLeft = 0;
+  R.miniY = 0; R.touchLeft = 0; R.touchBottomLeft = 0;
   if (ui && ui.touchVisible && ui.touch && ui.touch.buttons && R.canvas && R.canvas.getBoundingClientRect) {
     const rc = R.canvas.getBoundingClientRect();
     if (rc.height) for (const b of ui.touch.buttons) {
@@ -426,13 +615,16 @@ export function drawHud(ctx, st, ui, R) {
         R.miniY = Math.max(R.miniY, Math.ceil(bot) + 4);
         const lx = (b.x - rc.left) * (SCREEN_W / rc.width);
         if (bot > 2 && (!R.touchLeft || lx < R.touchLeft)) R.touchLeft = Math.floor(lx);
+      } else if (bot > SCREEN_H * 0.7) {
+        // buttons low on the screen sit over the scroll's right end: the window keeps clear of them
+        const lx = (b.x - rc.left) * (SCREEN_W / rc.width);
+        if (!R.touchBottomLeft || lx < R.touchBottomLeft) R.touchBottomLeft = Math.floor(lx);
       }
     }
   }
   drawStrip(ctx, st, ui, R);
   if (!ui || ui.showMinimap !== false) drawMinimap(ctx, st, R);
-  drawChain(ctx, st, R);
-  drawResting(ctx, st, R);
+  drawScroll(ctx, st, ui, R);
   drawMessage(ctx, ui, R);
   drawTouch(ctx, ui, R);
 }

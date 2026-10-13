@@ -95,5 +95,5 @@ export default {
     "Suilven's a wa till ye fin its gully.",
     'The gneiss here is the auldest rock in Britain. Walk on it canny.',
   ],
-  palette: { tint: '#8a8f9c', paper: '#ebe4d0' },
+  palette: { tint: '#8a8f9c', accent: 'rock', paper: '#ebe4d0' },
 };

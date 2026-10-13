@@ -310,10 +310,12 @@ export const WALKER_SIZE = 12;
  * Pixel offset (inside the 12x12 walker sprite) of the lantern flame, for dir/pose/frame.
  * The renderer centres the lantern-light pool there (add the sprite's draw offset).
  */
-export function lanternAnchor(dir, pose = 'idle', frame = 0) {
+export function lanternAnchor(dir, pose = 'idle', frame = 0, out = {}) {
   void frame;
-  const x = pose === 'slide' ? 10 : 9, y = 2;
-  return { x: dir === 'W' ? WALKER_SIZE - 1 - x : x, y };
+  const x = pose === 'slide' ? 10 : 9;
+  out.x = dir === 'W' ? WALKER_SIZE - 1 - x : x;
+  out.y = 2;
+  return out;
 }
 
 // ------------------------------------------------------------- 8x8 icons
