@@ -86,5 +86,5 @@ export default {
     'Ower mony lochans tae coont. Thae by the auld road sing.',
     'Unner the peat, granite. The muir harks through the rock.',
   ],
-  palette: { tint: '#7f8f6a', accent: 'magenta', paper: '#eee6c8' },
+  palette: { tint: '#7f8f6a', accent: 'ember', paper: '#eee6c8' },
 };

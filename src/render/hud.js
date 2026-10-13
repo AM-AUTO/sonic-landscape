@@ -1,7 +1,7 @@
 /**
  * Play-view HUD in the OS legend-margin style. Compact: the map is the star.
  */
-import { PAL } from './palette.js';
+import { PAL, BAYER4 as BAYER } from './palette.js';
 import { drawText, measureText, wrapText } from './font.js';
 import { rect, frame, hline, vline, pline, panel, px, clamp, pdisc, pcircle, pcircleDotted } from './draw.js';
 import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas, touchIcon, arrowSprite, octantOf } from './sprites.js';
@@ -126,29 +126,26 @@ function drawMinimap(ctx, st, R) {
   px(ctx, x + ppx, y + ppy, blink ? PAL.snow : PAL.magenta);
 }
 
-// ======================================================================= scroll banner
-// Knight-Lore-style parchment scroll along the foot of the screen: black fill, 1 px line art in the
-// track's accent colour, a rolled scroll end in each corner, long diagonals running down to the
-// centre, where DAY (flame) over the day number (white) sits between two curls. Left: the key bar.
-// Right: a window with the sun or moon, and the resting text beside it.
-export const SCROLL_H = 36;                      // rows reserved at the foot of the screen
-export const SCROLL_Y = SCREEN_H - SCROLL_H;     // top of the corner rolls
+// ======================================================================= horizon band
+// A slim, restrained band along the foot of the screen: a low dark horizon whose upper edge is a fine
+// contour line in the track's hue (the map fades into it by dither), the key bar on the left, DAY and the
+// day number in the middle, and a small gold window with the sun or moon on the right.
+export const SCROLL_H = 30;                      // rows reserved at the foot of the screen
+export const SCROLL_Y = SCREEN_H - SCROLL_H;     // top of the band
 export const SCROLL = Object.freeze({
-  roll: 13,                                       // width of a corner roll
-  drop: 13,                                       // how far the diagonals fall to the centre
-  notch: 14,                                      // half-width of the central notch (curls + day block)
-  vertexY: SCROLL_Y + 13,
+  wobble: 6,                                      // the contour edge wanders within this many rows
+  notch: 14,                                      // half-width kept clear in the middle for the day block
   centreX: SCREEN_W / 2,
 });
 export const CELL_H = 22;                         // key-bar cell: icon row, label row, status row
 export const CHAIN_W = 27, GATE_W = 32, CHEV = 3;
-export const DRAIN_W = 11;                       // seconds-left bar in row three (1 px frame each side, label 3 px after)
+export const DRAIN_W = 11;                        // seconds-left bar in row three (1 px frame each side, label 3 px after)
 export const KEYBAR = Object.freeze({
-  x0: 17, y: SCROLL_Y + 13, h: CELL_H,
+  x0: 8, y: SCROLL_Y + 7, h: CELL_H,
   labelW: CHAIN_W,                                // widest label / status line a chain cell takes
-  limit: SCREEN_W / 2 - SCROLL.notch - 8,         // the key bar must end before the curls
+  limit: SCREEN_W / 2 - SCROLL.notch - 6,         // the key bar must end before the day block
 });
-export const WINDOW = Object.freeze({ w: 36, h: 24, y: SCREEN_H - 26, right: SCREEN_W - 15 });
+export const WINDOW = Object.freeze({ w: 36, h: 22, y: SCREEN_H - 24, right: SCREEN_W - 10 });
 
 /** Cells of the key bar for a chain of n artefacts (+ the bealach cell). Pure geometry, shared with tests. */
 export function keyBarLayout(n) {
@@ -159,14 +156,9 @@ export function keyBarLayout(n) {
   return { cells, gate, end: gate.x + gate.w };
 }
 
-/** y of the scroll's top line at column x (the diagonals; flat on the rolls and in the notch). */
+/** y of the band's top line at column x: a gently wandering contour (0..wobble rows below SCROLL_Y). */
 export function scrollTop(x) {
-  const xl = SCROLL.roll - 1, xr = SCREEN_W - SCROLL.roll;
-  const c = SCROLL.centreX, nl = c - SCROLL.notch, nr = c + SCROLL.notch - 1;
-  if (x <= xl || x >= xr) return SCROLL_Y;
-  if (x >= nl && x <= nr) return SCROLL.vertexY;
-  if (x < nl) return SCROLL_Y + Math.round(((x - xl) / (nl - xl)) * SCROLL.drop);
-  return SCROLL_Y + Math.round(((xr - x) / (xr - nr)) * SCROLL.drop);
+  return SCROLL_Y + Math.round(3 + 1.7 * Math.sin(x * 0.045) + 1.2 * Math.sin(x * 0.121 + 1.3));
 }
 
 /** The track's signature hue (a palette name) from palette.accent; magenta when unset or unknown. */
@@ -175,54 +167,9 @@ export function accentName(st) {
   const a = lv.palette && lv.palette.accent;
   return a && PAL[a] ? a : 'magenta';
 }
-export function accentOf(st) { return PAL[accentName(st)]; }
-
-// corner roll, 13 wide, 'a' = accent line (drawn mirrored on the right)
-const ROLL_TOP = [
-  '..aaaaaaaaa..',
-  '.a..aaaaa..a.',
-  'a..a.....a..a',
-  'a.a..aaa..a.a',
-  'a.a.a...a.a.a',
-  '.a..a.a.a.a..',
-  '.a...aa.a.a..',
-  '.a......a.a..',
-];
-const ROLL_BOT = [
-  '.a.......a.a.',
-  '.a.......a.a.',
-  'a.a.....a..a.',
-  'a..aaaaa..a.a',
-  '.a.......a..a',
-  '..aaaaaaaa.a.',
-];
-function drawRoll(ctx, left, color) {
-  const W = 13;
-  ctx.fillStyle = color;
-  const put = (art, y0) => art.forEach((row, j) => { for (let i = 0; i < W; i++) if (row[i] === 'a') ctx.fillRect(left ? i : SCREEN_W - 1 - i, y0 + j, 1, 1); });
-  put(ROLL_TOP, SCROLL_Y);
-  put(ROLL_BOT, SCREEN_H - ROLL_BOT.length);
-  const y0 = SCROLL_Y + ROLL_TOP.length, y1 = SCREEN_H - ROLL_BOT.length;
-  for (const x of [0, 2, 9, 11]) ctx.fillRect(left ? x : SCREEN_W - 1 - x, y0, 1, y1 - y0);
-}
-
-// curl where each diagonal ends beside the day block (the right one is mirrored)
-const CURL = [
-  'aaaaaa.',
-  '.....a.',
-  '..aa.a.',
-  '.a..aa.',
-  '.a.a...',
-  '.a..a..',
-  '..aa...',
-];
-function drawCurl(ctx, left, color) {
-  const x0 = SCROLL.centreX - SCROLL.notch - 6, y0 = SCROLL.vertexY;
-  ctx.fillStyle = color;
-  CURL.forEach((row, j) => {
-    for (let i = 0; i < row.length; i++) if (row[i] === 'a') ctx.fillRect(left ? x0 + i : SCREEN_W - 1 - (x0 + i), y0 + j, 1, 1);
-  });
-}
+/** The hue as drawn on black: the dark reds are lifted a step so thin lines and arrows read. */
+const ON_BLACK = { blood: 'ember', rust: 'ember', heather: 'magenta', night: 'dusk', ink: 'rock' };
+export function accentOf(st) { const n = accentName(st); return PAL[ON_BLACK[n] || n]; }
 
 // ---- the window: a sun or moon crossing it as the day goes
 const SUN_ART = [
@@ -266,20 +213,23 @@ function sunMoonSprite(night, low) {
 function drawWindow(ctx, st, accent, wx, clock) {
   const { w, h, y } = WINDOW;
   const x = wx - w;
-  // frame with clipped corners and little studs, as the red window in the reference
+  // a small gold frame with softened corners
   rect(ctx, x, y, w, h, PAL.ink);
-  ctx.fillStyle = accent;
+  ctx.fillStyle = PAL.flame;
   ctx.fillRect(x + 2, y, w - 4, 1); ctx.fillRect(x + 2, y + h - 1, w - 4, 1);
   ctx.fillRect(x, y + 2, 1, h - 4); ctx.fillRect(x + w - 1, y + 2, 1, h - 4);
-  for (const [a, b] of [[1, 1], [w - 2, 1], [1, h - 2], [w - 2, h - 2]]) ctx.fillRect(x + a, y + b, 1, 1);
-  ctx.fillRect(x + 3, y + 2, w - 6, 1); ctx.fillRect(x + 3, y + h - 3, w - 6, 1);
-  const ix = x + 3, iy = y + 3, iw = w - 6, ih = h - 6;
+  ctx.fillRect(x + 1, y + 1, 1, 1); ctx.fillRect(x + w - 2, y + 1, 1, 1); ctx.fillRect(x + 1, y + h - 2, 1, 1); ctx.fillRect(x + w - 2, y + h - 2, 1, 1);
+  ctx.fillStyle = PAL.lamp;
+  ctx.fillRect(x + 2, y + h - 1, w - 4, 1); ctx.fillRect(x + w - 1, y + 2, 1, h - 4);
+  const ix = x + 2, iy = y + 2, iw = w - 4, ih = h - 4;
   const tod = ((st.timeOfDay || 0) % 1 + 1) % 1;
   const night = tod >= 0.5;
   const f = night ? (tod - 0.5) * 2 : tod * 2;
   const a = clamp(f, 0.04, 0.96) * Math.PI;
+  // the window's own sky: ember toward the horizon by day, ink with stars by night
+  if (!night) for (let j = 0; j < ih; j++) for (let i = 0; i < iw; i++) { const t = (j / ih) * 0.8; if (((i + j) & 1) === 0 && ((i >> 1) + j) % 3 < t * 3) ctx.fillStyle = PAL.blood, ctx.fillRect(ix + i, iy + ih - 1 - j, 1, 1); }
   const cx = ix + iw / 2 - Math.cos(a) * (iw / 2 - 4);
-  const cy = iy + ih - 6 - Math.sin(a) * (ih - 9);
+  const cy = iy + ih - 5 - Math.sin(a) * (ih - 8);
   if (night) {
     ctx.fillStyle = PAL.dusk;
     for (const [sx, sy] of [[4, 2], [10, 7], [24, 3], [27, 9], [16, 1], [20, 10]]) if (((sx * 7 + sy + Math.floor(clock * 1.3)) % 5) !== 0) ctx.fillRect(ix + sx, iy + sy, 1, 1);
@@ -290,7 +240,7 @@ function drawWindow(ctx, st, accent, wx, clock) {
   ctx.beginPath(); ctx.rect(ix, iy, iw, ih - 1); ctx.clip();
   ctx.drawImage(spr, Math.round(cx - 4), Math.round(cy - 4));
   ctx.restore();
-  hline(ctx, ix, iy + ih - 1, iw, PAL.rock);   // the ground line
+  hline(ctx, ix, iy + ih - 1, iw, PAL.heather);   // the ground line
 }
 
 /** Resting text block beside the window: its width (kept in step with tests/text.test.js). */
@@ -319,8 +269,8 @@ function drawRightZone(ctx, st, accent, R) {
 function drawDay(ctx, st) {
   const day = String(Math.max(1, (st.day | 0) || 1));
   const cx = SCROLL.centreX;
-  drawText(ctx, STORY.dayLabel, cx, SCROLL.vertexY + 4, PAL.flame, { font: 'small', align: 'center', spacing: 1 });
-  drawText(ctx, day, cx, SCROLL.vertexY + 12, PAL.snow, { align: 'center' });
+  drawText(ctx, STORY.dayLabel, cx, KEYBAR.y + 2, PAL.flame, { font: 'small', align: 'center', spacing: 1 });
+  drawText(ctx, day, cx, KEYBAR.y + 10, PAL.snow, { align: 'center' });
 }
 
 /** km text for a distance in cells (40 m per cell). */
@@ -424,26 +374,27 @@ function drawExtras(ctx, st) {
   }
 }
 
-/** The whole scroll: fill, line art, key bar, day block, window. */
+/** The whole band: the map fading to dark, the contour edge, the key bar, the day block, the window. */
 export function drawScroll(ctx, st, ui, R) {
   const accent = accentOf(st);
-  ctx.fillStyle = PAL.ink;                         // black fill below the top line (the map shows above the diagonals)
-  let x = 0;
-  while (x < SCREEN_W) {
-    const y = scrollTop(x);
-    let x2 = x + 1;
-    while (x2 < SCREEN_W && scrollTop(x2) === y) x2++;
-    ctx.fillRect(x, y, x2 - x, SCREEN_H - y);
-    x = x2;
+  const FADE = 7;
+  for (let x = 0; x < SCREEN_W; x++) {
+    const top = scrollTop(x);
+    // the map melts into the band by dither
+    ctx.fillStyle = PAL.ink;
+    for (let k = 1; k <= FADE; k++) {
+      const y = top - k;
+      if ((BAYER[((y & 3) << 2) | (x & 3)] + 0.5) / 16 < 0.8 * (1 - (k - 1) / FADE) ** 1.5) ctx.fillRect(x, y, 1, 1);
+    }
+    ctx.fillRect(x, top, 1, SCREEN_H - top);
   }
-  const xl = SCROLL.roll - 1, xr = SCREEN_W - SCROLL.roll;
-  const nl = SCROLL.centreX - SCROLL.notch, nr = SCROLL.centreX + SCROLL.notch - 1;
-  pline(ctx, xl, SCROLL_Y, nl, SCROLL.vertexY, accent);
-  pline(ctx, xr, SCROLL_Y, nr, SCROLL.vertexY, accent);
-  drawRoll(ctx, true, accent);
-  drawRoll(ctx, false, accent);
-  drawCurl(ctx, true, accent);
-  drawCurl(ctx, false, accent);
+  // the contour: a fine line in the track's hue, with a fainter twin a few rows below it
+  for (let x = 0; x < SCREEN_W; x++) {
+    const top = scrollTop(x);
+    px(ctx, x, top, accent);
+    if (x > 0) { const p = scrollTop(x - 1); for (let y = Math.min(p, top) + 1; y < Math.max(p, top); y++) px(ctx, x, y, accent); }
+    if (((x >> 1) & 1) === 0 && x > KEYBAR.limit + 20 && x < WINDOW.right - WINDOW.w - RESTING_W - 12) px(ctx, x, top + 4, PAL.blood);
+  }
   drawDay(ctx, st);
   drawKeyBar(ctx, st, accent, R);
   drawRightZone(ctx, st, accent, R);

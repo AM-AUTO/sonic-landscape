@@ -97,5 +97,5 @@ export default {
     'Coont thick contours gaun up. Step doun an the coont sterts ower.',
     'Three Sisters o auld lava. The Lost Valley spills aff its lip.',
   ],
-  palette: { tint: '#5a5a7a', accent: 'bolt', paper: '#e9e0c4' },
+  palette: { tint: '#5a5a7a', accent: 'magenta', paper: '#e9e0c4' },
 };

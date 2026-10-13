@@ -108,12 +108,12 @@ export function storiesEnabled(params) {
 // ----------------------------------------------------------------------------- what to show
 /** The three intro panels (first launch). `captions` is STORY.intro. */
 export function introItems(captions) {
-  const kinds = [{ kind: 'ridge', levelIndex: 7 }, { kind: 'gate', levelIndex: 0 }, { kind: 'cross', levelIndex: 0 }];
+  const kinds = [{ kind: 'ridge', levelIndex: 0 }, { kind: 'ridge', levelIndex: 2 }, { kind: 'stone', levelIndex: 0 }];
   return captions.map((caption, i) => ({ panel: kinds[i % kinds.length], caption }));
 }
 /** A track's first-entry panel: its own skyline, in its own hue. */
 export function trackItems(levelIndex, caption) { return [{ panel: { kind: 'ridge', levelIndex }, caption }]; }
-/** Track complete: the ring-cross in the lightning. */
-export function completeItems(levelIndex, caption) { return [{ panel: { kind: 'cross', levelIndex }, caption }]; }
-/** Album complete: Ben Nevis again, from another side. */
-export function albumItems(caption) { return [{ panel: { kind: 'ridge', levelIndex: 7, seed: 5 }, caption }]; }
+/** Track complete: a Pictish symbol stone at dawn. */
+export function completeItems(levelIndex, caption) { return [{ panel: { kind: 'stone', levelIndex }, caption }]; }
+/** Album complete: a wide dawn over the whole set of ridges. */
+export function albumItems(caption) { return [{ panel: { kind: 'dawn', levelIndex: 7 }, caption }]; }

@@ -90,5 +90,5 @@ export default {
     'Stop at the bothy door. The ingle waukens for them that bide.',
     'Fir roots in the schist. The burn rins unner them tae the linn.',
   ],
-  palette: { tint: '#6a8a5a', accent: 'wood', paper: '#efe8c9' },
+  palette: { tint: '#6a8a5a', accent: 'rust', paper: '#efe8c9' },
 };

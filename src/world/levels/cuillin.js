@@ -99,5 +99,5 @@ export default {
     'Rin at the rock. Walk canny tae the watter.',
     "The stane's on Coruisk's sooth shore. Compasses drift near it.",
   ],
-  palette: { tint: '#4a4f66', accent: 'grid', paper: '#e4dcc6' },
+  palette: { tint: '#4a4f66', accent: 'heather', paper: '#e4dcc6' },
 };

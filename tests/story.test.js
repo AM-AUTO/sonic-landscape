@@ -104,10 +104,11 @@ test('an empty queue is done at once and calls onDone', () => {
 test('intro, track, complete and album items: the panels the game shows', () => {
   const intro = introItems(STORY.intro);
   assert.equal(intro.length, 3);
-  assert.deepEqual(intro.map((i) => i.panel.kind), ['ridge', 'gate', 'cross']);
+  assert.deepEqual(intro.map((i) => i.panel.kind), ['ridge', 'ridge', 'stone']);
   assert.equal(intro[0].caption, STORY.intro[0]);
   assert.deepEqual(trackItems(2, 'X')[0].panel, { kind: 'ridge', levelIndex: 2 });
-  assert.equal(completeItems(1, 'Y')[0].panel.kind, 'cross');
+  assert.equal(completeItems(1, 'Y')[0].panel.kind, 'stone');
+  assert.equal(albumItems('Z')[0].panel.kind, 'dawn');
   assert.equal(albumItems('Z')[0].caption, 'Z');
 });
 
@@ -175,7 +176,7 @@ test('story captions: every track has one, every string fits the caption box in 
   }
   assert.deepEqual(bad, []);
   // the room the caption leaves under the picture
-  assert.ok(L.capY >= PANEL.y + PANEL.h + 4 && L.capY + L.capLines * 10 <= 196, 'caption sits between picture and hint');
+  assert.ok(L.capY >= L.bandY + 4 && L.capY + L.capLines * 10 <= 206, 'caption sits inside the dark band, above the hint line');
   assert.ok(measureText(STORY.skip, { font: 'small', spacing: 1 }) < SW - 40);
   assert.ok(measureText(STORY.notesFooter, { font: 'small', spacing: 1 }) < SW - 40);
   assert.equal(STORY.track.nevis, "BEN NEVIS. A'THING YE'VE HEARD IS ON THIS HILL. WALK IT HAME.");
@@ -204,12 +205,12 @@ test('the reveal is spread across the wrapped lines without moving a word', () =
 const PAL_SET = new Set(PAL_U32_LIST);
 const SPECS = {
   ridge: { kind: 'ridge', levelIndex: 0 },
-  cross: { kind: 'cross', levelIndex: 2 },
   bothy: { kind: 'bothy', levelIndex: 1 },
-  gate: { kind: 'gate', levelIndex: 0 },
+  stone: { kind: 'stone', levelIndex: 2 },
+  dawn: { kind: 'dawn', levelIndex: 7 },
   title: { kind: 'title', levelIndex: 3 },
 };
-const sizeOf = (k) => (k === 'title' ? [TITLE_SCENE.w, TITLE_SCENE.h] : [PANEL.w, PANEL.h]);
+const sizeOf = () => [PANEL.w, PANEL.h];
 
 test('painters: every kind paints every pixel in strict palette colours', () => {
   assert.deepEqual([...PANEL_KINDS].sort(), Object.keys(SPECS).sort());
@@ -245,37 +246,50 @@ test('painters: the animation moves (mist, flicker) but never touches the cached
   }
 });
 
-test('ridge panels are each track\'s own place: the skyline comes from its heightfield, the tint from its accent', () => {
+test('ridge panels are each track\'s own place: the skyline comes from its heightfield', () => {
   for (let i = 0; i < LEVELS.length; i++) warmProfile(i);
   assert.ok(LEVELS.every((_, i) => hasProfile(i)));
   const hashes = LEVELS.map((_, i) => pixelHash(freshBase({ kind: 'ridge', levelIndex: i }, THUMB.w, THUMB.h)));
   assert.equal(new Set(hashes).size, 8, 'eight different panels');
+  const big = LEVELS.map((_, i) => pixelHash(freshBase({ kind: 'ridge', levelIndex: i }, PANEL.w, PANEL.h)));
+  assert.equal(new Set(big).size, 8);
   const p = getProfile(5);
   assert.equal(p.bands.length, 3);
   assert.ok(p.bands.every((b) => b.length === 256 && b.every((v) => v >= 0 && v <= 1)));
-  // the accent appears in the near ridge's rim
-  for (let i = 0; i < LEVELS.length; i++) {
-    const want = PAL_U32_LIST[Object.keys(PAL).indexOf(LEVELS[i].palette.accent)];
-    const d = freshBase({ kind: 'ridge', levelIndex: i }, PANEL.w, PANEL.h);
-    assert.ok(d.includes(want), `${LEVELS[i].id} shows its ${LEVELS[i].palette.accent}`);
-  }
-  // locked tracks are painted without the hue
+  // locked tracks are painted in cold greys only: the colour is the reward
+  const grey = new Set(['ink', 'night', 'dusk', 'rock'].map((n) => PAL_U32_LIST[Object.keys(PAL).indexOf(n)]));
   const locked = freshBase({ kind: 'ridge', levelIndex: 0, locked: true }, THUMB.w, THUMB.h);
-  assert.ok(!locked.includes(PAL_U32_LIST[Object.keys(PAL).indexOf('magenta')]));
+  assert.ok(locked.every((c) => grey.has(c)));
+  // the scenes are red: the reds of the evening are in every kind of panel
+  const reds = ['blood', 'rust', 'ember', 'heather'].map((n) => PAL_U32_LIST[Object.keys(PAL).indexOf(n)]);
+  for (const [k, spec] of Object.entries(SPECS)) {
+    const d = freshBase(spec, PANEL.w, PANEL.h);
+    for (const c of reds) assert.ok(d.includes(c), `${k} uses ${c.toString(16)}`);
+  }
 });
 
-test('every track names its signature hue: a palette colour, distinct from the others', () => {
+test('the title is full-bleed: the whole 384x216 screen is painted art with the logo on top, nothing is left unpainted', () => {
+  assert.deepEqual([PANEL.w, PANEL.h, TITLE_SCENE.w, TITLE_SCENE.h], [384, 216, 384, 216]);
+  const d = freshBase(SPECS.title, 384, 216);
+  assert.ok(d.every((c) => c !== 0));
+  // the logo: bright flame and bone pixels in the upper third, where the lettering is carved
+  let bright = 0;
+  for (let y = 10; y < 80; y++) for (let x = 20; x < 364; x++) if (d[y * 384 + x] === PAL_U32_LIST[Object.keys(PAL).indexOf('flame')]) bright++;
+  assert.ok(bright > 400, 'lettering present: ' + bright);
+});
+
+test('every track names its signature hue: a palette colour from the red family where sensible, distinct from the others', () => {
   const names = LEVELS.map((lv) => lv.palette.accent);
   assert.ok(names.every((n) => typeof n === 'string' && PAL[n]), 'accent is a palette name');
   assert.equal(new Set(names).size, 8);
-  assert.deepEqual(names, ['magenta', 'wood', 'bolt', 'ice', 'lamp', 'grid', 'rock', 'flame']);
+  assert.deepEqual(names, ['ember', 'rust', 'magenta', 'ice', 'lamp', 'heather', 'rock', 'flame']);
   assert.equal(accentName({ level: LEVELS[3] }), 'ice');
   assert.equal(accentName({ world: { level: {} } }), 'magenta');
   assert.equal(accentName(null), 'magenta');
 });
 
-// ------------------------------------------------------------------ scroll HUD
-test('scroll HUD: the key bar fits for chains of 2, 3 and 4 and nothing overlaps', () => {
+// ------------------------------------------------------------------ horizon band HUD
+test('HUD band: the key bar fits for chains of 2, 3 and 4 and nothing overlaps', () => {
   assert.equal(SCROLL_Y + SCROLL_H, SH);
   const right = WINDOW.right - WINDOW.w;                              // left edge of the window (touch buttons push it further left)
   const restingLeft = right - 6 - RESTING_W;
@@ -291,31 +305,25 @@ test('scroll HUD: the key bar fits for chains of 2, 3 and 4 and nothing overlaps
     assert.equal(L.cells[0].x, KEYBAR.x0);
     assert.equal(L.gate.x - (L.cells[n - 1].x + CHAIN_W), CHEV, 'a chevron gap before the bealach');
     assert.ok(L.end <= KEYBAR.limit, `${n} cells end at ${L.end}, limit ${KEYBAR.limit}`);
-    assert.ok(L.end < SW / 2 - SCROLL.notch, 'clear of the central notch');
+    assert.ok(L.end < SW / 2 - SCROLL.notch, 'clear of the day block');
     assert.ok(L.end < restingLeft, 'clear of the resting text');
-    // below the diagonal everywhere along the bar, and inside the screen
     for (const c of [...L.cells, L.gate]) {
       assert.ok(c.y + c.h <= SH, 'cell inside the screen');
-      for (let cx = c.x; cx < c.x + c.w; cx++) assert.ok(scrollTop(cx) <= c.y, `diagonal (${scrollTop(cx)}) clears the cell top (${c.y}) at x=${cx}`);
+      for (let cx = c.x; cx < c.x + c.w; cx++) assert.ok(scrollTop(cx) < c.y, `the contour edge (${scrollTop(cx)}) clears the cell top (${c.y}) at x=${cx}`);
     }
   }
   assert.equal(CHAIN_W, KEYBAR.labelW);
   assert.ok(GATE_W >= CHAIN_W);
 });
 
-test('scroll HUD: the diagonals are symmetric, run down to the central notch, and the day block and window have room', () => {
-  for (let x = 0; x < SW; x++) assert.equal(scrollTop(x), scrollTop(SW - 1 - x), 'symmetric at ' + x);
-  assert.equal(scrollTop(0), SCROLL_Y);
-  assert.equal(scrollTop(SW / 2), SCROLL.vertexY);
-  for (let x = SCROLL.roll; x < SW / 2 - SCROLL.notch; x++) assert.ok(scrollTop(x) >= scrollTop(x - 1), 'descending to the centre');
-  assert.ok(SCROLL.vertexY - SCROLL_Y === SCROLL.drop);
-  // DAY (small) and the number (main) sit under the vertex and inside the screen
+test('HUD band: the contour edge stays within its rows, and the day block and window have room', () => {
+  for (let x = 0; x < SW; x++) { const t = scrollTop(x); assert.ok(t >= SCROLL_Y && t <= SCROLL_Y + SCROLL.wobble, `edge at ${x}: ${t}`); }
+  for (let x = 1; x < SW; x++) assert.ok(Math.abs(scrollTop(x) - scrollTop(x - 1)) <= 1, 'a smooth line');
   const dayW = measureText(STORY.dayLabel, { font: 'small', spacing: 1 });
   const numW = measureText('999', {});
   assert.ok(Math.max(dayW, numW) <= SCROLL.notch * 2 - 4);
-  assert.ok(SCROLL.vertexY + 12 + 7 <= SH - 1, 'day number fits above the bottom edge');
-  // the window sits on the screen, right of the notch, above the bottom
-  assert.ok(WINDOW.right <= SW - 13 && WINDOW.y >= scrollTop(WINDOW.right - WINDOW.w) && WINDOW.y + WINDOW.h <= SH);
+  assert.ok(KEYBAR.y + 10 + 7 <= SH - 1, 'day number fits above the bottom edge');
+  assert.ok(WINDOW.right <= SW - 8 && WINDOW.y > scrollTop(WINDOW.right - WINDOW.w) && WINDOW.y + WINDOW.h <= SH);
   assert.ok(WINDOW.right - WINDOW.w > SW / 2 + SCROLL.notch + RESTING_W);
   assert.ok(measureText(HUD.resting, { font: 'small' }) + 12 <= RESTING_W);
   assert.ok(COMPLETE.prompt && STORY.dayLabel === 'DAY');

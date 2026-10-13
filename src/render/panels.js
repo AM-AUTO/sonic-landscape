@@ -1,32 +1,36 @@
 /**
- * Story panels: small night paintings made in code, no image assets.
+ * Painted scenes: full-bleed night-and-ember paintings made in code, no image assets.
+ *
+ * The art is impressionistic: big fields of colour, ordered-dither gradients, few objects. The sky
+ * bleeds blood / rust / ember into heather and peat-black; hills are stacked dithered bands traced by
+ * fine contour lines; lochans mirror the red sky; one small motif (a stag, a lit window, a lone figure,
+ * a symbol stone) gives each scene its scale.
  *
  * Every painter writes palette colours (never blended: ordered dither only) into a Uint32Array
- * raster, so the same code runs in Node (tests hash the pixels) and in the browser (the raster
- * is put straight onto the canvas). A panel is painted once into a cached base raster, plus a
- * layer map saying which depth each pixel belongs to; per frame a copy of the base gets the cheap
- * animation on top (drifting mist bands that respect the depth order, twinkling stars, smoke,
- * flicker, lightning).
+ * raster, so the same code runs in Node (tests hash the pixels) and in the browser (the raster is
+ * put straight onto the canvas). A scene is painted once into a cached base raster, with a layer map
+ * saying which depth each pixel belongs to; per frame a copy of the base gets the cheap animation on
+ * top (drifting mist that respects the depth order, a flickering lamp, ravens, glints on the water).
  *
- *   spec = { kind: 'ridge'|'cross'|'bothy'|'gate'|'title', levelIndex, seed?, locked? }
+ *   spec = { kind: 'ridge'|'bothy'|'stone'|'dawn'|'title', levelIndex, seed?, motif?, locked? }
  *
- *   ridge   dithered night sky, crescent moon, 3 layers of hills taken from the track's own
- *           heightfield, mist; tinted by the track's accent hue
- *   cross   a Celtic ring-cross among ruined arches, ice-lit, with a lightning bolt
- *   bothy   the snowed-in hut at night: diagonal streaked cloud, orange windows, chimney smoke
- *   gate    a misty stone gateway with the wanderer standing at it
- *   title   ridges, fog, the ring-cross gate and the wanderer with a lit lantern (title screen)
+ *   ridge   a track's own place: skyline from its real heightfield, a colour mood and ONE motif
+ *   bothy   a vast red-black moor, one small lit window and a thread of smoke (field notes)
+ *   stone   a Pictish symbol stone at dawn, warm glow (track complete)
+ *   dawn    a wide dawn over the whole set of ridges (album complete)
+ *   title   the cover: the map as a landscape, a stag on the skyline, the wanderer, the logo painted on top
  */
 import { PAL, PAL_NAMES, PAL_U32 as C, BAYER8 } from './palette.js';
 import { hash2f } from '../core/rng.js';
 import * as SP from './sprites.js';
+import { FONTS } from './font.js';
 import { LEVELS } from '../world/levels/index.js';
 import { createSculptKit } from '../world/sculpt.js';
 
-/** Where the letterboxed picture sits inside the filmstrip frame (screens.js draws the frame around it). */
-export const PANEL = Object.freeze({ x: 32, y: 12, w: 320, h: 136 });
-/** The title screen's night scene window. */
-export const TITLE_SCENE = Object.freeze({ w: 312, h: 90 });
+/** Full-bleed: the painting is the whole 384x216 screen (the caption band is drawn over its foot). */
+export const PANEL = Object.freeze({ x: 0, y: 0, w: 384, h: 216 });
+/** The title cover is full-bleed too. */
+export const TITLE_SCENE = Object.freeze({ w: 384, h: 216 });
 /** Tracklist thumbnails. */
 export const THUMB = Object.freeze({ w: 112, h: 84 });
 
@@ -36,7 +40,7 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const HEX2U32 = Object.fromEntries(PAL_NAMES.map((n) => [PAL[n].toLowerCase(), C[n]]));
 
 class Raster {
-  constructor(w, h, d) { this.w = w; this.h = h; this.d = d || new Uint32Array(w * h); this.lay = new Uint8Array(w * h); }
+  constructor(w, h) { this.w = w; this.h = h; this.d = new Uint32Array(w * h); this.lay = new Uint8Array(w * h); }
   px(x, y, c, l) {
     if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
     const i = y * this.w + x;
@@ -46,10 +50,6 @@ class Raster {
   get(x, y) { return x < 0 || y < 0 || x >= this.w || y >= this.h ? 0 : this.d[y * this.w + x]; }
   layer(x, y) { return x < 0 || y < 0 || x >= this.w || y >= this.h ? 0 : this.lay[y * this.w + x]; }
   rect(x, y, w, h, c, l) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, c, l); }
-  /** ordered dither of colour c at density 0..1 over a rect (pattern anchored to the raster) */
-  dith(x, y, w, h, c, dens, l) {
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (bay(x + i, y + j) < dens) this.px(x + i, y + j, c, l);
-  }
   line(x0, y0, x1, y1, c, l) {
     x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
     const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
@@ -62,15 +62,9 @@ class Raster {
       if (e2 <= dx) { err += dx; y0 += sy; }
     }
   }
-  disc(cx, cy, rad, c, l) {
-    for (let y = -rad; y <= rad; y++) {
-      const w = Math.floor(Math.sqrt(rad * rad + rad * 0.6 - y * y));
-      for (let x = -w; x <= w; x++) this.px(cx + x, cy + y, c, l);
-    }
-  }
 }
 
-/** value noise on an integer lattice; px/py > 0 make it wrap (tileable) */
+/** value noise on an integer lattice; per/perY > 0 make it wrap (tileable) */
 function vnoise(x, y, seed, per = 0, perY = 0) {
   const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
   const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
@@ -78,22 +72,23 @@ function vnoise(x, y, seed, per = 0, perY = 0) {
   const a = H(x0, y0), b = H(x0 + 1, y0), c = H(x0, y0 + 1), d = H(x0 + 1, y0 + 1);
   return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sy;
 }
-function fbm(x, y, seed, oct = 3) {
-  let v = 0, a = 0.5, f = 1, n = 0;
-  for (let i = 0; i < oct; i++) { v += a * vnoise(x * f, y * f, seed + i * 17); n += a; a *= 0.5; f *= 2; }
-  return v / n;
-}
 
-/** One step lighter on the night ramp: what mist and cloud do to whatever lies beneath. */
-const LIFT = new Map([
-  [C.ink, C.night], [C.night, C.dusk], [C.dusk, C.waterInk], [C.waterInk, C.grid], [C.grid, C.water],
-  [C.woodDark, C.wood], [C.contourIdx, C.contour], [C.contour, C.paper2],
-  [C.bog, C.water], [C.wood, C.paper2], [C.rock, C.paper2],
-]);
+// ----------------------------------------------------------------------------- colour ramps
+/** The red hours, dark to bright. Lifting a colour is one step up this ramp; mist and glow do that. */
+const RED = [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame, C.paper];
+const LIFT = new Map();
+const SINK = new Map();
+RED.forEach((c, i) => { if (i + 1 < RED.length) { LIFT.set(c, RED[i + 1]); SINK.set(RED[i + 1], c); } });
+for (const [a, b] of [[C.night, C.dusk], [C.dusk, C.heather], [C.contourIdx, C.contour], [C.contour, C.paper2], [C.rock, C.paper2], [C.woodDark, C.wood], [C.waterInk, C.grid], [C.grid, C.water], [C.bog, C.water], [C.bolt, C.paper]]) { if (!LIFT.has(a)) LIFT.set(a, b); if (!SINK.has(b)) SINK.set(b, a); }
 const lift = (c) => LIFT.get(c) || c;
-/** and a gentler lift for mist on dark sky: ink -> night -> dusk -> rock */
-const MIST = new Map([[C.ink, C.night], [C.night, C.dusk], [C.dusk, C.rock], [C.waterInk, C.grid], [C.grid, C.water], [C.woodDark, C.dusk], [C.contourIdx, C.dusk], [C.contour, C.rock]]);
-const mist = (c) => MIST.get(c) || c;
+const sink = (c) => SINK.get(c) || c;
+
+/** Sky colour at t (0 top .. 1 horizon): ordered dither between neighbouring stops. */
+function skyAt(stops, t, x, y) {
+  const pos = clamp(t, 0, 1) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(pos)), f = pos - i;
+  return bay(x, y) < f ? stops[i + 1] : stops[i];
+}
 
 // ----------------------------------------------------------------------------- track data
 const accentU = (levelIndex) => {
@@ -105,8 +100,8 @@ const levelOf = (i) => LEVELS[clamp(i | 0, 0, LEVELS.length - 1)];
 
 /**
  * The skyline of a track: three slabs of the heightfield (north = far, south = near) reduced to the
- * highest ground in each column, 0..1 of the track's own height range. Built from world.heightAt
- * (the real map), so every track's panels are its own place.
+ * highest ground in each column, 0..1 of the slab's own range. Built from world.heightAt (the real map),
+ * so every track's panels are its own place.
  */
 export function buildProfile(heightAt, minH, maxH, size = 256) {
   const span = Math.max(1, maxH - minH);
@@ -118,7 +113,6 @@ export function buildProfile(heightAt, minH, maxH, size = 256) {
       for (let y = y0; y <= y1; y += 3) { const h = heightAt(x, y); if (h > m) m = h; }
       out[x] = (m - minH) / span;
     }
-    // each slab uses the full height of the picture: its lowest ground to its highest summit (a flat slab stays flat)
     const sorted = Array.from(out).sort((a, b) => a - b);
     const lo = sorted[Math.floor(size * 0.05)], hi = Math.max(sorted[size - 1], lo + 0.3);
     for (let x = 0; x < size; x++) out[x] = clamp((out[x] - lo) / (hi - lo), 0, 1);
@@ -126,7 +120,6 @@ export function buildProfile(heightAt, minH, maxH, size = 256) {
     return out;
   });
   rough /= 3 * (size - 1);
-  // jagged ranges (the Cuillin, Nevis) get their peaks pushed up; broad moor is eased
   return { size, bands, relief: span, gamma: clamp(0.85 + rough * 4.5, 0.85, 1.7) };
 }
 const profiles = new Map();
@@ -136,8 +129,8 @@ export function getProfile(levelIndex) { return profiles.get(levelIndex) || null
 /** Seed a track's profile from a built world (main.js does this on entering a track). */
 export function setProfileFromWorld(levelIndex, world) { profiles.set(levelIndex, buildProfile((x, y) => world.heightAt(x, y), world.minH, world.maxH, world.size || 256)); }
 /**
- * Build a track's profile from its sculpt alone (about 100 ms, no hydrology or cover): used to give the
- * tracklist every track's real skyline without building eight worlds. Returns true once it exists.
+ * Build a track's profile from its sculpt alone (about 100 ms, no hydrology or cover): gives the tracklist and
+ * the cover every track's real skyline without building eight worlds. Returns true once it exists.
  */
 export function warmProfile(levelIndex) {
   if (profiles.has(levelIndex)) return true;
@@ -148,8 +141,7 @@ export function warmProfile(levelIndex) {
   const S = 256, h = state.h;
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < h.length; i++) { if (h[i] < lo) lo = h[i]; if (h[i] > hi) hi = h[i]; }
-  const at = (x, y) => h[Math.min(S - 1, y) * S + Math.min(S - 1, x)];
-  profiles.set(levelIndex, buildProfile(at, lo, hi, S));
+  profiles.set(levelIndex, buildProfile((x, y) => h[Math.min(S - 1, y) * S + Math.min(S - 1, x)], lo, hi, S));
   return true;
 }
 /** A believable stand-in skyline until the real one is built (so a panel is never empty). */
@@ -158,69 +150,51 @@ function standIn(levelIndex) {
   const seed = (lv.seed | 0) + 77;
   const bands = [0, 1, 2].map((b) => {
     const out = new Float32Array(256);
-    for (let x = 0; x < 256; x++) out[x] = clamp(0.15 + 0.6 * fbm(x * 0.03 + b * 9, b * 3.1, seed + b, 4), 0, 1);
+    for (let x = 0; x < 256; x++) out[x] = clamp(0.15 + 0.7 * vnoise(x * 0.03 + b * 9, b * 3.1, seed + b), 0, 1);
     return out;
   });
   const e = lv.elevation || { min: 0, max: 800 };
-  return { size: 256, bands, relief: e.max - e.min, provisional: true };
+  return { size: 256, bands, relief: e.max - e.min, gamma: 1.1, provisional: true };
 }
 const profileOf = (i) => profiles.get(i) || standIn(i);
 
-// ----------------------------------------------------------------------------- shared painters
-const SKY_STOPS = [C.ink, C.night, C.dusk];
-
-function paintSky(r, W, H, horizon, accent, seed, locked) {
+// ----------------------------------------------------------------------------- sky, sun, hills
+function paintSky(r, W, H, horizon, stops, bias) {
   for (let y = 0; y < H; y++) {
-    const t = clamp(y / horizon, 0, 1);
-    const pos = t * 3;
-    const i = Math.min(2, Math.floor(pos));
-    const f = pos - i;
-    for (let x = 0; x < W; x++) {
-      let c;
-      if (i < 2) c = bay(x, y) < f ? SKY_STOPS[i + 1] : SKY_STOPS[i];
-      else {
-        // the last stretch to the horizon: dusk, with a breath of the track's hue
-        c = SKY_STOPS[2];
-        if (!locked && bay(x, y) < clamp((f - 0.25) * 0.4, 0, 0.14) && ((x + y) & 1) === 0) c = accent;
-      }
-      if (locked && i >= 1) c = bay(x, y) < f * 0.6 && i === 1 ? C.night : C.night;
-      r.px(x, y, c, 0);
-    }
+    const t = Math.pow(clamp(y / horizon, 0, 1), bias);
+    for (let x = 0; x < W; x++) r.px(x, y, skyAt(stops, t, x, y), 0);
   }
-  // streaks of cloud, long and shallow
-  for (let y = 0; y < Math.min(H, horizon); y++) {
+}
+
+/** Long shallow streaks of cloud: some lighter (catching the sun), some darker. Strongest toward the horizon. */
+function paintStreaks(r, W, horizon, seed, amount) {
+  for (let y = 0; y < horizon; y++) {
+    const w = 0.25 + 0.75 * (y / horizon);
     for (let x = 0; x < W; x++) {
-      const v = vnoise(x * 0.016, (y + x * 0.16) * 0.085, seed + 3) * 0.7 + vnoise(x * 0.04, (y + x * 0.16) * 0.2, seed + 5) * 0.3;
-      const k = clamp((v - 0.56) * 3.4, 0, 1) * (0.35 + 0.65 * Math.sin((y / horizon) * Math.PI * 0.9));
-      if (k > 0 && bay(x + 3, y + 5) < k * 0.55) r.px(x, y, lift(r.get(x, y)), 0);
+      const v = vnoise(x * 0.006, (y + x * 0.035) * 0.19, seed) * 0.65 + vnoise(x * 0.02, y * 0.45, seed + 4) * 0.35;
+      const hi = clamp((v - 0.56) * 4, 0, 1) * w * amount;
+      const lo = clamp((0.36 - v) * 4, 0, 1) * (1.1 - w) * amount;
+      if (hi > 0 && bay(x + 3, y + 1) < hi * 0.85) r.px(x, y, lift(r.get(x, y)));
+      else if (lo > 0 && bay(x + 1, y + 5) < lo * 0.8) r.px(x, y, sink(r.get(x, y)));
     }
   }
 }
 
-function paintStars(r, W, H, horizon, seed) {
-  const stars = [];
-  for (let i = 0; i < Math.round(W * horizon * 0.0035); i++) {
-    const x = Math.floor(hash2f(i, 1, seed + 40) * W), y = Math.floor(Math.pow(hash2f(i, 2, seed + 40), 1.4) * horizon * 0.8);
-    stars.push({ x, y, ph: hash2f(i, 3, seed + 40) * 6.28, c: hash2f(i, 4, seed + 40) < 0.2 ? C.snow : C.rock });
-  }
-  return stars;
-}
-
-function paintMoon(r, mx, my, rad, locked) {
-  if (locked) return;
-  const halo = Math.round(rad * 2.6);
+/** A low sun: bone core, flame body, and a wide glow that lifts the sky a step or two by dither. */
+function paintSun(r, sx, sy, rad, glow) {
+  const halo = Math.round(rad * glow);
   for (let y = -halo; y <= halo; y++) for (let x = -halo; x <= halo; x++) {
     const d = Math.hypot(x, y);
-    if (d > halo || d < rad) continue;
-    const k = Math.pow(1 - d / halo, 1.8) * 0.5;
-    if (bay(mx + x, my + y) < k) r.px(mx + x, my + y, lift(r.get(mx + x, my + y)), 0);
-  }
-  const ox = rad * 0.55, oy = -rad * 0.25, r2 = rad * 0.88;
-  for (let y = -rad; y <= rad; y++) for (let x = -rad; x <= rad; x++) {
-    if (x * x + y * y > rad * rad + rad * 0.5) continue;
-    if ((x - ox) * (x - ox) + (y - oy) * (y - oy) <= r2 * r2) continue;       // the bite that makes the crescent
-    const edge = (x - ox) * (x - ox) + (y - oy) * (y - oy) <= (r2 + 1.6) * (r2 + 1.6);
-    r.px(mx + x, my + y, edge && bay(mx + x, my + y) < 0.5 ? C.paper2 : C.paper, 0);
+    if (d > halo) continue;
+    const X = sx + x, Y = sy + y;
+    if (X < 0 || Y < 0 || X >= r.w || Y >= r.h) continue;
+    if (d <= rad) {
+      r.px(X, Y, d < rad * 0.45 ? C.paper : d < rad * 0.8 ? C.flame : (bay(X, Y) < 0.5 ? C.flame : C.lamp), 0);
+    } else {
+      const k = Math.pow(1 - (d - rad) / (halo - rad), 1.7);
+      if (bay(X, Y) < k * 0.95) r.px(X, Y, lift(r.get(X, Y)));
+      if (k > 0.45 && bay(X + 5, Y + 3) < (k - 0.4) * 1.1) r.px(X, Y, lift(r.get(X, Y)));
+    }
   }
 }
 
@@ -237,41 +211,49 @@ function ridgeTops(W, band, size, o) {
   }
   return tops;
 }
-/** One layer of hills. Fills from the crest to the bottom with an upper/lower colour that fades by dither. */
-function ridgeLayer(r, id, W, H, band, size, o) {
-  const tops = ridgeTops(W, band, size, o);
+
+/**
+ * One layer of hills: a silhouette that fades from an upper to a lower colour by dither, a lit rim along the
+ * crest, and fine contour lines running down the hill parallel to the crest (the map showing through).
+ */
+function ridgeLayer(r, id, W, H, tops, o) {
   for (let x = 0; x < W; x++) {
     const top = clamp(tops[x], 2, H - 1);
     for (let y = top; y < H; y++) {
       const f = clamp((y - top) / o.fade, 0, 1);
-      const c = bay(x, y) < f ? o.lower : o.upper;
-      r.px(x, y, c, id);
+      r.px(x, y, bay(x, y) < f ? o.lower : o.upper, id);
     }
   }
-  if (o.rim) {
-    // the crest line is unbroken: on a steep side the rim runs down to meet the next column's crest
+  const run = (x, off, c, dens) => {
+    const t0 = clamp(tops[x] + off, 2, H - 1), t1 = clamp(tops[Math.min(W - 1, x + 1)] + off, 2, H - 1);
+    const y1 = Math.max(t0, Math.min(t1, t0 + 8));
+    for (let y = t0; y <= y1; y++) if (!dens || bay(x, y) < dens) r.px(x, y, c, id);
+  };
+  for (let k = 1; k <= (o.contours || 0); k++) {
+    const off = Math.round(k * (o.cstep || 5) * (1 + k * 0.12));
     for (let x = 0; x < W; x++) {
-      const top = clamp(tops[x], 2, H - 1), nxt = clamp(tops[Math.min(W - 1, x + 1)], 2, H - 1);
-      const y1 = Math.max(top, Math.min(nxt, top + 8));
-      for (let y = top; y <= y1; y++) if (!o.rimDens || bay(x, y) < o.rimDens) r.px(x, y, o.rim, id);
-      if (o.rim2 && bay(x, top + 1) < 0.5) r.px(x, top + 1, o.rim2, id);
+      const y = clamp(tops[x] + off, 2, H - 1);
+      if (r.layer(x, y) !== id) continue;
+      run(x, off, o.cline ? o.cline : lift(r.get(x, y)), 0.8);
     }
   }
-  return tops;
+  if (o.rim) for (let x = 0; x < W; x++) { run(x, 0, o.rim, o.rimDens || 0); if (o.rim2 && bay(x, tops[x] + 1) < 0.5) r.px(x, clamp(tops[x] + 1, 2, H - 1), o.rim2, id); }
 }
 
-function conifers(r, id, tops, W, density, seed, col) {
+/** pine silhouettes standing on a crest */
+function pines(r, id, tops, W, density, seed, sc, col) {
   for (let x = 2; x < W - 2; x++) {
     if (hash2f(x, 9, seed) > density) continue;
-    const h = 4 + Math.floor(hash2f(x, 10, seed) * 6), top = tops[x];
+    const h = Math.round((6 + hash2f(x, 10, seed) * 10) * sc), top = tops[x];
     for (let k = 0; k < h; k++) {
-      const w = Math.floor((k + 1) / 3);
+      const w = Math.floor(((k + 1) / h) * 3 * sc + (k % 3 === 0 ? 1 : 0));
       for (let i = -w; i <= w; i++) r.px(x + i, top - h + k + 2, col, id);
     }
+    r.px(x, top + 2, col, id); r.px(x, top + 3, col, id);
   }
 }
 
-// ----------------------------------------------------------------------------- mist bands (animated)
+// ----------------------------------------------------------------------------- mist (animated)
 /** A tileable streaky noise strip; scrolling it is the whole animation. */
 function mistBand(W, rows, seed, opts) {
   const TW = 512;
@@ -279,8 +261,8 @@ function mistBand(W, rows, seed, opts) {
   for (let y = 0; y < rows; y++) {
     const env = Math.pow(Math.max(0, 1 - Math.abs((y - rows / 2) / (rows / 2))), 0.9);
     for (let x = 0; x < TW; x++) {
-      const n = vnoise(x / 22, y / 3.2, seed, TW / 22, 0) * 0.65 + vnoise(x / 9, y / 1.6, seed + 11, TW / 9, 0) * 0.35;
-      tex[y * TW + x] = clamp((n - 0.3) * 2.6, 0, 1) * env;
+      const n = vnoise(x / 26, y / 3.4, seed, TW / 26, 0) * 0.65 + vnoise(x / 10, y / 1.7, seed + 11, TW / 10, 0) * 0.35;
+      tex[y * TW + x] = clamp((n - 0.32) * 2.4, 0, 1) * env;
     }
   }
   return { tex, TW, rows, ...opts };
@@ -298,22 +280,38 @@ function drawMistBand(r, B, t) {
       if (v <= 0.02) continue;
       const i = y * W + x;
       if (r.lay[i] > layerMax) continue;
-      if (bay(x, y) < v) r.d[i] = mist(r.d[i]);
-      if (v > 0.62 && bay(x + 4, y + 2) < v - 0.45) r.d[i] = mist(r.d[i]);
+      if (bay(x, y) < v) r.d[i] = lift(r.d[i]);
+      if (v > 0.6 && bay(x + 4, y + 2) < v - 0.42) r.d[i] = lift(r.d[i]);
     }
   }
 }
 
-function twinkle(r, stars, t) {
-  for (const s of stars) {
-    const k = Math.sin(t * 1.7 + s.ph);
-    if (k > 0.85) continue;                      // blinks out for a moment
-    if (r.lay[s.y * r.w + s.x] !== 0) continue;
-    r.d[s.y * r.w + s.x] = k > 0.2 ? s.c : C.dusk;
+// ----------------------------------------------------------------------------- creatures and figures
+/** A red-deer stag in silhouette, facing right, hooves at (fx, fy). s = 1 is about 36 px tall with antlers. */
+function drawStag(r, fx, fy, s, col, id) {
+  const L = (x0, y0, x1, y1, th = 1) => {
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * s));
+    const T = Math.max(1, Math.round(th * s));
+    for (let i = 0; i <= n; i++) {
+      const x = x0 + ((x1 - x0) * i) / n, y = y0 + ((y1 - y0) * i) / n;
+      for (let a = 0; a < T; a++) for (let b = 0; b < T; b++) r.px(Math.round(fx + x * s) + a - (T >> 1), Math.round(fy + y * s) + b - (T >> 1), col, id);
+    }
+  };
+  const T1 = Math.max(1, Math.round(s));
+  const fill = (cx, cy, rx, ry) => {
+    for (let y = -ry; y <= ry; y++) for (let x = -rx; x <= rx; x++) if ((x / rx) ** 2 + (y / ry) ** 2 <= 1) for (let a = 0; a < T1; a++) for (let b = 0; b < T1; b++) r.px(Math.round(fx + (cx + x) * s) + a, Math.round(fy + (cy + y) * s) + b, col, id);
+  };
+  fill(0, -15, 11, 5.5);                                 // body
+  L(-8, -12, -9, 0); L(-5, -11, -5, 0); L(6, -11, 7, 0); L(9, -11, 10, 0);   // legs
+  L(7, -16, 12, -26, 3);                                 // neck
+  fill(14, -27, 4, 2.4);                                 // head
+  L(16, -26, 20, -23, 2); L(12, -29, 11, -32);           // muzzle, ear
+  for (const dx of [0, 5]) {                             // antlers: a heavy beam sweeping back and up, three tines, and its far twin
+    L(13 + dx, -30, 10 + dx, -38, 2); L(10 + dx, -38, 9 + dx, -47, 2);
+    L(10 + dx, -38, 16 + dx, -41); L(9 + dx, -44, 15 + dx, -47); L(9 + dx, -47, 5 + dx, -51); L(9 + dx, -47, 12 + dx, -53);
   }
 }
 
-// ----------------------------------------------------------------------------- the wanderer, pixel-exact
 function walkerPixels(frame) {
   if (typeof SP.walkerArt !== 'function') return null;
   const art = SP.walkerArt('S', 'idle', frame);
@@ -322,18 +320,19 @@ function walkerPixels(frame) {
   art.forEach((row, y) => { for (let x = 0; x < row.length; x++) { const ch = row[x]; if (ch === '.' || ch === ' ') continue; const hex = cmap[ch]; const u = hex && HEX2U32[String(hex).toLowerCase()]; if (u) out.push([x, y, u, ch]); } });
   return out;
 }
-/** Draw the wanderer at integer scale, standing with feet at (fx, fy). Returns the lantern pixel. */
-function drawWanderer(r, fx, fy, scale, frame, id, lanternCol, rimCol) {
-  const px = walkerPixels(frame);
+/** The wanderer at integer scale, feet at (fx, fy). The ink outline takes the rim colour so the figure reads against black. */
+function drawWanderer(r, fx, fy, scale, id, rimCol) {
+  const px = walkerPixels(0);
   const sz = SP.WALKER_SIZE || 12;
   const x0 = Math.round(fx - (sz * scale) / 2), y0 = fy - sz * scale;
-  const a = typeof SP.lanternAnchor === 'function' ? SP.lanternAnchor('S', 'idle', frame) : { x: 9, y: 2 };
-  if (!px) return { x: x0 + a.x * scale, y: y0 + a.y * scale, scale };
-  for (const [x, y, u, ch] of px) {
-    const c = ch === 'f' && lanternCol ? lanternCol : (ch === 'k' && rimCol ? rimCol : u);
+  const a = typeof SP.lanternAnchor === 'function' ? SP.lanternAnchor('S', 'idle', 0) : { x: 9, y: 2 };
+  // seen at dusk, the grey cloak is a dark red shape: the sprite's colours are re-keyed to the red hours
+  const KEY = rimCol === C.ink ? { r: C.ink, n: C.ink, s: C.rust, S: C.rust, d: C.ink, c: C.ink } : { r: C.ink, n: C.blood, s: C.rust, S: C.rust, d: C.rust, c: C.heather };
+  if (px) for (const [x, y, u, ch] of px) {
+    const c = ch === 'k' ? (rimCol || u) : (KEY[ch] || u);
     for (let j = 0; j < scale; j++) for (let i = 0; i < scale; i++) r.px(x0 + x * scale + i, y0 + y * scale + j, c, id);
   }
-  return { x: x0 + a.x * scale + Math.floor(scale / 2), y: y0 + a.y * scale + Math.floor(scale / 2), scale, x0, y0 };
+  return { x: x0 + a.x * scale + Math.floor(scale / 2), y: y0 + a.y * scale + Math.floor(scale / 2), scale };
 }
 /** Warm lantern light: lamp dither fading out from (cx, cy), only over pixels no deeper than maxLayer. */
 function lanternGlow(r, cx, cy, rad, maxLayer, k) {
@@ -348,606 +347,556 @@ function lanternGlow(r, cx, cy, rad, maxLayer, k) {
     if (bay(X, Y) < v) r.d[i] = d < rad * 0.28 ? C.flame : C.lamp;
   }
 }
-
-// ----------------------------------------------------------------------------- bolt
-function boltPath(seed, W, H, x0, ymax) {
-  const pts = [];
-  let x = x0, y = 0, s = seed >>> 0;
-  const rnd = () => { s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x9e3779b9) >>> 0; return (s >>> 8) / 16777216; };
-  while (y < ymax) {
-    pts.push([x, y]);
-    const dy = 5 + Math.floor(rnd() * 8);
-    x += Math.round((rnd() - 0.5) * 18);
-    y += dy;
+/** A raven or eagle on the wing: two frames of a shallow V. */
+function drawBird(r, x, y, flap, col, sc = 1) {
+  const w = Math.max(2, Math.round(4 * sc));
+  for (let i = 1; i <= w; i++) {
+    const up = flap ? -Math.round(i * 0.5) : Math.round(i * 0.35);
+    r.px(x - i, y + up, col); r.px(x + i, y + up, col);
   }
-  pts.push([x, ymax]);
-  const branch = [];
-  const bi = 2 + Math.floor(rnd() * 2);
-  if (pts[bi]) {
-    let bx = pts[bi][0], by = pts[bi][1];
-    branch.push([bx, by]);
-    for (let k = 0; k < 3; k++) { bx += 7 + Math.floor(rnd() * 6); by += 5 + Math.floor(rnd() * 5); branch.push([bx, by]); }
-  }
-  return { pts, branch };
-}
-function drawBolt(r, bolt, glow) {
-  const draw = (pts, thick) => {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const [a, b] = pts[i], [c, d] = pts[i + 1];
-      r.line(a, b, c, d, C.bolt);
-      if (thick) r.line(a + 1, b, c + 1, d, C.bolt);
-    }
-  };
-  if (glow) {
-    // a halo around the stroke, dithered
-    const marks = [];
-    for (let i = 0; i < bolt.pts.length - 1; i++) {
-      const [a, b] = bolt.pts[i], [c, d] = bolt.pts[i + 1];
-      const n = Math.max(Math.abs(c - a), Math.abs(d - b), 1);
-      for (let k = 0; k <= n; k++) marks.push([Math.round(a + ((c - a) * k) / n), Math.round(b + ((d - b) * k) / n)]);
-    }
-    for (const [mx, my] of marks) for (let y = -3; y <= 3; y++) for (let x = -3; x <= 3; x++) {
-      const d = Math.hypot(x, y);
-      if (d > 3.2 || d < 1) continue;
-      const X = mx + x, Y = my + y;
-      if (X < 0 || Y < 0 || X >= r.w || Y >= r.h) continue;
-      if (bay(X, Y) < 0.22 * (1 - d / 3.4)) r.d[Y * r.w + X] = lift(lift(r.d[Y * r.w + X]));
-    }
-  }
-  draw(bolt.pts, true);
-  draw(bolt.branch, false);
+  r.px(x, y, col); r.px(x, y + 1, col);
 }
 
-// ----------------------------------------------------------------------------- the ring-cross
-/** Mask of a Celtic ring-cross standing with its foot at (cx, gy): { mask, w, h, ox, oy, ring } */
-function crossMask(H) {
-  const sh = Math.round(H);               // total height
-  const ringR = Math.round(sh * 0.235), t = Math.max(3, Math.round(sh * 0.045));
-  const cyOff = Math.round(ringR + 3);
-  const arm = Math.round(ringR * 1.45);
-  const shaft = Math.max(5, Math.round(sh * 0.09)), bar = Math.max(5, Math.round(sh * 0.09));
-  const w = arm * 2 + 5, h = sh;
-  const mask = new Uint8Array(w * h);
-  const cx = Math.floor(w / 2), cy = cyOff;
-  const set = (x, y) => { if (x >= 0 && y >= 0 && x < w && y < h) mask[y * w + x] = 1; };
-  // ring
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const d = Math.hypot(x - cx, y - cy);
-    if (d <= ringR && d >= ringR - t) set(x, y);
+// ----------------------------------------------------------------------------- generic scene
+const SKY_RED = [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame];
+const SKY_DUSK = [C.ink, C.night, C.heather, C.rust, C.ember, C.lamp];
+const SKY_SLIT = [C.ink, C.ink, C.night, C.blood, C.rust, C.ember, C.lamp];
+/** a mood: how a place looks. One per track. */
+const MOODS = {
+  rannoch: {
+    stops: SKY_RED, bias: 1.15, horizon: 0.6, sun: { x: 0.7, y: 0.585, r: 19, glow: 4.2 },
+    layers: [
+      { band: 0, base: 0.60, amp: 0.15, upper: C.heather, lower: C.blood, fade: 0.1, rim: C.rust, contours: 3, cstep: 4, span: 0.8, off: 6 },
+      { band: 1, base: 0.655, amp: 0.075, upper: C.blood, lower: C.ink, fade: 0.09, rim: C.heather, contours: 0, span: 0.8, off: 30 },
+    ],
+    ground: { kind: 'moor', top: 0.668, lochans: 15 }, motif: 'stag', mist: [{ y: 0.585, hh: 0.1, layerMax: 1, speed: 4, dens: 0.8 }, { y: 0.66, hh: 0.07, layerMax: 3, speed: 7, dens: 0.6 }],
+  },
+  affric: {
+    stops: SKY_RED, bias: 1.0, horizon: 0.62, sun: { x: 0.3, y: 0.52, r: 15, glow: 4.4 },
+    layers: [
+      { band: 0, base: 0.58, amp: 0.3, upper: C.heather, lower: C.blood, fade: 0.2, rim: C.rust, contours: 4, cstep: 5, span: 0.8, off: 4 },
+      { band: 1, base: 0.74, amp: 0.3, upper: C.blood, lower: C.ink, fade: 0.2, rim: C.heather, trees: 0.13, span: 0.8, off: 28 },
+      { band: 2, base: 0.97, amp: 0.3, upper: C.ink, lower: C.ink, fade: 0.04, rim: C.rust, trees: 0.28, span: 0.8, off: 44 },
+    ],
+    ground: { kind: 'none' }, motif: 'pines', mist: [{ y: 0.64, hh: 0.14, layerMax: 1, speed: 4, dens: 0.8 }, { y: 0.83, hh: 0.1, layerMax: 2, speed: 7, dens: 0.7 }],
+  },
+  coe: {
+    stops: SKY_SLIT, bias: 1.35, horizon: 0.66, sun: { x: 0.5, y: 0.62, r: 7, glow: 7 },
+    layers: [
+      { band: 0, base: 0.66, amp: 0.34, upper: C.blood, lower: C.ink, fade: 0.25, rim: C.rust, contours: 2, cstep: 6, span: 0.8, off: 4, valley: { pow: 1.4, floor: 0.12, lift: 0.14 } },
+      { band: 1, base: 0.86, amp: 0.46, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.heather, contours: 2, cstep: 8, cline: C.blood, span: 0.8, off: 22, valley: { pow: 1.2, floor: 0.1, lift: 0.2 } },
+      { band: 2, base: 1.02, amp: 0.5, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.ember, span: 0.8, off: 40, valley: { pow: 1.1, floor: 0.08, lift: 0.22 } },
+    ],
+    ground: { kind: 'none' }, motif: 'figure', mist: [{ y: 0.62, hh: 0.12, layerMax: 1, speed: 3, dens: 0.8 }, { y: 0.78, hh: 0.14, layerMax: 2, speed: 5, dens: 0.8 }, { y: 0.93, hh: 0.1, layerMax: 3, speed: 8, dens: 0.55 }],
+  },
+  cairngorm: {
+    stops: SKY_DUSK, bias: 1.1, horizon: 0.6, sun: { x: 0.24, y: 0.58, r: 14, glow: 4.6 },
+    layers: [
+      { band: 0, base: 0.6, amp: 0.2, upper: C.bolt, lower: C.heather, fade: 0.22, rim: C.paper, contours: 3, cstep: 5, cline: C.rust, span: 0.8, off: 5 },
+      { band: 1, base: 0.74, amp: 0.2, upper: C.rock, lower: C.blood, fade: 0.2, rim: C.bolt, contours: 2, cstep: 6, cline: C.heather, span: 0.8, off: 26 },
+      { band: 2, base: 0.97, amp: 0.2, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.ice, span: 0.8, off: 44 },
+    ],
+    ground: { kind: 'none' }, motif: 'snow', mist: [{ y: 0.66, hh: 0.14, layerMax: 1, speed: 6, dens: 0.8 }, { y: 0.84, hh: 0.1, layerMax: 2, speed: 10, dens: 0.6 }],
+  },
+  torridon: {
+    stops: SKY_RED, bias: 1.0, horizon: 0.62, sun: { x: 0.78, y: 0.55, r: 12, glow: 5 },
+    layers: [
+      { band: 0, base: 0.6, amp: 0.3, upper: C.ember, lower: C.rust, fade: 0.25, rim: C.flame, contours: 7, cstep: 4, cline: C.blood, span: 0.8, off: 4 },
+      { band: 1, base: 0.8, amp: 0.4, upper: C.rust, lower: C.blood, fade: 0.25, rim: C.ember, contours: 7, cstep: 5, cline: C.ink, span: 0.8, off: 24 },
+      { band: 2, base: 0.99, amp: 0.3, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.lamp, span: 0.8, off: 44 },
+    ],
+    ground: { kind: 'none' }, motif: 'none', mist: [{ y: 0.64, hh: 0.14, layerMax: 1, speed: 4, dens: 0.7 }, { y: 0.86, hh: 0.1, layerMax: 2, speed: 7, dens: 0.55 }],
+  },
+  cuillin: {
+    stops: SKY_RED, bias: 1.3, horizon: 0.64, sun: { x: 0.55, y: 0.6, r: 12, glow: 4.8 },
+    layers: [
+      { band: 0, base: 0.6, amp: 0.5, upper: C.blood, lower: C.ink, fade: 0.2, rim: C.ember, span: 0.8, off: 4, tall: 1.2 },
+      { band: 1, base: 0.82, amp: 0.55, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.rust, span: 0.8, off: 22, tall: 1.2 },
+      { band: 2, base: 1.0, amp: 0.4, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.heather, span: 0.8, off: 40 },
+    ],
+    ground: { kind: 'none' }, motif: 'ravens', mist: [{ y: 0.66, hh: 0.14, layerMax: 1, speed: 4, dens: 0.75 }, { y: 0.88, hh: 0.1, layerMax: 2, speed: 8, dens: 0.55 }],
+  },
+  assynt: {
+    stops: SKY_RED, bias: 1.1, horizon: 0.6, sun: { x: 0.28, y: 0.58, r: 15, glow: 4.6 },
+    layers: [
+      { band: 1, base: 0.62, amp: 0.4, upper: C.heather, lower: C.blood, fade: 0.2, rim: C.rust, contours: 4, cstep: 5, span: 0.8, off: 30, gamma: 1.8 },
+      { band: 2, base: 0.665, amp: 0.07, upper: C.blood, lower: C.ink, fade: 0.08, rim: C.heather, span: 0.8, off: 12 },
+    ],
+    ground: { kind: 'moor', top: 0.672, lochans: 14 }, motif: 'none', mist: [{ y: 0.6, hh: 0.1, layerMax: 1, speed: 4, dens: 0.8 }, { y: 0.67, hh: 0.07, layerMax: 3, speed: 6, dens: 0.6 }],
+  },
+  nevis: {
+    stops: SKY_RED, bias: 0.95, horizon: 0.68, sun: null,
+    layers: [
+      { band: 0, base: 0.62, amp: 0.46, upper: C.heather, lower: C.blood, fade: 0.25, rim: C.ember, contours: 3, cstep: 6, span: 0.8, off: 4 },
+      { band: 1, base: 0.82, amp: 0.46, upper: C.blood, lower: C.ink, fade: 0.2, rim: C.rust, span: 0.8, off: 24 },
+      { band: 2, base: 1.0, amp: 0.46, upper: C.ink, lower: C.ink, fade: 0.05, rim: C.lamp, span: 0.8, off: 40 },
+    ],
+    ground: { kind: 'none' }, motif: 'cairn', mist: [{ y: 0.66, hh: 0.15, layerMax: 1, speed: 4, dens: 0.8 }, { y: 0.86, hh: 0.1, layerMax: 2, speed: 8, dens: 0.6 }],
+  },
+};
+
+/** Lochans mirroring the sky, set in dark moor; returns the glint pixels for the animation. */
+function paintMoor(r, W, H, top, count, seed, stops, sunX) {
+  for (let y = top; y < H; y++) {
+    const t = (y - top) / (H - top);
+    for (let x = 0; x < W; x++) {
+      const warm = bay(x, y) < (1 - t) * 0.5 * (0.5 + 0.5 * Math.exp(-(((x - sunX) / (W * 0.4)) ** 2)));
+      let c = warm ? C.blood : (bay(x + 2, y) < 0.1 * (1 - t) ? C.heather : C.ink);
+      const k = hash2f(x, y, seed + 70);
+      if (k < 0.012 * (1 - t * 0.6)) c = k < 0.005 ? C.contour : k < 0.009 ? C.contourIdx : C.heather;      // dun-gold grass, heather
+      r.px(x, y, c, 3);
+    }
   }
-  // shaft (slightly tapering) and bar
-  for (let y = 0; y < h; y++) {
-    const half = Math.floor(shaft / 2) + (y > cy + ringR ? Math.floor((y - cy - ringR) / 14) : 0);
-    for (let x = -half; x <= half; x++) set(cx + x, y);
+  const glints = [];
+  for (let i = 0; i < count; i++) {
+    const t = Math.pow(hash2f(i, 1, seed + 71), 0.8);
+    const cy = Math.round(top + 6 + t * (H - top - 16));
+    const depth = (cy - top) / (H - top);
+    const rx = Math.round((14 + hash2f(i, 2, seed + 71) * 40) * (0.4 + depth * 1.5));
+    const ry = Math.max(2, Math.round(rx * (0.1 + depth * 0.14)));
+    const cx = Math.round(hash2f(i, 3, seed + 71) * W);
+    for (let y = -ry; y <= ry; y++) for (let x = -rx; x <= rx; x++) {
+      const e = (x / rx) ** 2 + (y / ry) ** 2 + 0.25 * vnoise((cx + x) * 0.2, (cy + y) * 0.5, seed + i);
+      if (e > 1) continue;
+      const X = cx + x, Y = cy + y;
+      if (X < 0 || X >= W || Y >= H) continue;
+      // reflect the sky: bright where the lochan is far (near the horizon) and under the sun
+      const within = (y + ry) / (2 * ry);          // 0 at the far shore .. 1 at the near shore
+      const tt = clamp(0.95 - depth * 0.45 - within * 0.35 + 0.5 * Math.exp(-(((X - sunX) / (W * 0.14)) ** 2)) * (1 - depth * 0.5), 0, 1);
+      let c = skyAt(stops, tt, X, Y);
+      if (e > 0.82) c = bay(X, Y) < 0.5 ? C.ink : sink(c);                      // dark shore
+      r.px(X, Y, c, 3);
+      if (e < 0.8 && (Y + i) % 3 === 0 && hash2f(X >> 2, Y, seed + 72) < 0.22) r.px(X, Y, sink(sink(c)), 3);
+      else if (e < 0.8 && hash2f(X, Y, seed + 73) < 0.012) glints.push([X, Y, c]);
+    }
   }
-  for (let x = -arm; x <= arm; x++) for (let y = -Math.floor(bar / 2); y <= Math.floor(bar / 2); y++) set(cx + x, cy + y);
-  // the flared ends of the arms and head
-  for (const [ex, ey] of [[cx - arm, cy], [cx + arm, cy], [cx, 0]]) for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++) {
-    if (Math.abs(x) + Math.abs(y) <= 4 && (ex === cx ? y >= -1 : true)) set(ex + x + (ex < cx ? 1 : ex > cx ? -1 : 0), ey + y + (ex === cx ? 3 : 0));
-  }
-  return { mask, w, h, cx, cy, ringR, t, arm };
+  return glints;
 }
 
-function paintRingCross(r, cx, gy, height, seed, accent) {
-  const M = crossMask(height);
-  const x0 = cx - M.cx, y0 = gy - M.h;
-  const at = (x, y) => x >= 0 && y >= 0 && x < M.w && y < M.h && M.mask[y * M.w + x] === 1;
-  // halo first: a dithered cyan light round the stone
-  const halo = 5;
-  for (let y = -halo; y < M.h + halo; y++) for (let x = -halo; x < M.w + halo; x++) {
-    if (at(x, y)) continue;
-    let dmin = 99;
-    for (let j = -halo; j <= halo && dmin > 1; j++) for (let i = -halo; i <= halo; i++) {
-      if (at(x + i, y + j)) { const d = Math.hypot(i, j); if (d < dmin) dmin = d; }
-    }
-    if (dmin <= halo) {
-      const k = Math.pow(1 - dmin / (halo + 0.5), 1.5) * 0.34;
-      const X = x0 + x, Y = y0 + y;
-      if (Y < gy && bay(X, Y) < k) r.px(X, Y, ((X + Y) & 1) || dmin < 2.2 ? C.ice : C.waterInk, 1);
-    }
+function paintScene(r, spec, S, cfg) {
+  const W = r.w, H = r.h, sc = H / 216;
+  const lv = levelOf(spec.levelIndex), prof = profileOf(spec.levelIndex);
+  const seed = (lv.seed | 0) + (spec.seed | 0);
+  S.seed = seed;
+  const horizon = Math.round(H * cfg.horizon);
+  paintSky(r, W, H, horizon, cfg.stops, cfg.bias);
+  paintStreaks(r, W, horizon, seed + 3, 1);
+  S.stars = [];
+  for (let i = 0; i < Math.round(W * H * 0.0005); i++) {
+    const x = Math.floor(hash2f(i, 1, seed + 40) * W), y = Math.floor(Math.pow(hash2f(i, 2, seed + 40), 1.6) * horizon * 0.5);
+    if (r.get(x, y) === C.ink || r.get(x, y) === C.night) S.stars.push({ x, y, ph: hash2f(i, 3, seed + 40) * 6.28 });
   }
-  // body: ink stone mossed from the foot upward; ice at the edge
-  for (let y = 0; y < M.h; y++) for (let x = 0; x < M.w; x++) {
-    if (!at(x, y)) continue;
-    const X = x0 + x, Y = y0 + y;
-    const edge = !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1);
-    let c;
-    if (edge) c = C.ice;
-    else {
-      const down = y / M.h;
-      const moss = hash2f(X, Y, seed + 21) < 0.12 + down * 0.5;
-      c = moss ? (bay(X, Y) < 0.55 ? C.woodDark : C.ink) : (bay(X, Y) < 0.22 ? C.night : C.ink);
-      if (moss && hash2f(X, Y, seed + 22) < 0.1) c = C.wood;
+  const sunX = cfg.sun ? Math.round(cfg.sun.x * W) : Math.round(W * 0.5);
+  if (cfg.sun) paintSun(r, sunX, Math.round(cfg.sun.y * H), Math.max(3, Math.round(cfg.sun.r * sc)), cfg.sun.glow);
+  const gm = prof.gamma || 1.1;
+  const rf = clamp(0.8 + prof.relief / 5000, 0.8, 1.05);
+  const tops = [];
+  cfg.layers.forEach((L, i) => {
+    const band = prof.bands[L.band] || prof.bands[0];
+    const t = ridgeTops(W, band, prof.size, { span: L.span, off: L.off, base: L.base * H, amp: L.amp * H * rf * (L.tall || 1), gamma: L.gamma || gm, smooth: i === 0 || !!L.valley });
+    if (L.valley) {
+      // vast walls either side of a narrow glen: the real crest is lifted toward the screen edges and sunk toward the middle
+      for (let x = 0; x < W; x++) { const e = Math.pow(Math.abs((2 * x) / W - 1), L.valley.pow), k = L.valley.floor + (1 - L.valley.floor) * e; t[x] = Math.round(L.base * H - (L.base * H - t[x]) * k - L.valley.lift * H * e); }
     }
-    r.px(X, Y, c, 1);
+    tops.push(t);
+    ridgeLayer(r, i + 1, W, H, t, {
+      upper: L.upper, lower: L.lower, fade: Math.max(4, L.fade * H), rim: L.rim, rim2: L.rim2, rimDens: L.rimDens,
+      contours: L.contours, cstep: (L.cstep || 5) * sc, cline: L.cline,
+    });
+    if (L.trees) pines(r, i + 1, t, W, L.trees, seed + i, sc, C.ink);
+  });
+  S.tops = tops;
+  S.glints = [];
+  if (cfg.ground.kind === 'moor') S.glints = paintMoor(r, W, H, Math.round(cfg.ground.top * H), cfg.ground.lochans, seed, cfg.stops, sunX);
+  S.sc = sc;
+  const motif = spec.motif || cfg.motif;
+  if (motif === 'stag') {
+    const x = Math.round(W * 0.23);
+    drawStag(r, x, tops[0][x] + 2, 0.78 * sc * 1.3, C.ink, 1);
+  } else if (motif === 'figure') {
+    S.lantern = drawWanderer(r, Math.round(W * 0.5), Math.round(H * 0.9), Math.max(1, Math.round(2 * sc)), 4, C.heather);
+  } else if (motif === 'ravens') {
+    S.ravens = [0, 1, 2, 3].map((i) => ({ x: hash2f(i, 1, seed) * W, y: H * (0.18 + 0.22 * hash2f(i, 2, seed)), sp: 7 + i * 2, ph: i * 1.3 }));
+  } else if (motif === 'cairn') {
+    const t = tops[0];
+    let px = 0, py = 1e9;
+    for (let x = Math.round(W * 0.2); x < W * 0.8; x++) if (t[x] < py) { py = t[x]; px = x; }
+    const s = Math.max(1, Math.round(sc * 2));
+    [[-3, 3], [-2, 2], [-1, 1], [0, 0]].forEach(([a, b], k) => { for (let i = a; i <= b; i++) r.rect(px + i * s, py - (k + 1) * s * 2 + s, s, s * 2, C.ink, 1); });
+    r.rect(px - 3 * s, py - s, s * 7, s * 2, C.ink, 1);
+  } else if (motif === 'snow') {
+    S.flakes = [];
+    for (let i = 0; i < 46; i++) S.flakes.push({ x: hash2f(i, 1, seed + 33) * W, y: H * (0.3 + 0.62 * hash2f(i, 2, seed + 33)), sp: 40 + hash2f(i, 3, seed + 33) * 60, len: 4 + Math.floor(hash2f(i, 4, seed + 33) * 10) });
   }
-  // inlaid lines (the knotwork, in a single thread) and the boss
-  const inlay = (xa, ya, xb, yb) => {
-    const n = Math.max(Math.abs(xb - xa), Math.abs(yb - ya));
-    for (let k = 0; k <= n; k += 1) {
-      const x = Math.round(xa + ((xb - xa) * k) / n), y = Math.round(ya + ((yb - ya) * k) / n);
-      if (at(x - x0 + x0 - x0, y - y0) && (k % 3 !== 2)) r.px(x0 + (x - x0), y, k % 2 ? C.waterInk : C.ice, 1);
-    }
-  };
-  inlay(x0 + M.cx, y0 + 4, x0 + M.cx, y0 + M.h - 7);
-  inlay(x0 + M.cx - M.arm + 4, y0 + M.cy, x0 + M.cx + M.arm - 4, y0 + M.cy);
-  r.disc(x0 + M.cx, y0 + M.cy, 3, C.ink, 1);
-  for (let a = 0; a < 8; a++) r.px(x0 + M.cx + Math.round(Math.cos(a * 0.785) * 3), y0 + M.cy + Math.round(Math.sin(a * 0.785) * 3), C.ice, 1);
-  r.px(x0 + M.cx, y0 + M.cy, accent, 1);
-  return { x0, y0, ...M };
+  S.bands = cfg.mist.map((m, i) => mistBand(W, Math.max(6, Math.round(m.hh * H)), seed + i + 1, { y: Math.round(m.y * H - (m.hh * H) / 2), layerMax: m.layerMax, speed: m.speed, dens: m.dens, phase: (i + 1) * 37 }));
+  S.sunX = sunX;
 }
 
-// ----------------------------------------------------------------------------- brick and stone
-function stoneFill(r, x, y, w, h, seed, o = {}) {
-  const a = o.base || C.night, b = o.light || C.rock, m = o.moss === undefined ? 0.12 : o.moss;
-  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-    const X = x + i, Y = y + j;
-    const row = Math.floor(Y / 6), off = (row & 1) * 5;
-    const mortar = (Y % 6 === 0) || ((X + off) % 11 === 0);
-    let c = mortar ? C.ink : (hash2f(X >> 1, Y >> 1, seed) < (o.lit || 0.18) ? b : a);
-    if (!mortar && hash2f(X, Y, seed + 5) < m) c = bay(X, Y) < 0.5 ? C.woodDark : c;
-    r.px(X, Y, c, o.id);
+function animScene(r, spec, S, t) {
+  const W = r.w, sc = S.sc || 1;
+  for (const s of S.stars || []) {
+    const k = Math.sin(t * 1.7 + s.ph);
+    if (k > 0.8 || r.lay[s.y * W + s.x] !== 0) continue;
+    r.d[s.y * W + s.x] = k > 0.2 ? C.paper2 : C.rock;
+  }
+  for (const b of S.bands) drawMistBand(r, b, t);
+  for (const g of S.glints || []) {
+    const k = Math.sin(t * 2.2 + g[0] * 0.7 + g[1] * 1.3);
+    if (k > 0.55) r.px(g[0], g[1], lift(lift(g[2])));
+  }
+  if (S.ravens) S.ravens.forEach((b, i) => drawBird(r, Math.round(((b.x + t * b.sp) % (W + 20)) - 10), Math.round(b.y + Math.sin(t * 0.8 + b.ph) * 4), Math.floor(t * 3 + b.ph) & 1, i % 2 ? C.ink : C.blood, Math.max(1, sc * 1.4)));
+  if (S.flakes) {
+    for (const f of S.flakes) {
+      const x = Math.round(((f.x + t * f.sp) % (W + 30)) - 15), y = Math.round(f.y + Math.sin(t * 1.3 + f.x) * 2);
+      for (let i = 0; i < f.len; i++) r.px(x - i, y, i < 2 ? C.paper : i < f.len - 3 ? C.bolt : C.rock);
+    }
+  }
+  if (S.lantern) {
+    const f = 0.55 + 0.45 * vnoise(t * 6, 3.3, S.seed + 50);
+    lanternGlow(r, S.lantern.x, S.lantern.y, Math.round(16 * Math.max(1, sc)), 4, f * 0.8);
+    r.px(S.lantern.x, S.lantern.y, f > 0.7 ? C.flame : C.lamp);
   }
 }
 
 // ======================================================================================== RIDGE
 function paintRidge(r, spec, S) {
-  const W = r.w, H = r.h;
-  const lv = levelOf(spec.levelIndex), prof = profileOf(spec.levelIndex);
-  const accent = spec.locked ? C.rock : accentU(spec.levelIndex);
-  const horizon = Math.round(H * 0.66);
-  const seed = (lv.seed | 0) + (spec.seed | 0);
-  S.seed = seed;
-  paintSky(r, W, H, horizon, accent, seed, spec.locked);
-  S.stars = paintStars(r, W, H, horizon, seed);
-  const sc = W / 320;
-  const rf = clamp(0.72 + prof.relief / 4000, 0.72, 1);
-  const gm = prof.gamma || 1.1;
-  const size = prof.size, off0 = Math.floor(hash2f(seed, 2, 5) * 12);
-  const lock = !!spec.locked;
-  const L1 = { span: 0.8, off: off0, base: H * 0.63, amp: H * 0.52 * rf, gamma: gm, smooth: true, fade: H * 0.28, upper: lock ? C.night : C.dusk, lower: C.night, rim: lock ? 0 : C.waterInk, rim2: 0, rimDens: 0.6 };
-  const L2 = { span: 0.8, off: off0 + 22, base: H * 0.8, amp: H * 0.5 * rf, gamma: gm, fade: H * 0.26, upper: C.night, lower: C.ink, rim: lock ? 0 : C.dusk, rim2: 0 };
-  const L3 = { span: 0.8, off: off0 + 40, base: H * 0.95, amp: H * 0.4 * rf, gamma: gm, fade: 6, upper: C.ink, lower: C.ink, rim: accent, rim2: lock ? 0 : accent };
-  // the moon goes where the far hills leave the most sky
-  const mr = Math.max(4, Math.round(9 * Math.min(1, sc * 1.05))), farTops = ridgeTops(W, prof.bands[0], size, L1);
-  let mx = Math.round(W * 0.7), best = -1;
-  for (let k = 0; k < 6; k++) {
-    const cx = Math.round(W * (0.14 + 0.72 * hash2f(seed, 20 + k, 5)));
-    let clear = 1e9;
-    for (let x = cx - mr * 2; x <= cx + mr * 2; x++) clear = Math.min(clear, farTops[clamp(x, 0, W - 1)]);
-    if (clear > best) { best = clear; mx = cx; }
-  }
-  paintMoon(r, mx, clamp(Math.round(best * 0.45), mr + 4, Math.round(H * 0.28)), mr, lock);
-  ridgeLayer(r, 1, W, H, prof.bands[0], size, L1);
-  ridgeLayer(r, 2, W, H, prof.bands[1], size, L2);
-  const tops = ridgeLayer(r, 3, W, H, prof.bands[2], size, L3);
-  const woods = (lv.cover && lv.cover.woodDensity) || 0;
-  if (woods > 0.02 && !lock) conifers(r, 3, tops, W, clamp(woods * 0.3, 0.02, 0.1), seed, C.ink);
-  // mist bands: sit between the layers and drift
-  const mk = (y, hh, layerMax, speed, dens, ph) => mistBand(W, hh, seed + ph, { y: Math.round(y - hh / 2), layerMax, speed, dens, phase: ph * 37 });
-  S.bands = [mk(H * 0.62, Math.round(H * 0.24), 1, 5, 0.8, 1), mk(H * 0.79, Math.round(H * 0.2), 2, 8, 0.85, 2), mk(H * 0.95, Math.round(H * 0.14), 3, 12, 0.7, 3)];
+  const lv = levelOf(spec.levelIndex);
+  paintScene(r, spec, S, MOODS[lv.id] || MOODS.rannoch);
+  if (spec.locked) desaturate(r);
 }
-function animRidge(r, spec, S, t) {
-  twinkle(r, S.stars, t);
-  for (const b of S.bands) drawMistBand(r, b, t);
-}
-
-// ======================================================================================== CROSS
-function paintCross(r, spec, S) {
-  const W = r.w, H = r.h;
-  const seed = 5000 + (spec.levelIndex | 0) * 31 + (spec.seed | 0);
-  S.seed = seed;
-  const accent = accentU(spec.levelIndex);
-  const gy = Math.round(H * 0.8);
-  r.rect(0, 0, W, H, C.ink, 0);
-  // the walls behind: ragged grey masses top left and right with arched windows, as the abbey in the reference
-  for (const [x0, w, hh, side] of [[0, Math.round(W * 0.21), Math.round(H * 0.4), 0], [Math.round(W * 0.79), Math.round(W * 0.21), Math.round(H * 0.46), 1]]) {
-    for (let x = 0; x < w; x++) {
-      const X = x0 + x;
-      const edge = side ? w - 1 - x : x;                          // distance from the screen edge
-      const top = Math.round((edge / w) * hh * 0.75 + vnoise(X * 0.2, 3, seed) * 6);
-      for (let y = top; y < hh; y++) {
-        const k = hash2f(X, y, seed + 2);
-        const course = (y % 7 === 0) || ((X + (Math.floor(y / 7) & 1) * 5) % 11 === 0);
-        r.px(X, y, course ? C.ink : (k < 0.5 ? C.night : (bay(X, y) < 0.5 ? C.rock : C.night)), 1);
-      }
-    }
-    // two arched windows, black
-    for (const wx of [Math.round(w * 0.3), Math.round(w * 0.7)]) {
-      const cx2 = x0 + wx, top = Math.round(hh * 0.42);
-      for (let y = top; y < Math.min(hh - 2, top + 26); y++) for (let x = -5; x <= 5; x++) {
-        const inArch = y < top + 7 ? Math.hypot(x, y - top - 6) <= 5.5 : Math.abs(x) <= 5;
-        if (inArch && r.layer(cx2 + x, y) === 1) r.px(cx2 + x, y, C.ink, 1);
-      }
-    }
-  }
-  // arches: stone outline, dithered grey, broken in places, with moss where it clings
-  const arches = [[Math.round(W * 0.2), 34, 0.28], [Math.round(W * 0.5), 46, 0.12], [Math.round(W * 0.8), 34, 0.22]];
-  arches.forEach(([ax, half, top], n) => {
-    const spring = Math.round(H * top) + half;
-    for (let y = Math.round(H * top) - 2; y <= gy; y++) for (let x = ax - half - 3; x <= ax + half + 3; x++) {
-      let inBand = false;
-      if (y <= spring) { const d = Math.hypot(x - ax, y - spring); inBand = d <= half + 3 && d >= half - 1; }
-      else inBand = (x >= ax - half - 3 && x <= ax - half) || (x >= ax + half - 1 && x <= ax + half + 3);
-      if (!inBand) continue;
-      // broken: a bite out of the right arch's shoulder and the left arch's crown
-      const brk = (n === 2 && x > ax + half * 0.3 && y < spring - half * 0.55) || (n === 0 && x > ax - half * 0.3 && x < ax + half * 0.25 && y < spring - half * 0.8) || vnoise(x * 0.3, y * 0.3, seed + n) < 0.16;
-      if (brk) continue;
-      const k = hash2f(x, y, seed + 9);
-      const moss = k < 0.14 + 0.3 * (y / gy);
-      let c = bay(x, y) < 0.5 ? C.rock : C.night;
-      if (moss) c = k < 0.06 ? C.wood : C.woodDark;
-      r.px(x, y, c, 2);
-    }
-  });
-  // the ground: a course of dark stone with a mossy lip, and the plinth steps
-  r.rect(0, gy, W, H - gy, C.ink, 3);
-  for (let x = 0; x < W; x++) {
-    const k = hash2f(x >> 1, 7, seed + 3);
-    r.px(x, gy, k < 0.55 ? C.woodDark : C.rock, 3);
-    if (k < 0.3) r.px(x, gy + 1, C.woodDark, 3);
-  }
-  // courses of flagstone: ink mortar, grey-dithered faces
-  for (let y = gy + 2; y < H; y++) for (let x = 0; x < W; x++) {
-    const row = Math.floor((y - gy - 2) / 7), off = (row & 1) * 9;
-    const mortar = ((y - gy - 2) % 7 === 0) || ((x + off) % 19 === 0);
-    if (mortar) continue;
-    const k = hash2f(Math.floor((x + off) / 19), row, seed + 4);
-    const face = k < 0.4 ? C.night : (bay(x, y) < 0.45 ? C.night : C.ink);
-    r.px(x, y, (y - gy - 2) % 7 === 1 && k > 0.25 ? (bay(x, y) < 0.5 ? C.rock : C.night) : face, 3);
-  }
-  const cx = Math.round(W / 2);
-  const stepY = [gy, gy + 5];
-  [[34, 0], [52, 1]].forEach(([hw, i]) => { r.rect(cx - hw, stepY[i], hw * 2, 1, C.ice, 4); r.dith(cx - hw, stepY[i] + 1, hw * 2, 3, C.woodDark, 0.5, 4); });
-  // the cross itself
-  const chH = Math.round(H * 0.74);
-  S.cross = paintRingCross(r, cx, gy, chH, seed, accent);
-  S.cx = cx; S.gy = gy;
-  // the bolt is its own picture and flickers in the animation
-  S.boltX = Math.round(W * (0.82 + 0.06 * hash2f(seed, 3, 3)));
-  S.embers = [];
-  for (let i = 0; i < 12; i++) S.embers.push({ x: cx - 40 + hash2f(i, 1, seed + 8) * 80, ph: hash2f(i, 2, seed + 8), sp: 5 + hash2f(i, 3, seed + 8) * 6, a: hash2f(i, 4, seed + 8) * 6 });
-  S.accent = accent;
-  S.bands = [mistBand(W, 16, seed + 1, { y: gy - 12, layerMax: 3, speed: 6, dens: 0.7, phase: 11 })];
-  S.bolt = null; S.boltIdx = -1;
-}
-function strikePhase(t, period, seedOff) {
-  const idx = Math.floor((t + seedOff) / period), u = (t + seedOff) - idx * period;
-  let on = 0;
-  if (u < 0.09) on = 2; else if (u < 0.15) on = 0; else if (u < 0.3) on = 1; else if (u < 0.42) on = 0.5;
-  return { idx, u, on };
-}
-function animCross(r, spec, S, t) {
-  const W = r.w, H = r.h;
-  drawMistBand(r, S.bands[0], t);
-  // halo breathing: a second dither of ice around the ring, in and out
-  const pulse = 0.5 + 0.5 * Math.sin(t * 1.6);
-  const c = S.cross;
-  if (c) {
-    for (let i = 0; i < 38; i++) {
-      const a = (i / 38) * Math.PI * 2 + t * 0.4;
-      const rr = c.ringR + 3 + pulse * 2;
-      const x = c.x0 + c.cx + Math.round(Math.cos(a) * rr), y = c.y0 + c.cy + Math.round(Math.sin(a) * rr);
-      if (((i + Math.floor(t * 3)) & 1) === 0) r.px(x, y, pulse > 0.5 ? C.ice : C.waterInk);
-    }
-  }
-  // embers of the track's hue rising from the plinth
-  for (const e of S.embers) {
-    const age = (t / e.sp * 1.4 + e.ph) % 1;
-    const x = Math.round(e.x + Math.sin(t * 0.9 + e.a) * 4), y = Math.round(S.gy - 2 - age * H * 0.5);
-    if (age < 0.85 && y > 0) r.px(x, y, age < 0.5 ? S.accent : C.dusk);
-  }
-  // lightning
-  const sp = strikePhase(t, 7.3, 2.1);
-  if (sp.on > 0) {
-    if (S.boltIdx !== sp.idx) { S.boltIdx = sp.idx; S.bolt = boltPath(S.seed + sp.idx * 977, W, H, S.boltX + ((sp.idx * 37) % 40) - 20, Math.round(H * 0.8) - 6); }
-    if (sp.on >= 1) {
-      // the sky behind the arches flashes: lift everything in the far layers
-      for (let i = 0; i < r.d.length; i++) {
-        if (r.lay[i] <= 2 && r.d[i] === C.ink && bay(i % W, (i / W) | 0) < (sp.on === 2 ? 0.5 : 0.25)) r.d[i] = C.night;
-      }
-      drawBolt(r, S.bolt, sp.on === 2);
-    } else if (sp.on === 0.5) {
-      for (const [x, y] of S.bolt.pts) r.px(x, y, C.dusk);
-    }
+/** locked tracks are painted in cold greys: the colour is the reward */
+function desaturate(r) {
+  const GREY = [C.ink, C.night, C.dusk, C.rock];
+  const lum = new Map();
+  for (const n of PAL_NAMES) { const v = parseInt(PAL[n].slice(1), 16); lum.set(C[n], (0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255)) / 255); }
+  for (let i = 0; i < r.d.length; i++) {
+    const l = lum.get(r.d[i]) ?? 0;
+    r.d[i] = l < 0.12 ? GREY[0] : l < 0.3 ? GREY[1] : l < 0.5 ? GREY[2] : GREY[3];
   }
 }
 
 // ======================================================================================== BOTHY
 function paintBothy(r, spec, S) {
-  const W = r.w, H = r.h;
+  const W = r.w, H = r.h, sc = H / 216;
   const seed = 9000 + (spec.levelIndex | 0) * 19 + (spec.seed | 0);
-  S.seed = seed;
-  const hx0 = Math.round(W * 0.17), hx1 = Math.round(W * 0.58), hxs = Math.round(W * 0.7);
-  const wallB = Math.round(H * 0.87), roofL = Math.round(H * 0.58), roofR = Math.round(H * 0.4);
-  const roofAt = (x) => Math.round(roofL + ((x - hx0) / (hx1 - hx0)) * (roofR - roofL));
-  const bankY = (x) => Math.round(H * 0.7 - (x / W) * H * 0.42 + 4 * Math.sin(x * 0.035 + seed));
-  // sky: dark teal, from ink and night dithered with a breath of sage and water blue; long shallow streaks of cloud
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const t = y / H;
-    let c = bay(x, y) < 0.3 + t * 0.55 ? C.night : C.ink;
-    const u = y + x * 0.34;
-    const v = vnoise(x * 0.0065, u * 0.075, seed) * 0.65 + vnoise(x * 0.016, u * 0.15, seed + 3) * 0.35;
-    const fil = Math.abs(vnoise(x * 0.009, u * 0.11, seed + 8) * 2 - 1);
-    if (bay(x + 2, y + 1) < 0.06 + 0.1 * t) c = C.woodDark;                     // the teal in the dark
-    if (v > 0.5 && bay(x + 1, y + 3) < (v - 0.5) * 2.4) c = bay(x, y) < 0.5 ? C.waterInk : C.night;
-    if (fil < 0.05 && v > 0.45) c = bay(x, y) < 0.55 ? C.bog : C.waterInk;
-    else if (fil < 0.1 && v > 0.45 && bay(x, y) < 0.4) c = C.waterInk;
-    r.px(x, y, c, 0);
-  }
-  // the snow bank behind, a long diagonal rim: lit edge, dark mass, icicles
+  S.seed = seed; S.sc = sc;
+  const horizon = Math.round(H * 0.7);
+  // a vast sky: black overhead bleeding to a low bruise of blood and heather at the horizon
+  paintSky(r, W, H, horizon, [C.ink, C.ink, C.blood, C.heather, C.rust], 1.35);
+  paintStreaks(r, W, horizon, seed + 3, 0.8);
+  S.stars = [];
+  for (let i = 0; i < Math.round(W * H * 0.0006); i++) S.stars.push({ x: Math.floor(hash2f(i, 1, seed + 40) * W), y: Math.floor(Math.pow(hash2f(i, 2, seed + 40), 1.5) * horizon * 0.55), ph: hash2f(i, 3, seed + 40) * 6.28 });
+  S.stars = S.stars.filter((s) => r.get(s.x, s.y) === C.ink);
+  // far hills, barely there: a darker swell on the horizon
   for (let x = 0; x < W; x++) {
-    const ry = bankY(x);
-    for (let y = ry; y < H; y++) {
-      const d = y - ry;
-      const c = d < 2 ? C.snow : d < 4 ? (bay(x, y) < 0.5 ? C.ice : C.snow) : (bay(x, y) < clamp(0.55 - d * 0.025, 0.05, 0.5) ? C.waterInk : (bay(x, y) < 0.45 ? C.night : C.ink));
-      r.px(x, y, c, 1);
+    const h0 = Math.round(horizon - 4 * sc - 7 * sc * vnoise(x * 0.012, 2, seed) - 3 * sc * vnoise(x * 0.04, 7, seed));
+    for (let y = h0; y < H; y++) r.px(x, y, bay(x, y) < clamp((y - h0) / (14 * sc), 0, 1) * 0.7 + 0.1 ? C.blood : C.heather, 1);
+  }
+  // the moor: black peat, its far edge lit faintly red, heather and dun grass flecking
+  for (let y = horizon - 2; y < H; y++) {
+    const t = (y - horizon) / (H - horizon);
+    for (let x = 0; x < W; x++) {
+      const warm = bay(x, y) < Math.max(0, 0.42 - t * 1.1);
+      let c = warm ? C.blood : (bay(x + 2, y + 1) < 0.05 * (1 - t) ? C.heather : C.ink);
+      const k = hash2f(x, y, seed + 70);
+      if (k < 0.006 * (1 - t * 0.5)) c = k < 0.002 ? C.contourIdx : k < 0.004 ? C.rust : C.heather;
+      r.px(x, y, c, 2);
     }
-    if (hash2f(x, 4, seed) < 0.06) { const n = 2 + Math.floor(hash2f(x, 5, seed) * 7); for (let k = 2; k < n + 2; k++) r.px(x, ry + k, bay(x, ry + k) < 0.7 ? C.ice : C.waterInk, 1); }
   }
-  // the hut's front wall: staggered courses of dark stone, a few pale with frost
-  for (let x = hx0; x < hx1; x++) for (let y = roofAt(x); y < wallB; y++) {
-    const row = Math.floor((y - 3) / 5), off = (row & 1) * 4;
-    const mortar = ((y - 3) % 5 === 0) || ((x + off) % 9 === 0);
-    const bx = Math.floor((x + off) / 9);
-    const tone = hash2f(bx, row, seed + 6);
-    let c = mortar ? C.ink : (tone < 0.3 ? C.night : tone < 0.6 ? (bay(x, y) < 0.45 ? C.night : C.ink) : C.ink);
-    if (!mortar && hash2f(x, y, seed + 16) < 0.045) c = C.waterInk;
-    r.px(x, y, c, 3);
+  // the bothy: a black box with a pitched roof, small against the immensity
+  const bx = Math.round(W * 0.64), by = Math.round(horizon + 5 * sc);
+  const bw = Math.max(6, Math.round(28 * sc)), bh = Math.max(3, Math.round(11 * sc));
+  r.rect(bx, by - bh, bw, bh, C.ink, 3);
+  for (let k = 0; k < Math.round(6 * sc); k++) r.rect(bx - 1 + k, by - bh - 1 - k, bw + 2 - 2 * k, 1, C.ink, 3);
+  r.rect(bx + bw - Math.max(2, Math.round(3 * sc)), by - bh - Math.round(6 * sc), Math.max(2, Math.round(2 * sc)), Math.round(5 * sc), C.ink, 3);
+  // the faint path to the door, a pale thread through the heather
+  for (let y = by; y < H; y++) {
+    const t = (y - by) / (H - by);
+    const x = Math.round(bx + bw * 0.4 - t * W * 0.22 + Math.sin(t * 5) * 6 * sc * t);
+    for (let k = -Math.round(t * 2 + 0.5); k <= Math.round(t * 2 + 0.5); k++) if (bay(x + k, y) < 0.16) r.px(x + k, y, C.heather, 2);
   }
-  // snow drifted along the wall foot
-  for (let x = hx0 - 6; x < hxs + 8; x++) for (let j = 0; j < 4; j++) if (bay(x, wallB + j - 1) < 1 - j * 0.28) r.px(x, wallB + j - 1, j === 0 ? C.snow : (bay(x, wallB + j) < 0.6 ? C.snow : C.ice), 3);
-  // the gable end in the light: snow-plastered stone, brighter at the top, shaded toward the ground
-  for (let x = hx1; x < hxs; x++) for (let y = Math.round(roofR - (x - hx1) * 0.1); y < wallB; y++) {
-    const down = clamp((y - roofR) / (wallB - roofR), 0, 1);
-    const k = hash2f(x, y, seed + 7);
-    let c = k < 0.5 - down * 0.3 ? C.snow : k < 0.85 - down * 0.2 ? C.ice : C.water;
-    if (down > 0.4 && bay(x, y) < down * 0.5) c = C.waterDeep;
-    if ((y % 5 === 0 || (x + (Math.floor(y / 5) & 1) * 4) % 9 === 0) && k < 0.7) c = C.waterInk;
-    r.px(x, y, c, 3);
-  }
-  // chimney stack up from the gable
-  const chw = 13, chx = hxs - chw - 1, chTop = Math.round(roofR - 24);
-  for (let y = chTop; y < roofR + 3; y++) for (let x = chx; x < chx + chw; x++) {
-    const side = x > chx + chw - 6;
-    const k = hash2f(x, y, seed + 9);
-    r.px(x, y, side ? (k < 0.55 ? C.snow : C.ice) : (bay(x, y) < 0.35 ? C.night : C.ink), 3);
-  }
-  r.rect(chx - 1, chTop - 2, chw + 2, 3, C.snow, 3);
-  S.chimney = { x: chx + 5, y: chTop - 4 };
-  // roof: a thick snow cap along the slope, a blue underside, icicles
-  for (let x = hx0 - 5; x < hx1 + 2; x++) {
-    const base = Math.round(roofL + ((x - hx0) / (hx1 - hx0)) * (roofR - roofL));
-    for (let j = -3; j <= 2; j++) r.px(x, base + j, j <= 0 ? C.snow : (bay(x, base + j) < 0.6 ? C.ice : C.snow), 3);
-    r.px(x, base + 3, bay(x, base + 3) < 0.5 ? C.waterInk : C.ice, 3);
-    if (hash2f(x, 12, seed) < 0.12) { const n = 2 + Math.floor(hash2f(x, 13, seed) * 5); for (let k = 3; k < n + 3; k++) r.px(x, base + k, bay(x, k) < 0.8 ? C.ice : C.waterInk, 3); }
-  }
-  // the snowfield in front, lifting from dark teal to white in a few clean steps
-  for (let y = Math.round(H * 0.85); y < H; y++) for (let x = 0; x < W; x++) {
-    if (r.layer(x, y) >= 3 && y < wallB) continue;
-    const k0 = clamp((y - H * 0.85) / (H * 0.15), 0, 1);
-    const k = k0 * k0 * (3 - 2 * k0);
-    const wave = Math.round(2 * Math.sin(x * 0.04 + seed * 0.1));
-    const lit = bay(x, y + wave) < k * 1.15;
-    r.px(x, y, lit ? (hash2f(x, y, seed + 2) < 0.12 + (1 - k) * 0.5 ? C.ice : C.snow) : (bay(x + 1, y) < 0.3 ? C.waterInk : (bay(x, y) < 0.55 ? C.night : C.ink)), 2);
-  }
-  // windows and door: the glass is left dark here, the lamp is the animation
-  S.windows = [];
-  const win = (x, y, w, h) => {
-    r.rect(x - 1, y - 1, w + 2, h + 2, C.lamp, 4);
-    r.rect(x, y, w, h, C.ink, 4);
-    r.rect(x - 2, y + h + 1, w + 4, 1, C.snow, 4);
-    S.windows.push({ x, y, w, h });
-  };
-  win(hx0 + 10, roofAt(hx0 + 14) + 13, 9, 11);
-  win(hx0 + Math.round((hx1 - hx0) * 0.66), roofAt(hx0 + Math.round((hx1 - hx0) * 0.66)) + 9, 14, 13);
-  const dw = 14, dh = 24, dx = hx0 + Math.round((hx1 - hx0) * 0.34);
-  r.rect(dx, wallB - dh, dw, dh, C.ink, 4);
-  r.rect(dx - 1, wallB - dh - 1, dw + 2, 1, C.lamp, 4); r.rect(dx - 1, wallB - dh, 1, dh, C.lamp, 4);
-  r.rect(dx - 2, wallB, dw + 4, 2, C.snow, 4);
-  S.door = { x: dx, y: wallB - dh, w: dw, h: dh };
-  S.snow = [];
-  for (let i = 0; i < 80; i++) S.snow.push({ x: hash2f(i, 1, seed + 33) * W, y: hash2f(i, 2, seed + 33) * H, sp: 7 + hash2f(i, 3, seed + 33) * 15, dr: 6 + hash2f(i, 4, seed + 33) * 9, big: hash2f(i, 5, seed + 33) < 0.18 });
-  S.puffs = 30;
-  S.bands = [mistBand(W, 16, seed + 4, { y: Math.round(H * 0.8), layerMax: 3, speed: 9, dens: 0.5, phase: 5 })];
+  S.window = { x: bx + Math.round(bw * 0.3), y: by - bh + Math.max(1, Math.round(2.5 * sc)), w: Math.max(2, Math.round(5 * sc)), h: Math.max(2, Math.round(4 * sc)) };
+  S.chimney = { x: bx + bw - Math.max(1, Math.round(2 * sc)), y: by - bh - Math.round(7 * sc) };
+  S.bands = [mistBand(W, Math.round(H * 0.1), seed + 1, { y: Math.round(horizon - H * 0.03), layerMax: 1, speed: 3, dens: 0.8, phase: 5 }), mistBand(W, Math.round(H * 0.12), seed + 2, { y: Math.round(H * 0.88), layerMax: 3, speed: 6, dens: 0.45, phase: 9 })];
+  if (spec.locked) desaturate(r);
 }
 function animBothy(r, spec, S, t) {
-  const W = r.w, H = r.h;
-  drawMistBand(r, S.bands[0], t);
-  // window light: orange glass with ink muntins, the core flickering to flame, and a wash on the snow below
-  S.windows.forEach((w, n) => {
-    const f = vnoise(t * 7 + n * 13, 0.5, S.seed + 40);
-    const hot = f > 0.58;
-    r.rect(w.x, w.y, w.w, w.h, C.lamp);
-    r.rect(w.x + 1, w.y + 1, w.w - 2, w.h - 2, hot ? C.flame : C.lamp);
-    for (let y = 1; y < w.h - 1; y++) for (let x = 1; x < w.w - 1; x++) if (hot && bay(w.x + x, w.y + y) < 0.4) r.px(w.x + x, w.y + y, C.lamp);
-    r.rect(w.x + (w.w >> 1), w.y, 1, w.h, C.ink); r.rect(w.x, w.y + (w.h >> 1) - 1, w.w, 1, C.ink);
-    const spill = 0.16 + f * 0.12;
-    for (let y = 1; y < 16; y++) for (let x = -6; x < w.w + 6; x++) {
-      const X = w.x + x, Y = w.y + w.h + 2 + y;
-      if (X < 0 || Y >= H) continue;
-      const L = r.lay[Y * W + X];
-      if (L === 0 || L > 3) continue;
-      if (bay(X, Y) < spill * (1 - y / 16)) r.d[Y * W + X] = C.lamp;
-    }
-  });
-  const door = S.door, df = vnoise(t * 5, 9.5, S.seed + 41);
-  for (let y = 0; y < door.h; y += 2) r.px(door.x + door.w - 2, door.y + y, df > 0.4 ? C.lamp : C.ink);
-  // chimney smoke: a slow diagonal drift of dithered puffs, pale near the pot, dusky as it climbs
-  for (let i = 0; i < S.puffs; i++) {
-    const age = ((t * 0.14) + i / S.puffs) % 1;
-    const x = S.chimney.x + age * 90 + Math.sin(age * 8 + i * 1.7) * 3, y = S.chimney.y - age * 40 - Math.sin(i * 2.1) * 2;
-    const rad = 1 + Math.floor(age * 7);
-    for (let j = -rad; j <= rad; j++) for (let k = -rad; k <= rad; k++) {
-      if (j * j + k * k > rad * rad + 1) continue;
-      const X = Math.round(x + k), Y = Math.round(y + j);
-      if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
-      if (bay(X, Y) < 0.85 * (1 - age * 0.8)) r.px(X, Y, age < 0.3 ? C.paper2 : age < 0.6 ? C.rock : C.dusk);
-    }
+  const W = r.w, H = r.h, sc = S.sc || 1;
+  for (const s of S.stars) { const k = Math.sin(t * 1.5 + s.ph); if (k < 0.75) r.px(s.x, s.y, k > 0.2 ? C.paper2 : C.rock); }
+  for (const b of S.bands) drawMistBand(r, b, t);
+  // the window: the one warm thing in the whole dark, flickering
+  const w = S.window, f = vnoise(t * 6, 0.5, S.seed + 40), hot = f > 0.55;
+  const cx = w.x + (w.w >> 1), cy = w.y + (w.h >> 1);
+  const rad = Math.round(44 * sc * (0.85 + f * 0.3));
+  for (let y = -rad; y <= rad; y++) for (let x = -Math.round(rad * 1.4); x <= Math.round(rad * 1.4); x++) {
+    const d = Math.hypot(x / 1.4, y);
+    if (d > rad || d < 1) continue;
+    const X = cx + x, Y = cy + y;
+    if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+    const k = Math.pow(1 - d / rad, 1.8) * 1.1;
+    if (bay(X, Y) < k) { const i = Y * W + X; if (r.lay[i] !== 3) r.d[i] = d < rad * 0.35 ? lift(lift(lift(r.d[i]))) : d < rad * 0.65 ? lift(lift(r.d[i])) : lift(r.d[i]); }
   }
-  // snowfall, aslant with the wind
-  for (const f of S.snow) {
-    const x = Math.round(((f.x + t * f.dr) % W + W) % W), y = Math.round((f.y + t * f.sp) % H);
-    r.px(x, y, f.big ? C.snow : C.paper2);
-    if (f.big) r.px(x + 1, y, C.paper2);
+  r.rect(w.x, w.y, w.w, w.h, hot ? C.flame : C.lamp);
+  if (hot) r.px(w.x, w.y, C.paper);
+  // the thread of smoke: a wavering line of dots climbing, bending with the wind, fading to the sky
+  const n = Math.round(46 * sc);
+  for (let i = 0; i < n; i++) {
+    const a = i / n;
+    const xi = Math.round(S.chimney.x + Math.sin(a * 5 + t * 0.9) * (1 + a * 6) * sc + a * a * 28 * sc);
+    const yi = Math.round(S.chimney.y - a * 58 * sc);
+    if (yi < 0) continue;
+    if (bay(xi, yi) < 0.98 - a * 0.8) { r.px(xi, yi, a < 0.6 ? C.rock : C.heather); r.px(xi + 1, yi, a < 0.6 ? C.rock : C.heather); }
+    if (a < 0.6 && bay(xi + 2, yi) < 0.5) r.px(xi + 2, yi, C.heather);
   }
 }
 
-// ======================================================================================== GATE
-/** A course of stone: staggered bricks of 10x5, each its own tone, a pale lip on top, ink mortar. */
-function brickWall(r, x0, y0, x1, y1, seed, id, o = {}) {
-  const BW = 10, BH = 5;
-  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-    const row = Math.floor(y / BH), off = (row & 1) * 5;
-    const col = Math.floor((x + off) / BW);
-    const mortar = (y % BH === 0) || ((x + off) % BW === 0);
-    let c;
-    if (mortar) c = C.ink;
-    else {
-      const tone = hash2f(col, row, seed);
-      const k = y % BH;                                   // 1..4 down the brick
-      if (k === 1) c = tone > 0.3 ? (bay(x, y) < 0.7 ? C.contour : C.contourIdx) : C.contourIdx;   // the lit lip
-      else if (k === 4) c = bay(x, y) < 0.5 ? C.contourIdx : C.ink;                              // the shadowed foot
-      else c = tone < (o.dark || 0.5) ? (bay(x, y) < 0.55 ? C.contourIdx : C.ink) : C.contourIdx;
-      if (hash2f(x, y, seed + 9) < 0.015) c = C.woodDark;
+// ======================================================================================== STONE
+function paintStone(r, spec, S) {
+  const W = r.w, H = r.h, sc = H / 216;
+  const li = spec.levelIndex | 0;
+  const seed = 11000 + li * 29 + (spec.seed | 0);
+  S.seed = seed; S.sc = sc;
+  const horizon = Math.round(H * 0.7);
+  paintSky(r, W, H, horizon, [C.night, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame], 1.05);
+  paintStreaks(r, W, horizon, seed + 3, 1);
+  paintSun(r, Math.round(W * 0.5), Math.round(H * 0.66), Math.round(18 * sc), 4.6);
+  const prof = profileOf(li);
+  const t1 = ridgeTops(W, prof.bands[0], prof.size, { span: 0.8, off: 6, base: H * 0.68, amp: H * 0.16, gamma: prof.gamma, smooth: true });
+  ridgeLayer(r, 1, W, H, t1, { upper: C.heather, lower: C.blood, fade: H * 0.12, rim: C.rust, contours: 3, cstep: 4 * sc });
+  const t2 = ridgeTops(W, prof.bands[1], prof.size, { span: 0.8, off: 30, base: H * 0.78, amp: H * 0.12, gamma: prof.gamma });
+  ridgeLayer(r, 2, W, H, t2, { upper: C.blood, lower: C.ink, fade: H * 0.14, rim: C.heather });
+  const top = Math.round(H * 0.84);
+  for (let y = top; y < H; y++) for (let x = 0; x < W; x++) {
+    const t = (y - top) / (H - top), k = hash2f(x, y, seed + 70);
+    r.px(x, y, bay(x, y) < 0.35 * (1 - t) ? C.rust : k < 0.05 ? C.contour : k < 0.1 ? C.contourIdx : (bay(x + 1, y) < 0.3 ? C.blood : C.ink), 3);
+  }
+  // the symbol stone: a tall tapering slab, lit warm on its sunward face, the crescent and V-rod incised
+  const sh = Math.round(H * 0.5), sw0 = Math.round(W * 0.085), baseY = Math.round(H * 0.86), cx = Math.round(W * 0.5);
+  for (let y = 0; y < sh; y++) {
+    const t = y / sh;
+    const half = Math.round(sw0 * (0.62 + 0.38 * t) + 2 * Math.sin(t * 5 + seed));
+    const left = cx - half, right = cx + half;
+    const topCap = y < sh * 0.1 ? Math.round((1 - y / (sh * 0.1)) * half * 0.6) : 0;
+    for (let x = left + topCap; x <= right - topCap; x++) {
+      const nx = (x - left) / (2 * half), k = hash2f(x, y, seed + 5);
+      let c = nx < 0.2 ? (bay(x, y) < 0.6 ? C.ember : C.rust) : nx < 0.5 ? (k < 0.35 ? C.heather : C.blood) : (k < 0.3 ? C.blood : C.ink);
+      if (x === left + topCap) c = C.lamp;
+      if (x === right - topCap) c = C.ink;
+      r.px(x, baseY - sh + y, c, 4);
     }
-    r.px(x, y, c, id);
   }
+  const sx = cx, sy = baseY - sh + Math.round(sh * 0.36), R = Math.round(sw0 * 0.62);
+  S.symbol = [];
+  for (let a = 0.9; a < 2 * Math.PI - 0.9; a += 0.025) { S.symbol.push([Math.round(sx + Math.cos(a) * R), Math.round(sy + Math.sin(a) * R)]); S.symbol.push([Math.round(sx + Math.cos(a) * (R - 3 * sc)) + Math.round(R * 0.3), Math.round(sy + Math.sin(a) * (R - 3 * sc))]); }
+  const addLine = (a, b) => { const n = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); for (let i = 0; i <= n; i++) S.symbol.push([Math.round(a[0] + ((b[0] - a[0]) * i) / n), Math.round(a[1] + ((b[1] - a[1]) * i) / n)]); };
+  addLine([sx - R, sy + R * 1.3], [sx, sy + R * 2.2]); addLine([sx, sy + R * 2.2], [sx + R, sy + R * 1.3]);
+  addLine([sx - R * 1.1, sy + R * 1.9], [sx + R * 1.1, sy + R * 1.0]); addLine([sx, sy - R * 0.3], [sx, sy + R * 3.4]);
+  for (const [x, y] of S.symbol) r.px(x, y, C.ink, 4);
+  S.bands = [mistBand(W, Math.round(H * 0.09), seed + 1, { y: Math.round(H * 0.74), layerMax: 2, speed: 3, dens: 0.75, phase: 5 }), mistBand(W, Math.round(H * 0.1), seed + 2, { y: Math.round(H * 0.9), layerMax: 3, speed: 6, dens: 0.5, phase: 9 })];
+  S.cx = cx; S.sy = sy; S.baseY = baseY;
 }
-function paintGate(r, spec, S) {
+function animStone(r, spec, S, t) {
   const W = r.w, H = r.h;
-  const seed = 7000 + (spec.levelIndex | 0) * 23 + (spec.seed | 0);
-  S.seed = seed;
-  const accent = accentU(spec.levelIndex);
-  const horizon = Math.round(H * 0.6);
-  paintSky(r, W, H, horizon, accent, seed, false);
-  S.stars = paintStars(r, W, H, horizon, seed);
-  paintMoon(r, Math.round(W * 0.14), Math.round(H * 0.2), 7, false);
-  // a castle in cloud: dark pinnacles dissolving into the mist behind the wall
-  const cx = Math.round(W * 0.5);
-  const tower = (x, w, top, spire) => {
-    for (let y = top; y < Math.round(H * 0.62); y++) for (let i = 0; i < w; i++) if (bay(x + i, y) < 0.99 - (y - top) * 0.003) r.px(x + i, y, C.ink, 1);
-    for (let k = 0; k < spire; k++) { const hw = Math.floor((spire - k) / 5); for (let i = -hw; i <= hw; i++) r.px(x + Math.floor(w / 2) + i, top - k, C.ink, 1); }
-    for (let i = 0; i < w; i += 3) r.px(x + i, top - 1, C.ink, 1);
-  };
-  tower(cx - 44, 12, Math.round(H * 0.32), 18); tower(cx - 12, 18, Math.round(H * 0.2), 26); tower(cx + 26, 11, Math.round(H * 0.34), 16); tower(cx + 46, 9, Math.round(H * 0.42), 10);
-  r.rect(cx - 46, Math.round(H * 0.42), 110, Math.round(H * 0.2), C.ink, 1);
-  // pines along the foot of the hill
-  const topsT = new Int16Array(W);
-  for (let x = 0; x < W; x++) { topsT[x] = Math.round(H * 0.58 + 4 * Math.sin(x * 0.05 + seed) + 3 * hash2f(x, 3, seed)); for (let y = topsT[x]; y < H; y++) r.px(x, y, C.ink, 2); }
-  conifers(r, 2, topsT, W, 0.1, seed, C.ink);
-  // the wall: dark brown brick, battlemented, with the gateway in the middle
-  const wallTop = Math.round(H * 0.5), wallBot = Math.round(H * 0.9);
-  brickWall(r, 0, wallTop, W, wallBot, seed + 2, 3, { dark: 0.72 });
-  for (let x = 2; x < W; x += 12) for (let y = wallTop - 6; y < wallTop; y++) for (let i = 0; i < 8; i++) {
-    const edge = i === 0 || i === 7 || y === wallTop - 6;
-    r.px(x + i, y, edge ? C.ink : (bay(x + i, y) < 0.5 ? C.contourIdx : C.ink), 3);
-  }
-  const gx = Math.round(W / 2), gw = 50, gTop = Math.round(H * 0.26);
-  const spring = gTop + Math.round(gw / 2);
-  // the gateway: dressed stone around a black opening
-  for (let y = gTop - 8; y < wallBot; y++) for (let x = gx - gw / 2 - 10; x <= gx + gw / 2 + 10; x++) {
-    const d = Math.hypot(x - gx, y - spring);
-    const inside = y >= spring ? Math.abs(x - gx) < gw / 2 : d < gw / 2;
-    if (inside) { r.px(x, y, C.ink, 4); continue; }
-    const inArch = y < spring ? d < gw / 2 + 10 : Math.abs(x - gx) < gw / 2 + 10;
-    if (!inArch) continue;
-    const course = y < spring ? Math.floor(d) : Math.floor(y / 5);
-    const tone = hash2f(Math.floor((y < spring ? Math.atan2(y - spring, x - gx) * 10 : x / 5)) + course * 31, course, seed + 12);
-    const edge = y < spring ? (Math.floor(d) % 5 === 0) : (y % 5 === 0);
-    r.px(x, y, edge ? C.ink : (tone < 0.5 ? (bay(x, y) < 0.35 ? C.contour : C.contourIdx) : C.contourIdx), 4);
-  }
-  // the opening picked out in the track's hue
-  for (let a = Math.PI; a <= Math.PI * 2; a += 0.01) r.px(Math.round(gx + Math.cos(a) * (gw / 2 + 0.5)), Math.round(spring + Math.sin(a) * (gw / 2 + 0.5)), accent, 4);
-  r.rect(gx - gw / 2, spring, 1, wallBot - spring, accent, 4); r.rect(gx + gw / 2, spring, 1, wallBot - spring, accent, 4);
-  // portcullis chains hanging in the dark
-  for (const sx of [gx - gw / 2 + 5, gx + gw / 2 - 6]) for (let y = gTop + 8; y < wallBot - 8; y += 2) r.px(sx, y, bay(sx, y) < 0.6 ? C.dusk : C.night, 4);
-  // the road up to the gate
-  for (let y = wallBot; y < H; y++) for (let x = 0; x < W; x++) {
-    const t = (y - wallBot) / (H - wallBot);
-    const road = Math.abs(x - gx) < gw / 2 + t * (W * 0.45);
-    r.px(x, y, road ? (bay(x, y) < 0.3 + t * 0.4 ? C.contourIdx : (hash2f(x, y, seed + 3) < 0.4 ? C.night : C.ink)) : (bay(x, y) < 0.5 ? C.night : C.ink), 4);
-  }
-  // the wanderer in the gateway, three pixels to the pixel
-  S.lantern = drawWanderer(r, gx, wallBot + 8, 3, 0, 5, null, C.dusk);
-  S.bands = [
-    mistBand(W, Math.round(H * 0.26), seed + 1, { y: Math.round(H * 0.28), layerMax: 1, speed: 4, dens: 0.85, phase: 1 }),
-    mistBand(W, Math.round(H * 0.2), seed + 2, { y: Math.round(H * 0.56), layerMax: 3, speed: 7, dens: 0.8, phase: 2 }),
-    mistBand(W, Math.round(H * 0.16), seed + 3, { y: Math.round(H * 0.88), layerMax: 5, speed: 11, dens: 0.75, phase: 3 }),
-  ];
-}
-function animGate(r, spec, S, t) {
-  twinkle(r, S.stars, t);
   for (const b of S.bands) drawMistBand(r, b, t);
-  const f = 0.55 + 0.45 * vnoise(t * 6, 3.3, S.seed + 50);
-  lanternGlow(r, S.lantern.x, S.lantern.y, 18, 4, f * 0.8);
-  r.px(S.lantern.x, S.lantern.y, f > 0.7 ? C.flame : C.lamp);
+  const pulse = 0.5 + 0.5 * Math.sin(t * 1.3);
+  for (const [x, y] of S.symbol) r.px(x, y, pulse > 0.5 ? C.flame : C.ember, 4);
+  const rad = Math.round(H * 0.3);
+  for (let y = -rad; y <= rad; y++) for (let x = -rad; x <= rad; x++) {
+    const d = Math.hypot(x * 0.7, y);
+    if (d > rad) continue;
+    const X = S.cx + x, Y = S.sy + y;
+    if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+    const i = Y * W + X;
+    if (r.lay[i] === 4) continue;
+    if (bay(X, Y) < Math.pow(1 - d / rad, 2.2) * (0.35 + pulse * 0.15)) r.d[i] = lift(r.d[i]);
+  }
+  for (let i = 0; i < 16; i++) {
+    const a = (t * 0.07 + i / 16) % 1;
+    r.px(Math.round(S.cx + Math.sin(i * 2.7 + t * 0.6) * H * 0.2), Math.round(S.baseY - a * H * 0.5), a < 0.6 ? C.flame : C.rust);
+  }
 }
+
+// ======================================================================================== DAWN
+function paintDawn(r, spec, S) {
+  const W = r.w, H = r.h, sc = H / 216;
+  const seed = 13000 + (spec.seed | 0);
+  S.seed = seed; S.sc = sc;
+  const horizon = Math.round(H * 0.66);
+  paintSky(r, W, H, horizon, [C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame, C.paper], 1.0);
+  paintStreaks(r, W, horizon, seed + 3, 1.1);
+  paintSun(r, Math.round(W * 0.5), Math.round(H * 0.64), Math.round(22 * sc), 4.8);
+  // eight ridges, one for each glen, from the palest to the blackest
+  const ups = [C.rust, C.heather, C.heather, C.blood, C.blood, C.ink, C.ink, C.ink];
+  const lows = [C.heather, C.blood, C.blood, C.ink, C.ink, C.ink, C.ink, C.ink];
+  const rims = [C.ember, C.rust, C.rust, C.heather, C.heather, C.blood, C.blood, C.blood];
+  for (let i = 0; i < 8; i++) {
+    const prof = profileOf(i);
+    const t = ridgeTops(W, prof.bands[i % 3], prof.size, { span: 0.8, off: (i * 13) % 50, base: H * (0.6 + i * 0.045), amp: H * (0.2 + 0.03 * i), gamma: prof.gamma, smooth: i < 3 });
+    ridgeLayer(r, Math.min(i + 1, 7), W, H, t, { upper: ups[i], lower: lows[i], fade: H * 0.1, rim: rims[i], contours: i < 4 ? 2 : 0, cstep: 5 * sc });
+  }
+  S.bands = [0.62, 0.72, 0.82, 0.92].map((y, i) => mistBand(W, Math.round(H * 0.08), seed + i + 1, { y: Math.round(H * y), layerMax: 7, speed: 3 + i * 2, dens: 0.7 - i * 0.08, phase: 11 * (i + 1) }));
+}
+function animDawn(r, spec, S, t) { for (const b of S.bands) drawMistBand(r, b, t); }
 
 // ======================================================================================== TITLE
-function paintTitle(r, spec, S) {
-  const W = r.w, H = r.h;
-  const li = spec.levelIndex == null ? 3 : spec.levelIndex;
-  const lv = levelOf(li), prof = profileOf(li);
-  const seed = (lv.seed | 0) + 4242;
-  S.seed = seed;
-  const accent = C.magenta;
-  const horizon = Math.round(H * 0.7);
-  paintSky(r, W, H, horizon, accent, seed, false);
-  S.stars = paintStars(r, W, H, horizon, seed);
-  paintMoon(r, Math.round(W * 0.2), Math.round(H * 0.22), 8, false);
-  const rf = 0.9, size = prof.size;
-  ridgeLayer(r, 1, W, H, prof.bands[0], size, { span: 0.8, off: 6, base: H * 0.6, amp: H * 0.5 * rf, gamma: 1.05, smooth: true, fade: H * 0.28, upper: C.dusk, lower: C.night, rim: 0 });
-  ridgeLayer(r, 2, W, H, prof.bands[1], size, { span: 0.8, off: 24, base: H * 0.76, amp: H * 0.44 * rf, gamma: 1.05, fade: H * 0.26, upper: C.night, lower: C.ink, rim: C.dusk });
-  const tops = ridgeLayer(r, 3, W, H, prof.bands[2], size, { span: 0.8, off: 44, base: H * 0.96, amp: H * 0.3 * rf, gamma: 1.1, fade: 6, upper: C.ink, lower: C.ink, rim: C.magenta, rim2: C.magenta });
-  conifers(r, 3, tops, W, 0.06, seed, C.ink);
-  // a knoll for the cross and the wanderer: dark ground
-  const kx = Math.round(W * 0.58), ky = Math.round(H * 0.86);
-  for (let x = kx - 70; x < kx + 70; x++) {
-    const top = Math.round(ky - Math.max(0, 1 - Math.pow((x - kx) / 70, 2)) * 6);
-    for (let y = top; y < H; y++) r.px(x, y, C.ink, 4);
-    r.px(x, top, bay(x, top) < 0.5 ? C.woodDark : C.ink, 4);
+/** Mask of a word in the 5x7 font at integer scale: Uint8Array(w*h) plus its size. */
+function textMask(text, scale, spacing) {
+  const f = FONTS.main;
+  const chars = [...text];
+  const adv = (g) => (g.w + 1 + spacing) * scale;
+  let w = 0;
+  for (const ch of chars) w += adv(f.glyphs[ch] || f.glyphs['?']);
+  w -= spacing * scale;
+  const h = 7 * scale;
+  const m = new Uint8Array(w * h);
+  let x0 = 0;
+  for (const ch of chars) {
+    const g = f.glyphs[ch] || f.glyphs['?'];
+    g.rows.slice(0, 7).forEach((bits, row) => {
+      for (let b = 0; b < g.w; b++) if (bits & (1 << (f.bits - 1 - b))) for (let j = 0; j < scale; j++) for (let i = 0; i < scale; i++) { const X = x0 + b * scale + i, Y = row * scale + j; if (X < w) m[Y * w + X] = 1; }
+    });
+    x0 += adv(g);
   }
-  S.cross = paintRingCross(r, kx, ky, Math.round(H * 0.64), seed, C.magenta);
-  S.cx = kx; S.gy = ky;
-  S.lantern = drawWanderer(r, kx - 28, ky + 4, 2, 0, 5, null, C.dusk);
-  S.bands = [
-    mistBand(W, Math.round(H * 0.3), seed + 1, { y: Math.round(H * 0.5), layerMax: 1, speed: 3, dens: 0.75, phase: 1 }),
-    mistBand(W, Math.round(H * 0.24), seed + 2, { y: Math.round(H * 0.7), layerMax: 3, speed: 6, dens: 0.8, phase: 2 }),
-    mistBand(W, Math.round(H * 0.2), seed + 3, { y: Math.round(H * 0.9), layerMax: 5, speed: 10, dens: 0.8, phase: 3 }),
+  return { m, w, h };
+}
+
+/**
+ * The logo, painted on the art: a cast shadow, a block of extrusion, a hard outline, and a face that runs
+ * flame -> ember -> rust with a lit edge and a shaded one, grained like carved stone. Returns the face pixels.
+ */
+function paintLogo(r, text, cx, top, scale, spacing) {
+  const base = textMask(text, scale, spacing);
+  // fatten the strokes: every lit block grows by two pixels, so the letters are carved slabs rather than outlines
+  const w = base.w + 3, h = base.h + 3, m = new Uint8Array(w * h);
+  for (let y = 0; y < base.h; y++) for (let x = 0; x < base.w; x++) if (base.m[y * base.w + x]) for (let j = 0; j <= 3; j++) for (let i = 0; i <= 3; i++) m[(y + j) * w + x + i] = 1;
+  const x0 = Math.round(cx - w / 2), y0 = top;
+  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && m[y * w + x] === 1;
+  const EX = Math.max(3, Math.round(scale * 0.8));
+  for (let y = -2; y < h + EX + 8; y++) for (let x = -2; x < w + EX + 8; x++) {            // cast shadow, dithered
+    if (at(x - EX - 4, y - EX - 5) && bay(x0 + x, y0 + y) < 0.6) { const X = x0 + x, Y = y0 + y; r.px(X, Y, sink(sink(r.get(X, Y))), 6); }
+  }
+  for (let k = EX; k >= 1; k--) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y)) r.px(x0 + x + k, y0 + y + k, k >= EX - 1 ? C.ink : k > EX / 2 ? C.blood : C.rust, 6);   // extrusion
+  const near = (x, y) => { for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (at(x + i, y + j)) return true; return false; };
+  for (let y = -2; y < h + 2; y++) for (let x = -2; x < w + 2; x++) if (!at(x, y) && near(x, y)) r.px(x0 + x, y0 + y, C.ink, 6);   // outline
+  const face = [];
+  const stops = [C.paper, C.flame, C.lamp, C.ember, C.rust];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!at(x, y)) continue;
+    const X = x0 + x, Y = y0 + y;
+    let c = skyAt(stops, Math.pow(y / (h - 1), 0.9), X, Y);
+    if (hash2f(X, Y, 1234) < 0.07) c = sink(c);                                                    // carved grain
+    if (!at(x - 1, y) || !at(x, y - 1)) c = bay(X, Y) < 0.8 ? C.paper : C.flame;                  // lit edge
+    else if (!at(x + 1, y) || !at(x, y + 1)) c = bay(X, Y) < 0.7 ? C.blood : C.rust;              // shaded edge
+    r.px(X, Y, c, 6);
+    face.push(Y * r.w + X);
+  }
+  return { face, x0, y0, w, h };
+}
+
+function paintTitle(r, spec, S) {
+  const W = r.w, H = r.h, sc = H / 216;
+  const seed = 4242 + (spec.seed | 0);
+  S.seed = seed; S.sc = sc;
+  const horizon = Math.round(H * 0.58);
+  // the sky: ink above, bleeding through blood and heather to a huge red-gold glow
+  paintSky(r, W, H, horizon, [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame], 1.1);
+  paintStreaks(r, W, horizon, seed + 3, 1.2);
+  const sunX = Math.round(W * 0.7), sunY = Math.round(H * 0.56);
+  paintSun(r, sunX, sunY, Math.round(30 * sc), 4.4);
+  S.stars = [];
+  for (let i = 0; i < 40; i++) { const x = Math.floor(hash2f(i, 1, seed) * W), y = Math.floor(Math.pow(hash2f(i, 2, seed), 1.6) * horizon * 0.4); if (r.get(x, y) === C.ink) S.stars.push({ x, y, ph: hash2f(i, 3, seed) * 6.28 }); }
+  // the map as a landscape: stacked ridges, each a dithered band traced by fine contour lines
+  const lvIdx = [6, 4, 3, 0];
+  const bandIdx = [1, 1, 1, 2];
+  const cfgs = [
+    { base: 0.58, amp: 0.2, upper: C.heather, lower: C.blood, rim: C.ember, contours: 4, cstep: 4 },
+    { base: 0.67, amp: 0.15, upper: C.rust, lower: C.blood, rim: C.lamp, contours: 5, cstep: 4, cline: C.heather },
+    { base: 0.73, amp: 0.13, upper: C.blood, lower: C.ink, rim: C.rust, contours: 4, cstep: 5, cline: C.heather },
+    { base: 0.8, amp: 0.1, upper: C.ink, lower: C.ink, rim: C.heather, contours: 0 },
   ];
+  S.tops = [];
+  cfgs.forEach((o, i) => {
+    const prof = profileOf(lvIdx[i]);
+    const t = ridgeTops(W, prof.bands[bandIdx[i]], prof.size, { span: 0.8, off: 6 + i * 11, base: o.base * H, amp: o.amp * H, gamma: prof.gamma, smooth: i === 0 });
+    S.tops.push(t);
+    ridgeLayer(r, i + 1, W, H, t, { upper: o.upper, lower: o.lower, fade: H * 0.1, rim: o.rim, contours: o.contours, cstep: (o.cstep || 4) * sc, cline: o.cline });
+  });
+  // a lochan between the last two ridges, mirroring the sun
+  const wy0 = Math.round(H * 0.8), wy1 = Math.round(H * 0.86);
+  const stops = [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame];
+  for (let y = wy0; y < wy1; y++) for (let x = 0; x < W; x++) {
+    if (r.lay[y * W + x] > 3) continue;
+    const t = 1 - (y - wy0) / (wy1 - wy0);
+    const tt = clamp(0.25 + t * 0.45 + 0.45 * Math.exp(-(((x - sunX) / (W * 0.13)) ** 2)), 0, 1);
+    let c = skyAt(stops, tt, x, y);
+    if ((y % 3 === 0) && hash2f(x >> 2, y, seed + 2) < 0.3) c = sink(sink(c));
+    r.px(x, y, c, 4);
+  }
+  S.glints = [];
+  for (let i = 0; i < 90; i++) { const x = Math.floor(hash2f(i, 4, seed) * W), y = wy0 + 1 + Math.floor(hash2f(i, 5, seed) * (wy1 - wy0 - 2)); S.glints.push([x, y, r.get(x, y)]); }
+  // the foreground: peat-black, a heather-rimmed brow for the wanderer, flecks of bracken and dun grass
+  const fore = new Int16Array(W);
+  for (let x = 0; x < W; x++) fore[x] = Math.round(H * 0.855 + 4 * Math.sin(x * 0.02 + 1) + 5 * vnoise(x * 0.03, 4, seed) - (x > W * 0.6 ? (x - W * 0.6) * 0.1 : 0));
+  for (let x = 0; x < W; x++) for (let y = fore[x]; y < H; y++) {
+    const t = (y - fore[x]) / (H - fore[x] + 1), k = hash2f(x, y, seed + 9);
+    let c = C.ink;
+    if (y - fore[x] < 2) c = C.blood;
+    else if (k < 0.03 * (1 - t)) c = k < 0.01 ? C.rust : k < 0.02 ? C.contourIdx : C.heather;
+    r.px(x, y, c, 5);
+  }
+  for (let x = 0; x < W; x++) if (hash2f(x, 21, seed) < 0.12) { const h = 2 + Math.floor(hash2f(x, 22, seed) * 4); for (let k = 0; k < h; k++) r.px(x + (k > 2 ? 1 : 0), fore[x] - k, C.ink, 5); }
+  // a stag on the far skyline, antlers against the glow
+  const sx = Math.round(W * 0.075);
+  drawStag(r, sx, S.tops[0][sx] + 2, 0.62 * sc, C.ink, 1);
+  // a standing stone on the second ridge: a tapering slab, its sunward edge lit
+  const stx = Math.round(W * 0.44), sty = S.tops[1][stx] + 3, stH = Math.round(20 * sc);
+  for (let y = 0; y < stH; y++) {
+    const half = Math.round((1.2 + (y / stH) * 2.2) * sc), top = stH - 1 - y;
+    const cut = y === stH - 1 ? 1 : 0;
+    for (let x = -half + cut; x <= half - cut - (y > stH - 3 ? 1 : 0); x++) r.px(stx + x, sty - stH + y + 1, x === -half + cut && y > 2 ? C.ember : C.ink, 2);
+    void top;
+  }
+  // the wanderer, small, with the lantern lit
+  { const wx = Math.round(W * 0.8); S.lantern = drawWanderer(r, wx, S.tops[2][wx] + 3, 2, 3, C.ink); }
+  S.bands = [
+    mistBand(W, Math.round(H * 0.12), seed + 1, { y: Math.round(H * 0.6), layerMax: 1, speed: 4, dens: 0.9, phase: 1 }),
+    mistBand(W, Math.round(H * 0.1), seed + 2, { y: Math.round(H * 0.74), layerMax: 2, speed: 6, dens: 0.8, phase: 2 }),
+    mistBand(W, Math.round(H * 0.1), seed + 3, { y: Math.round(H * 0.85), layerMax: 4, speed: 9, dens: 0.6, phase: 3 }),
+  ];
+  S.birds = [0, 1].map((i) => ({ x: W * (0.2 + 0.4 * i), y: H * (0.26 + 0.06 * i), sp: 9 + i * 4, ph: i * 2 }));
+  // the logo goes on last: it is painted on the art
+  S.logo = paintLogo(r, spec.logoText || 'CONTOURS', Math.round(W / 2), Math.round(H * 0.07), Math.round(6 * sc), 1);
 }
 function animTitle(r, spec, S, t) {
-  const W = r.w, H = r.h;
-  twinkle(r, S.stars, t);
+  const W = r.w, sc = S.sc || 1;
+  for (const s of S.stars) { const k = Math.sin(t * 1.5 + s.ph); if (k < 0.7 && r.lay[s.y * W + s.x] === 0 && r.d[s.y * W + s.x] === C.ink) r.d[s.y * W + s.x] = k > 0.1 ? C.paper2 : C.rock; }
   for (const b of S.bands) drawMistBand(r, b, t);
-  const c = S.cross, pulse = 0.5 + 0.5 * Math.sin(t * 1.4);
-  for (let i = 0; i < 34; i++) {
-    const a = (i / 34) * Math.PI * 2 + t * 0.4, rr = c.ringR + 3 + pulse * 2;
-    if (((i + Math.floor(t * 3)) & 1) === 0) r.px(c.x0 + c.cx + Math.round(Math.cos(a) * rr), c.y0 + c.cy + Math.round(Math.sin(a) * rr), pulse > 0.5 ? C.ice : C.waterInk);
-  }
+  for (const g of S.glints) { const k = Math.sin(t * 2.1 + g[0] * 0.7 + g[1] * 1.9); if (k > 0.6) r.px(g[0], g[1], lift(lift(g[2]))); }
+  S.birds.forEach((b) => drawBird(r, Math.round(((b.x + t * b.sp) % (W + 30)) - 15), Math.round(b.y + Math.sin(t * 0.7 + b.ph) * 4), Math.floor(t * 2.5 + b.ph) & 1, C.ink, 2 * sc));
   const f = 0.55 + 0.45 * vnoise(t * 6, 3.3, S.seed + 50);
-  lanternGlow(r, S.lantern.x, S.lantern.y, 14, 5, f * 0.75);
-  r.px(S.lantern.x, S.lantern.y, f > 0.7 ? C.flame : C.lamp);
-  // now and then the sky tears: a flash that lifts the far hills, and a bolt over the left ridge
-  const sp = strikePhase(t, 11, 4.5);
-  if (sp.on > 0) {
-    const flash = sp.on >= 1;
-    if (flash) for (let i = 0; i < r.d.length; i++) if (r.lay[i] <= 2 && bay(i % W, (i / W) | 0) < (sp.on === 2 ? 0.4 : 0.2)) r.d[i] = lift(r.d[i]);
-    if (S.boltIdx !== sp.idx) { S.boltIdx = sp.idx; S.bolt = boltPath(S.seed + sp.idx * 313, W, H, Math.round(W * (0.75 + ((sp.idx * 7) % 10) / 60)), Math.round(H * 0.6)); }
-    if (flash) drawBolt(r, S.bolt, sp.on === 2);
+  lanternGlow(r, S.lantern.x, S.lantern.y, 22, 5, f * 0.85);
+  r.rect(S.lantern.x - 1, S.lantern.y - 1, 3, 3, f > 0.7 ? C.flame : C.lamp);
+  // a glint sweeps across the lettering now and then, as light on carved metal
+  const L = S.logo, u = (t % 5.5) / 5.5;
+  if (u < 0.35) {
+    const pos = (u / 0.35) * (L.w + L.h * 1.2) - L.h;
+    for (const i of L.face) {
+      const d = (i % W - L.x0) - (((i / W) | 0) - L.y0) * 0.7 - pos;
+      if (d > 0 && d < 5) r.d[i] = C.paper;
+      else if (d > -3 && d <= 0) r.d[i] = lift(r.d[i]);
+    }
   }
 }
 
 // ======================================================================================== registry
 const PAINTERS = {
-  ridge: [paintRidge, animRidge], cross: [paintCross, animCross], bothy: [paintBothy, animBothy],
-  gate: [paintGate, animGate], title: [paintTitle, animTitle],
+  ridge: [paintRidge, animScene], bothy: [paintBothy, animBothy], stone: [paintStone, animStone], dawn: [paintDawn, animDawn], title: [paintTitle, animTitle],
 };
 export const PANEL_KINDS = Object.freeze(Object.keys(PAINTERS));
 
 const cache = new Map();
-const cacheKey = (spec, W, H) => `${spec.kind}|${spec.levelIndex | 0}|${spec.seed | 0}|${spec.locked ? 'L' : ''}|${hasProfile(spec.levelIndex | 0) ? 'p' : 'q'}|${W}x${H}`;
+const stemOf = (spec) => `${spec.kind}|${spec.levelIndex | 0}|${spec.seed | 0}|${spec.motif || ''}|${spec.locked ? 'L' : ''}|`;
+const cacheKey = (spec, W, H) => `${stemOf(spec)}${hasProfile(spec.levelIndex | 0) ? 'p' : 'q'}|${W}x${H}`;
 
 /** The cached state of a panel: base raster, work raster, per-panel animation data. */
 export function getPanel(spec, W = PANEL.w, H = PANEL.h) {
@@ -963,7 +912,7 @@ export function getPanel(spec, W = PANEL.w, H = PANEL.h) {
   p = { key, spec, W, H, base, work, S, anim: pair[1], img: null };
   cache.set(key, p);
   // an older version of the same panel (stand-in profile) is dropped once the real one arrives
-  for (const k of [...cache.keys()]) if (k !== key && k.startsWith(`${spec.kind}|${spec.levelIndex | 0}|${spec.seed | 0}|${spec.locked ? 'L' : ''}|`) && k.endsWith(`|${W}x${H}`)) cache.delete(k);
+  for (const k of [...cache.keys()]) if (k !== key && k.startsWith(stemOf(spec)) && k.endsWith(`|${W}x${H}`)) cache.delete(k);
   return p;
 }
 

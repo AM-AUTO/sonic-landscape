@@ -38,6 +38,7 @@ const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; };
 const SCALE = +opt('scale', 3);
 const FX_ONLY = args.includes('--fx-only');
+const PROOF = args.includes('--proof');   // just the art proof: cover, three story panels, the slim HUD (rannoch day and dusk)
 const NO_FX = args.includes('--no-fx');
 const OUT = path.resolve(root, opt('out', 'out'));
 fs.mkdirSync(OUT, { recursive: true });
@@ -64,6 +65,29 @@ const withLevels = (spec) => (levelDefs && spec.ui && !spec.ui.levels ? { ...spe
 const frame = (spec) => page.evaluate(([s, sc]) => window.P.frame(s, sc), [withLevels(spec), SCALE]);
 
 await page.evaluate(() => window.P.initRenderer());
+
+if (PROOF) {
+  await page.evaluate(() => window.P.warmProfiles());
+  const storyUi = (panel, caption, frac = 1, time = 7) => { const len = [...caption].length; return { screen: 'story', time, story: { panel, caption, typed: Math.round(len * frac), count: len, index: 0, total: 1, complete: frac >= 1, t: time } }; };
+  save('proof-title', await frame({ state: null, ui: { screen: 'title', time: 3.0 }, warm: 1 }));
+  save('proof-title-b', await frame({ state: null, ui: { screen: 'title', time: 7.4 }, warm: 1 }));
+  save('proof-story-rannoch', await frame({ state: null, ui: storyUi({ kind: 'ridge', levelIndex: 0 }, STORY.track.rannoch, 1, 9), warm: 1 }));
+  save('proof-story-coe', await frame({ state: null, ui: storyUi({ kind: 'ridge', levelIndex: 2 }, STORY.track.coe, 1, 9), warm: 1 }));
+  save('proof-story-bothy', await frame({ state: null, ui: storyUi({ kind: 'bothy', levelIndex: 0 }, LEVELS[0].fieldNotes[0], 0.7, 4), warm: 1 }));
+  await page.evaluate((w) => window.P.setWorld(w), 'real:0');
+  await page.evaluate(() => window.P.useWorldInRenderer());
+  const poiTypes = await page.evaluate(() => window.P.world().pois.map((p) => p.type));
+  const base = { heading: 0.4, speed: 3.2, at: poiTypes.includes('cairn') ? 'cairn' : poiTypes[0], dx: 5, dy: 4, know: 'demo', chainLit: 1, trail: 'walk' };
+  const chain0 = await page.evaluate(() => window.P.world().gate.chain[0]);
+  save('proof-hud-rannoch-day', await frame({ state: { ...base, tod: 0.3, resonance: [chain0] }, ui: {} }));
+  save('proof-hud-rannoch-dusk', await frame({ state: { ...base, tod: 0.62, resonance: [chain0], resting: true, speed: 0 }, ui: {} }));
+  save('proof-hud-rannoch-day-crop', await cropShot({ state: { ...base, tod: 0.3, resonance: [chain0] }, ui: {} }, 0, 176, 384, 40, 3));
+  save('proof-hud-rannoch-dusk-crop', await cropShot({ state: { ...base, tod: 0.62, resonance: [chain0], resting: true, speed: 0 }, ui: {} }, 0, 176, 384, 40, 3));
+  const pr0 = await page.evaluate(() => window.P.paletteReport());
+  console.log(`palette audit: ${pr0.bad === 0 ? 'OK' : 'FAIL'}  off-palette frames: ${pr0.bad}`);
+  await browser.close(); await srv.close();
+  process.exit(pr0.bad ? 1 : 0);
+}
 
 let worlds = (opt('worlds', '') || '').split(',').filter(Boolean);
 if (FX_ONLY && !worlds.length) worlds = [];
@@ -97,7 +121,7 @@ if (!FX_ONLY) {
   save('title-night', await frame({ state: null, ui: { screen: 'title', time: 11.3 }, warm: 1 }));
   save('title-night-b', await frame({ state: null, ui: { screen: 'title', time: 5.2 }, warm: 1 }));
   for (const [i, it] of introItems(STORY.intro).entries()) save(`story-intro-${i + 1}`, await frame({ state: null, ui: storyUi(it, i === 0 ? 0.55 : 1, 6 + i, i, 3), warm: 1 }));
-  for (const kind of ['ridge', 'cross', 'bothy', 'gate']) save(`story-panel-${kind}`, await frame({ state: null, ui: storyUi({ panel: { kind, levelIndex: 2 }, caption: STORY.track.coe }, 1, 7.4), warm: 1 }));
+  for (const kind of ['ridge', 'bothy', 'stone', 'dawn']) save(`story-panel-${kind}`, await frame({ state: null, ui: storyUi({ panel: { kind, levelIndex: 2 }, caption: STORY.track.coe }, 1, 7.4), warm: 1 }));
   for (const i of [0, 1, 2, 3, 4, 5, 6, 7]) save(`story-track-${LEVELS[i].id}`, await frame({ state: null, ui: storyUi(trackItems(i, STORY.track[LEVELS[i].id])[0], 1, 8.1), warm: 1 }));
   save('story-track-typing', await frame({ state: null, ui: storyUi(trackItems(4, STORY.track.torridon)[0], 0.4, 1.2), warm: 1 }));
   save('story-complete', await frame({ state: null, ui: storyUi(completeItems(3, fmtText(STORY.complete, { n: 4 }))[0], 1, 9.6), warm: 1 }));
