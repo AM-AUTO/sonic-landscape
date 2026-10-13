@@ -16,9 +16,7 @@ import {
   PANEL, TITLE_SCENE, THUMB, PANEL_KINDS, freshBase, paintBase, renderPanel, pixelHash, warmProfile, hasProfile, getProfile,
 } from '../src/render/panels.js';
 import { LAYOUT, captionLines, revealLines } from '../src/render/screens.js';
-import {
-  SCROLL, SCROLL_H, SCROLL_Y, KEYBAR, WINDOW, CELL_H, CHAIN_W, GATE_W, CHEV, RESTING_W, keyBarLayout, scrollTop, accentName,
-} from '../src/render/hud.js';
+import { CELL_H, CHAIN_W, GATE_W, CHEV, keyBoxLayout, restingBox } from '../src/render/hud.js';
 
 const SW = 384, SH = 216;
 const itemOf = (caption, levelIndex = 0) => ({ panel: { kind: 'ridge', levelIndex }, caption });
@@ -283,48 +281,28 @@ test('every track names its signature hue: a palette colour from the red family 
   assert.ok(names.every((n) => typeof n === 'string' && PAL[n]), 'accent is a palette name');
   assert.equal(new Set(names).size, 8);
   assert.deepEqual(names, ['ember', 'rust', 'magenta', 'ice', 'lamp', 'heather', 'rock', 'flame']);
-  assert.equal(accentName({ level: LEVELS[3] }), 'ice');
-  assert.equal(accentName({ world: { level: {} } }), 'magenta');
-  assert.equal(accentName(null), 'magenta');
 });
 
-// ------------------------------------------------------------------ horizon band HUD
-test('HUD band: the key bar fits for chains of 2, 3 and 4 and nothing overlaps', () => {
-  assert.equal(SCROLL_Y + SCROLL_H, SH);
-  const right = WINDOW.right - WINDOW.w;                              // left edge of the window (touch buttons push it further left)
-  const restingLeft = right - 6 - RESTING_W;
+// ------------------------------------------------------------------ floating-box HUD
+test('HUD box: the key bar fits for chains of 2, 3 and 4, floats bottom-left and overlaps nothing', () => {
+  const MINIMAP_LEFT = SW - 48 - 4 - 2;       // frame of the minimap, top right
   for (const n of [2, 3, 4]) {
-    const L = keyBarLayout(n);
-    assert.equal(L.cells.length, n);
-    let x = KEYBAR.x0 - 1;
-    for (const c of [...L.cells, L.gate]) {
-      assert.ok(c.x > x, `cell at ${c.x} starts after ${x}`);
-      assert.equal(c.h, CELL_H);
-      x = c.x + c.w - 1;
+    const B = keyBoxLayout(n);
+    assert.equal(B.cells.length, n);
+    assert.equal(B.h, CELL_H);
+    assert.ok(B.x >= 3 && B.y + B.h < SH, 'floats inside the screen with a margin');
+    let x = B.x;
+    for (const c of [...B.cells, B.gate]) {
+      assert.ok(c.x >= x, `cell at ${c.x} starts after ${x}`);
+      x = c.x + c.w;
     }
-    assert.equal(L.cells[0].x, KEYBAR.x0);
-    assert.equal(L.gate.x - (L.cells[n - 1].x + CHAIN_W), CHEV, 'a chevron gap before the bealach');
-    assert.ok(L.end <= KEYBAR.limit, `${n} cells end at ${L.end}, limit ${KEYBAR.limit}`);
-    assert.ok(L.end < SW / 2 - SCROLL.notch, 'clear of the day block');
-    assert.ok(L.end < restingLeft, 'clear of the resting text');
-    for (const c of [...L.cells, L.gate]) {
-      assert.ok(c.y + c.h <= SH, 'cell inside the screen');
-      for (let cx = c.x; cx < c.x + c.w; cx++) assert.ok(scrollTop(cx) < c.y, `the contour edge (${scrollTop(cx)}) clears the cell top (${c.y}) at x=${cx}`);
-    }
+    assert.equal(B.gate.x - (B.cells[n - 1].x + CHAIN_W), CHEV, 'a chevron gap before the bealach');
+    assert.ok(B.gate.x + GATE_W <= B.x + B.w, 'cells inside the box');
+    assert.ok(B.x + B.w < MINIMAP_LEFT, 'clear of the minimap');
+    assert.ok(B.y > 13 + 60, 'well below the top strip and banners');
+    const rest = restingBox(n);
+    assert.ok(rest.x >= B.x + B.w, `${n}-chain: the resting box (x ${rest.x}) clears the key box (ends ${B.x + B.w})`);
+    assert.ok(rest.x + rest.w < SW - 3, 'resting box inside the screen');
   }
-  assert.equal(CHAIN_W, KEYBAR.labelW);
   assert.ok(GATE_W >= CHAIN_W);
-});
-
-test('HUD band: the contour edge stays within its rows, and the day block and window have room', () => {
-  for (let x = 0; x < SW; x++) { const t = scrollTop(x); assert.ok(t >= SCROLL_Y && t <= SCROLL_Y + SCROLL.wobble, `edge at ${x}: ${t}`); }
-  for (let x = 1; x < SW; x++) assert.ok(Math.abs(scrollTop(x) - scrollTop(x - 1)) <= 1, 'a smooth line');
-  const dayW = measureText(STORY.dayLabel, { font: 'small', spacing: 1 });
-  const numW = measureText('999', {});
-  assert.ok(Math.max(dayW, numW) <= SCROLL.notch * 2 - 4);
-  assert.ok(KEYBAR.y + 10 + 7 <= SH - 1, 'day number fits above the bottom edge');
-  assert.ok(WINDOW.right <= SW - 8 && WINDOW.y > scrollTop(WINDOW.right - WINDOW.w) && WINDOW.y + WINDOW.h <= SH);
-  assert.ok(WINDOW.right - WINDOW.w > SW / 2 + SCROLL.notch + RESTING_W);
-  assert.ok(measureText(HUD.resting, { font: 'small' }) + 12 <= RESTING_W);
-  assert.ok(COMPLETE.prompt && STORY.dayLabel === 'DAY');
 });

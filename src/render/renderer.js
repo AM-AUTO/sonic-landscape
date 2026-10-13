@@ -19,7 +19,7 @@ import { walkerSprite, lanternAnchor, iconSprite, gateSprite, blit, symbolArt, t
 import { createFx } from './fx.js';
 import { drawText } from './font.js';
 import { rect, frame, px, resolveColor, clamp, ditherRect } from './draw.js';
-import { drawHud, STRIP_H, SCROLL_H } from './hud.js';
+import { drawHud, STRIP_H } from './hud.js';
 import { Screens } from './screens.js';
 
 const FLASH_DUR = 0.6;
@@ -113,7 +113,7 @@ export function createRenderer(canvas) {
   function updateCamera(state, dt) {
     const p = state.player, mapPx = R.world.size * CELL_PX;
     const tx = clamp(p.x * CELL_PX - SW / 2, 0, mapPx - SW);
-    const ty = clamp(p.y * CELL_PX - (STRIP_H + (SH - STRIP_H - SCROLL_H) / 2), 0, mapPx - SH);   // centred in the visible map: between the top strip and the scroll
+    const ty = clamp(p.y * CELL_PX - (STRIP_H + (SH - STRIP_H) / 2), 0, mapPx - SH);
     const c = R.cam;
     if (!c.ready) { c.x = tx; c.y = ty; c.ready = true; return; }
     const k = 1 - Math.exp(-Math.max(dt, 0.0001) * 7);

@@ -18,7 +18,7 @@ import {
   TYPE_LABEL, SHORT_LABEL, ARTEFACT_NAMES, TYPE_ROLE, TYPE_NOUN, PHASE_WORD, CONDITION_TAG, ROMAN, allStrings, fmt,
 } from '../src/text.js';
 import {
-  BANNER_BOX, CHAIN_W, GATE_W, DRAIN_W, STRIP_H, RESTING_W, RESTING_LABEL_X, artefactLayout, noteLayout, partialLayout, stripLayout,
+  BANNER_BOX, CHAIN_W, GATE_W, STRIP_H, RESTING_W, RESTING_LABEL_X, artefactLayout, noteLayout, partialLayout, stripLayout,
 } from '../src/render/hud.js';
 import { LAYOUT } from '../src/render/screens.js';
 
@@ -184,21 +184,21 @@ test('fit: artefact banners (level start, key woken, together, bealach stane) fi
 });
 
 test('fit: HUD key bar (short labels, km, seconds, bealach cell)', () => {
-  // scroll layout: a cell is CHAIN_W wide; the label is centred under the icon, and row three holds the km or the seconds bar
+  const textArea = CHAIN_W - 12;                      // label starts 12 px into a 40 px cell
   const bad = [];
   for (const t of POI_TYPES) {
     const s = SHORT_LABEL[t];
     if (s.length > 7) bad.push(`${t}: short label "${s}" is ${s.length} chars (max 7)`);
-    if (measureText(s, small) > CHAIN_W) bad.push(`${t}: "${s}" ${measureText(s, small)}px > ${CHAIN_W}`);
+    if (measureText(s, small) > textArea) bad.push(`${t}: "${s}" ${measureText(s, small)}px > ${textArea}`);
   }
-  if (measureText(HUD.gate, small) > GATE_W) bad.push(`BEALACH ${measureText(HUD.gate, small)}px > ${GATE_W}`);
-  if (measureText(HUD.gateOpen, small) > GATE_W) bad.push('OPEN too wide');
+  if (measureText(HUD.gate, small) > GATE_W - 14) bad.push(`BEALACH ${measureText(HUD.gate, small)}px > ${GATE_W - 14}`);
+  if (measureText(HUD.gateOpen, small) > GATE_W - 3) bad.push('OPEN too wide');
+  // line two sits 10 px into the cell
   for (const s of [HUD.here, fmt(HUD.km, { km: '9.9' }), fmt(HUD.km, { km: '10.2' })]) {
-    if (measureText(s, small) > CHAIN_W) bad.push(`"${s}" overflows the cell`);
-    if (measureText(s, small) > GATE_W) bad.push(`"${s}" overflows the bealach cell`);
+    if (10 + measureText(s, small) > CHAIN_W) bad.push(`"${s}" overflows the cell`);
   }
-  // drain bar: framed bar at +1, label 3 px after it
-  if (1 + DRAIN_W + 1 + 3 + measureText(fmt(HUD.seconds, { n: 90 }), small) > CHAIN_W) bad.push('seconds label overflows the cell');
+  // drain bar: 20 px bar at +1, label 2 px after it
+  if (1 + 20 + 2 + measureText(fmt(HUD.seconds, { n: 90 }), small) > CHAIN_W) bad.push('seconds label overflows the cell');
   assert.deepEqual(bad, []);
 });
 
