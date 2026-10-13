@@ -54,7 +54,7 @@ test('darkness follows the day: none by day, a lot at night, dusk in between; st
   assert.ok(darknessAt(0.875) > 0.99);
   const d = darknessAt(0.625);
   assert.ok(d > 0.5 && d < 0.85, 'dusk ' + d);
-  assert.ok(twilightAt(0.625) === 1 && twilightAt(0.375) === 0 && twilightAt(0.875) < 0.2 && twilightAt(0.125) > 0.5 && twilightAt(0.125) < 1, 'the red hours');
+  assert.ok(twilightAt(0.625) === 1 && twilightAt(0.375) === 0 && twilightAt(0.875) < 0.2 && twilightAt(0.125) > 0.9, 'the red hours');
   assert.equal(effectiveNight(0, 0.375, WEATHER.assynt), 0);
   assert.ok(effectiveNight(0, 0.375, WEATHER.coe) > 0);
   assert.ok(effectiveNight(0, 0.375, WEATHER.coe) < 0.15);

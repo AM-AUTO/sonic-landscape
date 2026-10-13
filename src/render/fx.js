@@ -62,14 +62,14 @@ export const WEATHER_DEFAULT = Object.freeze({ mist: 0.2, cloudline: 0.75, woods
 export function weatherFor(levelId) { return WEATHER[levelId] || WEATHER_DEFAULT; }
 
 /** How dark each phase is (0 = daylight, 1 = full night); blended with the same easing as the tint. */
-export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.72, night: 1 });
+export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.58, night: 1 });
 /** 0..1 darkness for a timeOfDay in [0,1). */
 export function darknessAt(timeOfDay) {
   const { a, b, f } = phaseBlend(timeOfDay);
   return PHASE_DARK[a] + (PHASE_DARK[b] - PHASE_DARK[a]) * f;
 }
 /** How red the dark is (0..1): the red hours at dusk, paler at dawn, a faint heather cast at night, none by day. */
-export const PHASE_TWILIGHT = Object.freeze({ dawn: 0.65, day: 0, dusk: 1, night: 0.12 });
+export const PHASE_TWILIGHT = Object.freeze({ dawn: 1, day: 0, dusk: 1, night: 0.12 });
 export function twilightAt(timeOfDay) {
   const { a, b, f } = phaseBlend(timeOfDay);
   return PHASE_TWILIGHT[a] + (PHASE_TWILIGHT[b] - PHASE_TWILIGHT[a]) * f;
@@ -415,7 +415,7 @@ function makeRamp(anchors) {
 }
 function look(R, k, c, A, B, W) { const i = I[c]; R.A[k][i] = I[A]; R.B[k][i] = I[B]; R.W[k][i] = W; }
 const BLUE = makeRamp([0, 0.5, 0.95]);
-const WARM = makeRamp([0, 0.3, 0.55, 0.8, 1.0]);
+const WARM = makeRamp([0, 0.25, 0.5, 0.75, 1.0]);
 //                  colour        A            B           W
 for (const [c, A, B, W] of [['paper', 'rock', 'dusk', 0.30], ['paper2', 'rock', 'dusk', 0.26], ['snow', 'paper2', 'rock', 0.30],
   ['water', 'waterDeep', 'waterInk', 0.40], ['waterDeep', 'waterDeep', 'waterInk', 0.45], ['wood', 'woodDark', 'wood', 0.30],
@@ -425,24 +425,26 @@ for (const [c, A, B, W] of [['paper', 'night', 'dusk', 0.24], ['paper2', 'night'
   ['woodDark', 'woodDark', 'night', 0.30], ['bog', 'night', 'woodDark', 0.30], ['rock', 'contourIdx', 'night', 0.45],
   ['grid', 'waterInk', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
   ['ink', 'rock', 'rock', 0], ['waterInk', 'waterDeep', 'waterDeep', 0]]) look(BLUE, 1, c, A, B, W);
-// warm stage 1 (anchor .3): red-gold wash
-for (const [c, A, B, W] of [['paper', 'paper2', 'ember', 0.18], ['paper2', 'paper2', 'ember', 0.20], ['snow', 'paper2', 'lamp', 0.22],
-  ['water', 'water', 'heather', 0.20], ['waterDeep', 'waterDeep', 'heather', 0.22], ['wood', 'wood', 'rust', 0.26], ['woodDark', 'woodDark', 'blood', 0.20],
-  ['bog', 'bog', 'rust', 0.30], ['rock', 'rock', 'rust', 0.35], ['grid', 'grid', 'heather', 0.30]]) look(WARM, 0, c, A, B, W);
-// warm stage 2 (anchor .55): ember and rust sinking into heather
-for (const [c, A, B, W] of [['paper', 'rust', 'heather', 0.22], ['paper2', 'rust', 'ember', 0.28], ['snow', 'rust', 'ember', 0.34],
-  ['water', 'heather', 'waterInk', 0.45], ['waterDeep', 'waterInk', 'heather', 0.40], ['wood', 'woodDark', 'heather', 0.35], ['woodDark', 'blood', 'woodDark', 0.40],
-  ['bog', 'rust', 'woodDark', 0.40], ['rock', 'rust', 'rock', 0.40], ['grid', 'heather', 'waterInk', 0.40], ['ink', 'ink', 'rock', 0.5]]) look(WARM, 1, c, A, B, W);
-// warm stage 3 (anchor .8): blood
-for (const [c, A, B, W] of [['paper', 'blood', 'rust', 0.28], ['paper2', 'blood', 'rust', 0.24], ['snow', 'rust', 'blood', 0.50],
-  ['water', 'blood', 'waterInk', 0.32], ['waterDeep', 'waterInk', 'blood', 0.40], ['wood', 'blood', 'woodDark', 0.30], ['woodDark', 'blood', 'woodDark', 0.50],
-  ['bog', 'blood', 'woodDark', 0.40], ['rock', 'blood', 'contourIdx', 0.40], ['grid', 'waterInk', 'blood', 0.40], ['ink', 'rock', 'rock', 0], ['waterInk', 'waterDeep', 'waterDeep', 0]]) look(WARM, 2, c, A, B, W);
-// warm stage 4 (anchor 1.0): night-blue far field with a last breath of blood
-for (const [c, A, B, W] of [['paper', 'night', 'blood', 0.20], ['paper2', 'night', 'blood', 0.18], ['snow', 'dusk', 'night', 0.40],
-  ['water', 'waterInk', 'night', 0.38], ['waterDeep', 'waterDeep', 'waterInk', 0.30], ['wood', 'night', 'woodDark', 0.22],
-  ['woodDark', 'woodDark', 'night', 0.30], ['bog', 'night', 'woodDark', 0.30], ['rock', 'contourIdx', 'night', 0.45],
-  ['grid', 'waterInk', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
-  ['ink', 'rock', 'rock', 0], ['waterInk', 'waterDeep', 'waterDeep', 0]]) look(WARM, 3, c, A, B, W);
+// WARM: painterly. A few big tonal bands (ember gold -> rust -> heather -> blood), each colour keeping one main
+// tone with only a light sprinkle of a second one; blue map ink is pulled into the grade, never left as bright dots.
+// look 1 (anchor .25): ember-gold wash
+for (const [c, A, B, W] of [['paper', 'paper2', 'ember', 0.10], ['paper2', 'paper2', 'ember', 0.12], ['snow', 'paper2', 'lamp', 0.08],
+  ['water', 'water', 'heather', 0.16], ['waterDeep', 'waterDeep', 'heather', 0.22], ['wood', 'wood', 'rust', 0.14], ['woodDark', 'woodDark', 'blood', 0.16],
+  ['bog', 'bog', 'rust', 0.20], ['rock', 'rock', 'rust', 0.18], ['grid', 'heather', 'grid', 0.40], ['waterInk', 'waterInk', 'heather', 0.45]]) look(WARM, 0, c, A, B, W);
+// look 2 (anchor .5): rust
+for (const [c, A, B, W] of [['paper', 'rust', 'ember', 0.10], ['paper2', 'rust', 'ember', 0.12], ['snow', 'rust', 'ember', 0.14],
+  ['water', 'heather', 'rust', 0.14], ['waterDeep', 'heather', 'blood', 0.20], ['wood', 'woodDark', 'rust', 0.20], ['woodDark', 'blood', 'woodDark', 0.30],
+  ['bog', 'rust', 'woodDark', 0.20], ['rock', 'rust', 'blood', 0.20], ['grid', 'heather', 'blood', 0.20], ['waterInk', 'heather', 'rock', 0.18]]) look(WARM, 1, c, A, B, W);
+// look 3 (anchor .75): heather
+for (const [c, A, B, W] of [['paper', 'heather', 'rust', 0.12], ['paper2', 'heather', 'rust', 0.12], ['snow', 'heather', 'rust', 0.10],
+  ['water', 'heather', 'blood', 0.20], ['waterDeep', 'blood', 'heather', 0.30], ['wood', 'blood', 'woodDark', 0.25], ['woodDark', 'blood', 'woodDark', 0.40],
+  ['bog', 'blood', 'heather', 0.20], ['rock', 'heather', 'blood', 0.25], ['grid', 'blood', 'heather', 0.30], ['waterInk', 'rock', 'rock', 0]]) look(WARM, 2, c, A, B, W);
+// look 4 (anchor 1.0): blood sinking to night
+for (const [c, A, B, W] of [['paper', 'blood', 'night', 0.14], ['paper2', 'blood', 'night', 0.12], ['snow', 'heather', 'blood', 0.40],
+  ['water', 'blood', 'heather', 0.20], ['waterDeep', 'blood', 'night', 0.30], ['wood', 'blood', 'night', 0.25],
+  ['woodDark', 'night', 'blood', 0.30], ['bog', 'blood', 'night', 0.25], ['rock', 'blood', 'contourIdx', 0.30],
+  ['grid', 'blood', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
+  ['ink', 'rock', 'rock', 0], ['waterInk', 'rock', 'rock', 0]]) look(WARM, 3, c, A, B, W);
 const LIST32 = Uint32Array.from(Array.from({ length: PAL_COUNT }, (_, i) => U[PAL_NAMES[i]]));
 const B4 = new Float32Array(16);
 for (let i = 0; i < 16; i++) B4[i] = ([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][i] + 0.5) / 16;
@@ -474,20 +476,21 @@ export function paintNightInto(fb, w, h, camX, camY, night, lm, warm = 0) {
   const warm64 = warm * 64;
   for (let y = 0; y < h; y++) {
     const wy = y + camY;
-    const rowB = (wy & 7) << 3, rowW = ((wy + 4) & 7) << 3, row4 = (wy & 3) << 2;
+    const rowB = (wy & 7) << 3, rowW = (((wy >> 2) + 4) & 7) << 3, row4 = (wy & 3) << 2;
+    const wyc = wy >> 1, rowBc = (wyc & 7) << 3, row4c = (wyc & 3) << 2;     // the red hours dither in 2x2 grains: broad and calm
     const row = y * w;
     for (let x = 0; x < w; x++) {
       const l = flat >= 0 ? flat : lm[row + x];
       const wx = x + camX;
-      const useWarm = (BAYER8[rowW | ((wx + 2) & 7)] + 0.5) < warm64 ? 1 : 0;
+      const useWarm = (BAYER8[rowW | (((wx >> 2) + 2) & 7)] + 0.5) < warm64 ? 1 : 0;
       const kind = T_STAGE[useWarm][l];
       if (kind === 0) continue;
       const p = fb[row + x];
       const pi = paletteIndexOf(p);
       if (pi === 255) continue;
       const R = useWarm ? WARM : BLUE;
-      const bt = BAYER8[rowB | (wx & 7)] + 0.5;
-      const m = B4[row4 | (wx & 3)];
+      const bt = useWarm ? BAYER8[rowBc | ((wx >> 1) & 7)] + 0.5 : BAYER8[rowB | (wx & 7)] + 0.5;
+      const m = useWarm ? B4[row4c | ((wx >> 1) & 3)] : B4[row4 | (wx & 3)];
       const up = bt < T_TF[useWarm][l];
       let k = kind - 1;
       // below the first anchor's partner nothing is lit-> dither between the previous look and this one
@@ -743,7 +746,7 @@ export function createFx() {
 
   // ------------------------------------------------------------ paintGround
   const MIST_DAY = [0, U.paper2, U.rock, U.rock, U.dusk];
-  const MIST_TWILIGHT = [0, U.rock, U.rock, 0, 0];          // rose-dun haze in the red hours
+  const MIST_TWILIGHT = [0, U.rock, U.paper2, 0, 0];          // rose-dun haze in the red hours
   const MIST_NIGHT = [0, U.dusk, U.rock, 0, 0];
   fx.paintGround = function paintGround(fb, camX, camY, clock) {
     const night = fx.night;
@@ -775,7 +778,6 @@ export function createFx() {
       const bt = (BAYER8[(((y + camY) & 7) << 3) | ((x + camX) & 7)] + 0.5) * (1 / 64);
       let c;
       if (nl > 0.7 && (nl - 0.7) * 3.4 > bt) c = MIST_NIGHT[l];                  // true night: dusk-violet
-      else if (nl > 0.12 && l === 2 && fx.twilight > bt * 1 && bt < 0.4) c = U.bolt;
       else if (nl > 0.12 && fx.twilight > (BAYER8[(((y + camY + 4) & 7) << 3) | ((x + camX + 2) & 7)] + 0.5) * (1 / 64)) c = MIST_TWILIGHT[l] || MIST_DAY[l];
       else c = MIST_DAY[l];
       if (c) fb[i] = c;
