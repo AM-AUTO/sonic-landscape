@@ -645,7 +645,7 @@ test('gate opens only when ALL chain types resonate at once; latches; gate-open 
   const g = mkGame(gateWorld(['cairn', 'trig']));
   const evs = [];
   run(g, IDLE, 0.1, evs);                       // cairn
-  assert.deepEqual(g.state.chainProgress, [{ type: 'cairn', resonating: true }, { type: 'trig', resonating: false }]);
+  assert.deepEqual(g.state.chainProgress.map((c) => ({ type: c.type, resonating: c.resonating })), [{ type: 'cairn', resonating: true }, { type: 'trig', resonating: false }]);
   assert.equal(g.state.gateOpen, false);
   run(g, IDLE, RESONANCE_SECONDS + 5, evs);     // cairn fades
   assert.deepEqual(g.state.chainProgress.map((c) => c.resonating), [false, false]);
@@ -858,4 +858,276 @@ test('createInput: keys -> normalised state, edge-triggered actions; touch stick
   ptr('pointerup', 156, 450);
   assert.deepEqual(input.state(), { x: 0, y: 0, run: false, rest: false });
   input.dispose();
+});
+
+// ------------------------------------------------------------------ UX pass: knowledge, guidance, trail
+
+const leaveAndReturn = (g, x, y, evs, wait = 6.1) => {
+  teleport(g, x, y + 40); run(g, IDLE, wait, evs);
+  teleport(g, x, y); run(g, IDLE, 0.2, evs);
+};
+const twoKeyPoi = [{ id: 'p', type: 'lochan', name: 'P', x: 100, y: 128, condition: { speed: 'slow', dwell: 100 }, hint: 'poetic' }];
+
+test('knowledge: heard/woken counts; track 0 reveals every missing condition on the first partial', () => {
+  const g = mkGame({ pois: twoKeyPoi, spawn: { x: 100, y: 128 } });
+  const evs = [];
+  run(g, IDLE, 0.2, evs);
+  const e1 = poiEvents(evs)[0];
+  assert.equal(e1.full, false);
+  assert.deepEqual(e1.missing, ['dwell']);                // standing still: speed ok, dwell missing
+  assert.deepEqual(e1.plain, ['Stand still beside it for 100 seconds.']);
+  assert.deepEqual(e1.learnedNow, ['dwell']);
+  assert.equal(e1.inChain, false); assert.equal(e1.keysTotal, 0); assert.equal(e1.keysSounding, 0);
+  assert.deepEqual(g.state.knowledge.p, { heard: 1, woken: false, learned: ['dwell'] });
+  assert.equal(g.state.knowledge, g.progress.knowledge.L0);
+  // arriving fast on a second visit: both keys are missing, speed is newly learned
+  const e2 = [];
+  teleport(g, 60, 128); run(g, IDLE, 6.1);
+  teleport(g, 96, 128);
+  const fast = { x: 1, y: 0, run: true, rest: false };
+  run(g, fast, 1, e2);
+  const pe = poiEvents(e2)[0];
+  assert.ok(pe && !pe.full);
+  assert.deepEqual(pe.missing.sort(), ['dwell', 'speed']);
+  assert.deepEqual(pe.learnedNow, ['speed']);
+  assert.equal(pe.plain.length, 2);
+  assert.equal(g.state.knowledge.p.heard, 2);
+});
+
+test('knowledge: other tracks show poetic hint first, plain text from the second partial', () => {
+  const g = mkGame({ pois: twoKeyPoi, spawn: { x: 100, y: 128 } }, { index: 2 });
+  const evs = [];
+  run(g, IDLE, 0.2, evs);
+  const e1 = poiEvents(evs)[0];
+  assert.equal(e1.hint, 'poetic');
+  assert.deepEqual(e1.plain, []); assert.deepEqual(e1.learnedNow, []);
+  assert.deepEqual(g.state.knowledge.p, { heard: 1, woken: false, learned: [] });
+  const e2 = [];
+  leaveAndReturn(g, 100, 128, e2);
+  const p2 = poiEvents(e2)[0];
+  assert.deepEqual(p2.learnedNow, ['dwell']);
+  assert.deepEqual(p2.plain, ['Stand still beside it for 100 seconds.']);
+  assert.equal(g.state.knowledge.p.heard, 2);
+});
+
+test('knowledge: full trigger sets woken and carries inChain / keysSounding / keysTotal', () => {
+  const pois = [
+    { id: 'a', type: 'cairn', name: 'A', x: 60, y: 128, condition: {} },
+    { id: 'x', type: 'stone', name: 'X', x: 100, y: 128, condition: {} },
+  ];
+  const g = mkGame({ pois, spawn: { x: 60, y: 128 }, gate: { x: 240, y: 128, chain: ['cairn', 'trig'], name: 'G', side: 'E' } });
+  const evs = [];
+  run(g, IDLE, 0.1, evs);
+  const a = poiEvents(evs)[0];
+  assert.equal(a.full, true); assert.equal(a.inChain, true);
+  assert.equal(a.keysTotal, 2); assert.equal(a.keysSounding, 1);
+  assert.deepEqual(a.plain, []); assert.deepEqual(a.learnedNow, []);
+  assert.equal(g.state.knowledge.a.woken, true);
+  const e2 = [];
+  follow(g, [{ x: 100.5, y: 128.5 }], 30, e2);
+  const x = poiEvents(e2)[0];
+  assert.equal(x.inChain, false); assert.equal(x.keysSounding, 1); assert.equal(x.keysTotal, 2);
+});
+
+test('knowledge persists: round trip, old saves without it, garbage is sanitised', () => {
+  const levels = [{ id: 'a' }, { id: 'b' }];
+  const p = createProgress(levels);
+  p.knowledge = { a: { q: { heard: 2, woken: true, learned: ['dwell', 'speed'] } } };
+  const q = deserialize(serialize(p), levels);
+  assert.deepEqual(q.knowledge, p.knowledge);
+  // old save (no knowledge key) loads, and the game works with it
+  const old = deserialize(JSON.stringify({ v: 1, unlocked: ['a'], completed: [], fragments: [], notes: ['n'] }), levels);
+  assert.deepEqual(old.notes, ['n']);
+  assert.ok(!old.knowledge || Object.keys(old.knowledge).length === 0);
+  const g = new Game({ levels: [mkLevel('a', 0, {}), mkLevel('b', 1, {})], progress: old, buildWorld: (lv) => makeTestWorld(lv.world) });
+  g.loadLevel(0);
+  assert.deepEqual(g.state.knowledge, {});
+  // garbage
+  const bad = deserialize(JSON.stringify({ unlocked: ['a'], knowledge: { zzz: { x: {} }, a: { q: { heard: -3, woken: 'yes', learned: [1, 'dwell'] }, r: 5 }, b: 7 } }), levels);
+  assert.deepEqual(bad.knowledge, { a: { q: { heard: 0, woken: false, learned: ['dwell'] } } });
+  assert.doesNotThrow(() => deserialize(JSON.stringify({ knowledge: 'oops' }), levels));
+  assert.doesNotThrow(() => deserialize(JSON.stringify({ knowledge: [1, 2] }), levels));
+  // a game's live knowledge ends up in serialize()
+  const g2 = mkGame({ pois: twoKeyPoi, spawn: { x: 100, y: 128 } });
+  run(g2, IDLE, 0.2);
+  const back = deserialize(serialize(g2.progress), g2.levels);
+  assert.deepEqual(back.knowledge.L0.p, { heard: 1, woken: false, learned: ['dwell'] });
+  // ...and reloading restores it
+  const g3 = new Game({ levels: g2.levels, progress: back, buildWorld: (lv) => makeTestWorld(lv.world) });
+  g3.loadLevel(0);
+  assert.equal(g3.state.knowledge.p.heard, 1);
+});
+
+const bothyGuideWorld = () => ({
+  pois: [
+    { id: 'bo', type: 'bothy', name: 'Bo', x: 100, y: 128, condition: {} },
+    { id: 'la', type: 'lochan', name: 'La', x: 60, y: 128, condition: { speed: 'slow' } },
+    { id: 'lb', type: 'lochan', name: 'Lb', x: 150, y: 128, condition: { speed: 'slow' } },
+    { id: 'cr', type: 'cairn', name: 'Cr', x: 100, y: 200, condition: { approach: 'descending' } },
+  ],
+  gate: { x: 240, y: 128, chain: ['lochan', 'cairn'], name: 'G', side: 'E' },
+  spawn: { x: 100, y: 128 },
+});
+
+test('bothy-guide: targets the nearest un-woken POI of the first silent chain type, then moves on', () => {
+  const g = mkGame(bothyGuideWorld());
+  const evs = [];
+  run(g, IDLE, 0.2, evs);
+  const note = poiEvents(evs)[0];
+  assert.equal(note.full, true); assert.equal(note.note, 'note A');
+  const gd = evs.filter((e) => e.type === 'bothy-guide');
+  assert.equal(gd.length, 1);
+  assert.equal(gd[0].poi.id, 'bo'); assert.equal(gd[0].target.id, 'la');
+  assert.equal(gd[0].text, 'A note pinned by the door: La — approach slowly: hold SPACE as you walk.');
+  assert.deepEqual(g.state.knowledge.la.learned, ['speed']);
+  // order: poi event, then guide
+  assert.ok(evs.indexOf(note) < evs.indexOf(gd[0]));
+  // second visit -> the other lochan, third -> the cairn
+  const e2 = [];
+  leaveAndReturn(g, 100, 128, e2, 20.5);
+  assert.equal(e2.filter((e) => e.type === 'bothy-guide')[0].target.id, 'lb');
+  const e3 = [];
+  leaveAndReturn(g, 100, 128, e3, 20.5);
+  const g3 = e3.filter((e) => e.type === 'bothy-guide')[0];
+  assert.equal(g3.target.id, 'cr');
+  assert.match(g3.text, /^A note pinned by the door: Cr — come down to it from higher ground\.$/);
+  // nothing left to teach -> no event
+  const e4 = [];
+  leaveAndReturn(g, 100, 128, e4, 20.5);
+  assert.equal(e4.filter((e) => e.type === 'bothy-guide').length, 0);
+  assert.equal(poiEvents(e4).length, 1);
+});
+
+test('bothy-guide: skips woken POIs and resonating types; partial bothies guide too', () => {
+  const w = bothyGuideWorld();
+  w.pois[0].condition = { dwell: 100 };               // bothy fires only partially
+  w.pois.push({ id: 'lc', type: 'lochan', name: 'Lc', x: 100, y: 120, condition: {} }); // nearest lochan, but trivially woken first
+  const g = mkGame(w);
+  const evs = [];
+  teleport(g, 100, 120); run(g, IDLE, 0.2, evs);      // wake Lc (lochan now resonating)
+  teleport(g, 100, 128); run(g, IDLE, 0.2, evs);      // bothy: partial
+  const pe = poiEvents(evs).find((e) => e.poi.id === 'bo');
+  assert.equal(pe.full, false);
+  assert.equal(pe.note, 'note A');
+  const gd = evs.filter((e) => e.type === 'bothy-guide');
+  assert.equal(gd.length, 1);
+  assert.equal(gd[0].target.id, 'cr');                // lochan is sounding, so the cairn is next
+});
+
+test('bothy-near: once per bothy within 14 cells, never after it has fired', () => {
+  const pois = [{ id: 'bo', type: 'bothy', name: 'Bo', x: 120, y: 128, condition: {} }];
+  const g = mkGame({ pois, spawn: { x: 20, y: 128 } });
+  const evs = [];
+  run(g, IDLE, 0.2, evs);
+  teleport(g, 100, 128); run(g, IDLE, 0.2, evs);       // 20 cells away
+  assert.equal(evs.filter((e) => e.type === 'bothy-near').length, 0);
+  teleport(g, 108, 128); run(g, IDLE, 0.2, evs);       // 12 cells
+  const bn = evs.filter((e) => e.type === 'bothy-near');
+  assert.equal(bn.length, 1); assert.equal(bn[0].poi.id, 'bo');
+  teleport(g, 20, 128); run(g, IDLE, 0.2, evs);
+  teleport(g, 108, 128); run(g, IDLE, 0.2, evs);
+  assert.equal(evs.filter((e) => e.type === 'bothy-near').length, 1);
+  // a bothy that has already fired never announces itself
+  const g2 = mkGame({ pois, spawn: { x: 120, y: 128 } });
+  const e2 = [];
+  run(g2, IDLE, 0.2, e2);
+  assert.equal(poiEvents(e2).length, 1);
+  assert.equal(e2.filter((e) => e.type === 'bothy-near').length, 0);
+  // ...including from a saved knowledge entry
+  const prog = { unlocked: ['L0'], completed: [], fragments: [], notes: [], knowledge: { L0: { bo: { heard: 0, woken: true, learned: [] } } } };
+  const g3 = new Game({ levels: [mkLevel('L0', 0, { pois, spawn: { x: 110, y: 128 } })], progress: prog, buildWorld: (lv) => makeTestWorld(lv.world) });
+  g3.loadLevel(0);
+  const e3 = [];
+  run(g3, IDLE, 0.2, e3);
+  assert.equal(e3.filter((e) => e.type === 'bothy-near').length, 0);
+});
+
+test('gate-near: within 10 cells; re-arms only after >20 cells away and 30 s', () => {
+  const gate = { x: 240, y: 128, chain: ['cairn', 'lochan'], name: 'G', side: 'E' };
+  const g = mkGame({ gate, spawn: { x: 20, y: 128 } });
+  const evs = [];
+  const count = () => evs.filter((e) => e.type === 'gate-near').length;
+  run(g, IDLE, 0.2, evs);
+  assert.equal(count(), 0);
+  teleport(g, 232, 128); run(g, IDLE, 0.2, evs);
+  assert.equal(count(), 1);
+  const ev = evs.find((e) => e.type === 'gate-near');
+  assert.deepEqual(ev.chain, ['cairn', 'lochan']); assert.equal(ev.open, false);
+  run(g, IDLE, 2, evs);
+  assert.equal(count(), 1);                              // still inside: no repeat
+  teleport(g, 232, 128 - 15); run(g, IDLE, 1, evs);      // 15..17 cells: inside the dead band, never re-arms
+  teleport(g, 232, 128); run(g, IDLE, 0.2, evs);
+  assert.equal(count(), 1);
+  teleport(g, 150, 128); run(g, IDLE, 5, evs);           // >20 away but < 30 s since the event
+  teleport(g, 232, 128); run(g, IDLE, 0.2, evs);
+  assert.equal(count(), 1);
+  teleport(g, 150, 128); run(g, IDLE, 31, evs);          // far and long enough
+  teleport(g, 232, 128); run(g, IDLE, 0.2, evs);
+  assert.equal(count(), 2);
+});
+
+test('gate-near reports open=true once the key sounds', () => {
+  const pois = [{ id: 'a', type: 'cairn', name: 'A', x: 235, y: 100, condition: {} }];
+  const g = mkGame({ pois, gate: { x: 240, y: 128, chain: ['cairn'], name: 'G', side: 'E' }, spawn: { x: 235, y: 100 } });
+  const evs = [];
+  run(g, IDLE, 0.2, evs);
+  assert.equal(g.state.gateOpen, true);
+  teleport(g, 236, 128); run(g, IDLE, 0.2, evs);
+  assert.equal(evs.find((e) => e.type === 'gate-near').open, true);
+});
+
+test('chainProgress: count, nearest (dist/bearing), remaining', () => {
+  const pois = [
+    { id: 'la', type: 'lochan', name: 'La', x: 60, y: 128, condition: { dwell: 100 } },
+    { id: 'lb', type: 'lochan', name: 'Lb', x: 150, y: 128, condition: { dwell: 100 } },
+    { id: 'cr', type: 'cairn', name: 'Cr', x: 20, y: 160, condition: {} },
+  ];
+  const g = mkGame({ pois, gate: { x: 240, y: 128, chain: ['lochan', 'cairn', 'waterfall'], name: 'G', side: 'E' }, spawn: { x: 20, y: 128 } });
+  run(g, IDLE, 0.05);
+  let [lo, ca, wf] = g.state.chainProgress;
+  assert.equal(lo.count, 2); assert.equal(ca.count, 1); assert.equal(wf.count, 0);
+  assert.equal(lo.nearest.poiId, 'la'); assert.equal(lo.nearest.name, 'La');
+  near(lo.nearest.dist, 40, 0.01, 'dist'); near(lo.nearest.bearing, 0, 1e-9, 'bearing');
+  assert.equal(lo.remaining, 0); assert.equal(wf.nearest, null);
+  near(ca.nearest.dist, 32, 0.01); near(ca.nearest.bearing, Math.PI / 2, 1e-9);   // south = +y
+  // nearest follows the player (recomputed within ~10 steps)
+  teleport(g, 148, 128); run(g, IDLE, 0.3);
+  assert.equal(g.state.chainProgress[0].nearest.poiId, 'lb');
+  // remaining counts down from RESONANCE_SECONDS while a type sounds
+  teleport(g, 20, 158); run(g, IDLE, 0.1);
+  ca = g.state.chainProgress[1];
+  assert.equal(ca.resonating, true);
+  near(ca.remaining, RESONANCE_SECONDS, 0.5, 'remaining');
+  run(g, IDLE, 30);
+  near(g.state.chainProgress[1].remaining, RESONANCE_SECONDS - 30.1, 0.5, 'remaining after 30s');
+  run(g, IDLE, RESONANCE_SECONDS);
+  assert.equal(g.state.chainProgress[1].remaining, 0);
+  assert.equal(g.state.chainProgress[1].resonating, false);
+  // resonance entries carry poiId
+  teleport(g, 20, 158); run(g, IDLE, 21); teleport(g, 20, 100); run(g, IDLE, 0.2); teleport(g, 20, 158); run(g, IDLE, 0.2);
+  assert.equal(g.state.resonance[0].poiId, 'cr');
+});
+
+test('trail: first point is the spawn, points >= 1.5 cells apart, capped at 4000, same array', () => {
+  const g = mkGame({});
+  const tr = g.state.trail;
+  assert.equal(tr.length, 1);
+  near(tr[0].x, g.player.x, 1e-9); near(tr[0].y, g.player.y, 1e-9);
+  run(g, IDLE, 1);
+  assert.equal(tr.length, 1);                            // standing still adds nothing
+  run(g, { x: 1, y: 0, run: false, rest: false }, 5);
+  assert.ok(tr.length > 10 && tr.length < 30, 'trail length ' + tr.length);
+  for (let i = 1; i < tr.length; i++) assert.ok(Math.hypot(tr[i].x - tr[i - 1].x, tr[i].y - tr[i - 1].y) >= 1.5 - 1e-9, 'spacing at ' + i);
+  const lastBefore = tr[tr.length - 1];
+  assert.ok(Math.hypot(g.player.x - lastBefore.x, g.player.y - lastBefore.y) < 1.5 + 0.2);
+  // cap
+  while (tr.length < 4000) tr.push({ x: 0, y: 0 });
+  teleport(g, 30, 60);
+  run(g, { x: 1, y: 0, run: false, rest: false }, 3);
+  assert.ok(g.state.trail === tr && tr.length <= 4000, 'length ' + tr.length);
+  const last = tr[tr.length - 1];
+  assert.ok(Math.hypot(g.player.x - last.x, g.player.y - last.y) < 1.7);
+  // a reload gives a fresh trail
+  g.loadLevel(0);
+  assert.equal(g.state.trail.length, 1);
 });

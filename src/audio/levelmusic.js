@@ -109,7 +109,7 @@ const mk = (p) => p;
 export const PROFILES = {
   // ============================================================================ I. Rannoch Moor
   rannoch: mk({
-    id: 'rannoch', loud: 0, title: 'Vast and sparse. Glass bells, long lochan delays.',
+    id: 'rannoch', loud: 0, kitLift: 4.5, title: 'Vast and sparse. Glass bells, long lochan delays.',
     root: 50, modeName: 'dorian', mode: M.dorian, dawn: [0, 2, 3, 6, 7, 9, 10], night: [0, 1, 3, 5, 7, 9, 10],
     bpm: 64, swing: 0.0, phraseBars: 4, nightTempo: 0.9,
     motifOp: 'invert',
@@ -131,7 +131,21 @@ export const PROFILES = {
     texture: { patch: { kind: 'wind', level: 0.5, tone: 0.4, motion: 0.8, fade: 3.5 }, covers: { moor: { level: 0.44, tone: 0.4 }, shallow: { kind: 'water', level: 0.55 } } },
     kit: {
       patch: { level: 0.9, humanize: 0.035, kickDecay: 0.8, kickClick: 0.2, kickSweep: 2.4, snareNoise: 0.6, snareDecay: 0.26, hatBright: 0.85, hatDecay: 0.06, hatOpenDecay: 0.5, crashDecay: 5.5, crashBright: 0.85, rideDecay: 3, tomDecay: 0.55, timpDecay: 4, gongDecay: 11, grainCount: 10, swellLength: 3.2, breathLength: 2.6 },
-      favour: MIX({ shaker: 0.9, click: 1.2, rim: 0.9, kick: 0.7, snare: 0.4, clap: 0.3, hatC: 0.5, hatO: 0.4, ride: 0.5, tomL: 0.8, tomM: 0.6, tomH: 0.4, snap: 0.5, grainBurst: 1.1, metal: 0.4, breath: 1.4 }),
+      favour: MIX({ shaker: 1.1, click: 1.3, rim: 1.0, kick: 0.9, snare: 0.4, brush: 1.0, clap: 0.3, hatC: 0.5, hatO: 0.4, ride: 0.5, tomL: 0.8, tomM: 0.6, tomH: 0.4, snap: 0.5, grainBurst: 1.2, metal: 0.4, breath: 1.5 }),
+      // the moor pulse: a textural, polymetric scatter (n = 16 / 12 / 32 never line up into a loop), soft kick, brushed snare ghosts
+      over: {
+        shaker: { flow: { p: 0.8, k: [5, 7, 9], n: 16, rot: [0, 2, 3] } },
+        click: { flow: { p: 0.6, k: [3, 5], n: 12 } },
+        rim: { flow: { p: 0.6, k: [2, 3], rot: [4, 10] } },
+        kick: { flow: { p: 0.75, k: [2, 3], rot: [0, 10] }, vel: [0.3, 0.52] },
+        grainBurst: { flow: { p: 0.4, k: [1, 2], n: 32 } },
+        breath: { flow: { p: 0.45, k: [1, 2], n: 32 } },
+        hatC: { flow: { p: 0.3, k: [3, 4], rot: [2] } },
+      },
+      extra: [
+        { id: 'brush', h: 'snare', flow: { p: 0.6, k: [2, 3], n: 16, rot: [5, 7, 12] }, swell: { p: 0.6, k: [3, 4], n: 16, rot: [5, 7, 12] }, vel: [0.1, 0.24], tone: 0.15, opts: { decay: 0.34 } },
+      ],
+      spacious: true, flowMul: 0.95,
       crash: { phrase: 0.55, ride: false, swellFill: 1, gong: 0.25, timp: 0.12 },
     },
     fx: {
@@ -469,14 +483,16 @@ export function textureFor(profile, coverKey) {
 /** Kit generator list for a profile: KIT_STD with the level's `over` replacements and `favour` scaling applied. */
 export function kitGens(profile) {
   const over = profile.kit.over || {};
-  return KIT_STD.map((g) => {
-    const o = over[g.h] || {};
+  const list = KIT_STD.concat(profile.kit.extra || []);
+  return list.map((g) => {
+    const o = over[g.id || g.h] || {};
     const out = { ...g };
+    if (o.vel) out.vel = o.vel;
     for (const s of ['ebb', 'flow', 'swell']) {
       if (o[s]) out[s] = { ...(g[s] || {}), ...o[s] };
       else if (g[s]) out[s] = { ...g[s] };
     }
-    out.favour = profile.kit.favour[g.h] ?? 1;
+    out.favour = (profile.kit.favour[g.id || g.h] ?? profile.kit.favour[g.h] ?? 1);
     return out;
   });
 }

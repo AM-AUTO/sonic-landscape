@@ -117,7 +117,9 @@ export class History {
 export class PoiSystem {
   /**
    * @param world  World (uses world.pois)
-   * @param hooks  { onFire(poi, full, event) } optional; may annotate the event (hint/note)
+   * @param hooks  { onFire(poi, full, event), afterFire(poi, full, event, events) } optional.
+   *               onFire runs before the resonance is added (annotate hint/note); afterFire runs after it
+   *               (resonance state is final) and may push further events after the poi event.
    */
   constructor(world, hooks = {}) {
     this.world = world;
@@ -166,6 +168,7 @@ export class PoiSystem {
     if (this.hooks.onFire) this.hooks.onFire(poi, full, ev);
     events.push(ev);
     if (full) this._addResonance(poi, t, events);
+    if (this.hooks.afterFire) this.hooks.afterFire(poi, full, ev, events);
   }
 
   /**

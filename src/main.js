@@ -11,9 +11,10 @@
  * ?fresh=1 ignores saved progress, ?speed=N runs the simulation N× faster.
  */
 import { LEVELS } from './world/levels/index.js';
-import { ARTEFACT_NAMES } from './world/codes.js';
+import { ARTEFACT_NAMES, RESONANCE_SECONDS } from './world/codes.js';
 import { Game } from './game/sim.js';
 import { serialize, deserialize, revealNote } from './game/progression.js';
+import { TYPE_LABEL } from './game/describe.js';
 import { Autopilot, planChainRoute } from './game/autopilot.js';
 import { createInput } from './game/input.js';
 import { createRenderer } from './render/renderer.js';
@@ -35,8 +36,17 @@ function loadProgress() {
     return raw ? deserialize(raw, LEVELS) : null;
   } catch { return null; }
 }
+let lastSave = -1e9;
+let saveTimer = null;
 function saveProgress() {
+  lastSave = performance.now();
   try { localStorage.setItem(SAVE_KEY, serialize(game.progress)); } catch { /* storage unavailable */ }
+}
+/** Debounced save for knowledge changes: at most one write per 2 s, with a trailing write. */
+function saveSoon() {
+  const wait = 2000 - (performance.now() - lastSave);
+  if (wait <= 0) { saveProgress(); return; }
+  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; saveProgress(); }, wait);
 }
 
 const game = new Game({ levels: LEVELS, progress: loadProgress() });
@@ -70,7 +80,7 @@ const ui = {
   screen: 'title',
   selected: 0,
   time: 0,
-  message: '', messageT: 0, messageDur: 4, messageKind: 'note', messageSub: '',
+  message: '', messageT: 0, messageDur: 4, messageKind: 'note', messageSub: '', messageSub2: '',
   items: ['RESUME', 'FIELD NOTES', 'SHEET MAP', 'TRACKLIST'],
   notes: [],
   scroll: 0,
@@ -86,21 +96,22 @@ let lastFrame = null;
 // (the queued lines resume afterwards), so a field note is never lost under an artefact.
 const messageQueue = [];
 function show(m) {
-  ui.message = m.text; ui.messageKind = m.kind; ui.messageSub = m.sub;
+  ui.message = m.text; ui.messageKind = m.kind; ui.messageSub = m.sub; ui.messageSub2 = m.sub2 || '';
   ui.messageDur = m.dur; ui.messageT = m.dur;
 }
-function say(text, { kind = 'note', sub = '', dur = 4.5, now = false } = {}) {
-  const m = { text, kind, sub, dur };
+function say(text, { kind = 'note', sub = '', sub2 = '', dur = 4.5, now = false } = {}) {
+  const m = { text, kind, sub, sub2, dur };
   if (now || ui.messageT <= 0) show(m);
   else messageQueue.push(m);
 }
-function clearMessages() { messageQueue.length = 0; ui.messageT = 0; }
+function clearMessages() { messageQueue.length = 0; ui.messageT = 0; ui.messageSub2 = ''; }
 
 const INTRO = [
   'THE MAP IS THE SCORE. WALK, AND LISTEN.',
   'CLIMB AND THE MELODY CLIMBS. CROSS THE GRID AND THE HARMONY TURNS.',
   'THE SYMBOLS AT THE FOOT OF THE SHEET ARE THE BEALACH\'S KEY. WAKE THEM ALL AT ONCE.',
   'HOLD SPACE TO LISTEN: STAND STILL AND TIME PASSES; WALK AND YOU TREAD SOFTLY.',
+  'BOTHIES (the black huts) KEEP FIELD NOTES. THE ARROWS AT THE FOOT OF THE SHEET POINT TO THE NEAREST OF EACH KEY.',
   'SHIFT: RUN.   M: THE SHEET.   L: FIELD NOTES.',
 ];
 
@@ -146,18 +157,38 @@ function handleEvents(events) {
         if (ev.full) {
           renderer.pulse(p.type);
           renderer.ripple(p.x + 0.5, p.y + 0.5, game.state.t, 'magenta');
-          say(ARTEFACT_NAMES[p.type].toUpperCase(), { kind: 'artefact', sub: p.name || '', dur: 5, now: true });
+          const sub = ev.inChain
+            ? `KEY ${ev.keysSounding}/${ev.keysTotal} SOUNDING · ${RESONANCE_SECONDS}s`
+            : `${p.name || ''} · not part of this bealach's key`;
+          say(ARTEFACT_NAMES[p.type].toUpperCase(), { kind: 'artefact', sub, dur: 5, now: true });
         } else {
           renderer.ripple(p.x + 0.5, p.y + 0.5, game.state.t, 'contour');
-          if (ev.hint) say(ev.hint, { dur: 5, now: !ui.messageT || ui.messageKind !== 'artefact' });
+          say(ARTEFACT_NAMES[p.type].toUpperCase() + ' · UNWOKEN', {
+            kind: 'partial', sub: ev.hint || '', sub2: (ev.plain || []).join(' '),
+            dur: ev.plain && ev.plain.length ? 8 : 5, now: !ui.messageT || ui.messageKind !== 'artefact',
+          });
         }
         if (ev.note) {
           // field note found at a bothy — queued behind the artefact banner
           say('FIELD NOTE: ' + ev.note, { dur: 7 });
           saveProgress();
-        }
+        } else saveSoon();   // knowledge (heard / woken / learned) changed
         break;
       }
+      case 'bothy-guide':
+        say('FIELD NOTE: ' + ev.text, { dur: 8 });
+        saveSoon();
+        break;
+      case 'bothy-near':
+        say('A BOTHY. WALKERS LEAVE NOTES IN BOTHIES.', { dur: 5 });
+        break;
+      case 'gate-near':
+        if (ev.open) say('THE BEALACH IS OPEN. WALK THROUGH.', { dur: 5 });
+        else {
+          say('THE BEALACH STONE READS: ' + ev.chain.map((t) => TYPE_LABEL[t] || t.toUpperCase()).join(' · '),
+            { kind: 'artefact', sub: 'Wake them so they sound together.', dur: 6 });
+        }
+        break;
       case 'chain':
         if (ev.types && ev.types.length >= 2) say('CONCORD', { kind: 'artefact', sub: ev.types.map((t) => ARTEFACT_NAMES[t]).join(' · '), dur: 3.5, now: true });
         break;

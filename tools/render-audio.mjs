@@ -8,6 +8,7 @@
 //                               [--switch | --switch-only]  (also / only run the rannoch -> affric hand-over check; always run on a full album)
 //                               [--tweak 'js']  (diagnostic: run js(audio, score) after setLevel)
 //                               [--stroll]  (diagnostic: walk instead of run between waypoints)
+//                               [--stroll-check]  (only the synthetic flat-walk check: percussion must answer steady walking within 10 s)
 //                               [--idle N]  (diagnostic: stand still for N s from the spawn instead of walking — Eno / Drift check)
 //
 // FAILS (exit 1) if: any NaN; peak > -0.3 dBFS; > 5 % silent 100 ms windows (< -60 dBFS); a full artefact rises < +4 dB RMS
@@ -15,6 +16,9 @@
 // the Drift coda (20 s of standing still after the finale) is above -24 dBFS; assynt's mean RMS is above -22 dBFS; the chroma's
 // top pitch class is outside the level's root triad; (full album) the union parameter-audit dead list is not empty; the level
 // hand-over glitches; a smoothed control (energy / drift / altitude) goes non-finite; or any console error.
+// Also: kit-channel RMS in the flow sections must be within 18 dB of the full-mix RMS on every level (the kit's dry bed channels,
+// scaled by the master gain), and a synthetic steady flat walk must bring the kit in within 10 s, flow within 7 s, and decay to
+// ebb / drift after 15 s of standing (the stroll check; every level, full album or --stroll-check).
 // Also prints the level by section (ebb / flow / swell / while an artefact sounds; targets -26..-30 / ~-20 / ~-15 / -11..-15 peaks).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,12 +37,14 @@ const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : nu
 
 const IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
 const switchOnly = flag('--switch-only');
+const strollOnly = flag('--stroll-check');
 const idleRun = !!val('--idle') || flag('--stems');
-const levels = switchOnly ? [] : (val('--level') ? val('--level').split(',') : IDS);
+const levels = switchOnly || strollOnly ? [] : (val('--level') ? val('--level').split(',') : IDS);
 const seconds = val('--seconds') ? Number(val('--seconds')) : null;
 const tag = val('--tag') ? '.' + val('--tag') : '';                       // file-name suffix for diagnostic renders
 const muteList = val('--mute') ? val('--mute').split(',') : [];             // diagnostic: mute these channels
 const full = levels.length === IDS.length && !flag('--stems');
+const strollIds = strollOnly ? (val('--level') ? val('--level').split(',') : IDS) : (full ? IDS : levels);
 const ALL_CH = ['drone', 'pad', 'bass', 'bell', 'pluck', 'texture', 'kmain', 'kcym', 'ktex', 'ghost', 'lead', 'fore', 'foreB', 'forePad', 'foreLow', 'fmain', 'fcym', 'ftex'];
 const STEMS = {
   drone: ['drone'], texture: ['texture'], pad: ['pad', 'ghost'], bass: ['bass'], melodic: ['bell', 'pluck'], lead: ['lead'],
@@ -138,6 +144,14 @@ try {
       if (r.codaDb !== null && r.codaDb > -24) failures.push(`${id}: Drift coda ${r.codaDb} dBFS (> -24)`);
       if (id === 'assynt' && r.rmsDb > -22) failures.push(`assynt: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
     }
+    {
+      // kit presence: the kit's dry channels vs the mix, over the seconds spent in flow (power means)
+      const fl = [], kl = [];
+      for (const c of r.ctl) { const t = c[0]; if (t < 3 || t >= r.rmsCurve.length - 5 || c[4] !== 'flow' || c[6] > 0) continue; fl.push(r.rmsCurve[t]); kl.push(r.kitCurve[t]); }
+      const pmean = (a) => (a.length ? 10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length) : NaN);
+      r.kitFlow = { n: fl.length, kitDb: +pmean(kl).toFixed(1), mixDb: +pmean(fl).toFixed(1), gap: +(pmean(kl) - pmean(fl)).toFixed(1), hitsPerMin: fl.length ? +((r.kitHitTimes.filter((tt) => r.ctl.some((c) => c[0] === Math.floor(tt) && c[4] === 'flow')).length) / (fl.length / 60)).toFixed(0) : 0 };
+      if (fl.length >= 10 && !(r.kitFlow.gap >= -18)) failures.push(`${id}: kit-channel RMS in flow is ${r.kitFlow.gap} dB re the mix (must be within 18 dB)`);
+    }
     if (!r.chromaInTriad) failures.push(`${id}: chroma top ${r.chromaTop} not in root triad ${r.rootTriad.join('-')}`);
   }
 
@@ -149,6 +163,21 @@ try {
     if (sw.nan) failures.push('switch: NaN');
     if (sw.minAround < -45) failures.push(`switch: silent gap at the level join (${sw.minAround} dB)`);
     if (sw.levelAfter !== 'affric') failures.push('switch: level did not change');
+  }
+
+  // ---- stroll check: steady flat walking must be answered by percussion (every level)
+  if (strollIds.length && !flag('--stems')) {
+    console.log('\nSTROLL CHECK (2 s still, 18 s steady flat walk at moor pace, 22 s still)');
+    console.log('level'.padEnd(10) + '1st hit'.padStart(9) + 'flow at'.padStart(9) + 'hits 4-14'.padStart(11) + 'kit dB'.padStart(8) + 'mix dB'.padStart(8) + '  after standing   what played');
+    for (const id of strollIds) {
+      const r = await page.evaluate((i) => window.renderStroll(i), id);
+      console.log(id.padEnd(10) + String(r.firstHit ?? 'none').padStart(9) + String(r.flowAt ?? 'never').padStart(9) + String(r.hits4to14).padStart(11) + String(r.kitDb).padStart(8) + String(r.mixDb).padStart(8) + `  ${r.endSection} (e ${r.endEnergy})   ` + Object.entries(r.hitNames).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' '));
+      for (const e of r.errors) failures.push(`stroll ${id}: ${e}`);
+      if (r.firstHit === null || r.firstHit > 10) failures.push(`stroll ${id}: first percussion ${r.firstHit} s after walking began (> 10)`);
+      if (r.flowAt === null || r.flowAt > 7) failures.push(`stroll ${id}: flow reached ${r.flowAt} s after walking began (> 7)`);
+      if (r.hits4to14 < 8) failures.push(`stroll ${id}: only ${r.hits4to14} percussion hits in seconds 4-14 of steady walking (< 8)`);
+      if (r.endSection === 'flow' || r.endSection === 'swell') failures.push(`stroll ${id}: still ${r.endSection} 20 s after stopping (should decay to ebb / drift)`);
+    }
   }
 
   // ---- summary
@@ -170,6 +199,10 @@ try {
     const pm = (a) => (a.length ? (10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length)).toFixed(1) + ' [' + a.length + ']' : 'n/a');
     console.log(r.id.padEnd(10) + pm(b.ebb).padStart(14) + pm(b.flow).padStart(14) + pm(b.swell).padStart(14) + pm(b.art).padStart(14) + Math.max(...r.rmsCurve.slice(3, r.rmsCurve.length - 5)).toFixed(1).padStart(10));
   }
+
+  console.log('\nKIT PRESENCE IN FLOW (dBFS, power-mean of the flow seconds; bed hits per flow minute)');
+  console.log('level'.padEnd(10) + 'kit'.padStart(8) + 'mix'.padStart(8) + 'gap'.padStart(8) + 'sec'.padStart(6) + 'hits/min'.padStart(10));
+  for (const r of results) console.log(r.id.padEnd(10) + String(r.kitFlow.kitDb).padStart(8) + String(r.kitFlow.mixDb).padStart(8) + String(r.kitFlow.gap).padStart(8) + String(r.kitFlow.n).padStart(6) + String(r.kitFlow.hitsPerMin).padStart(10));
 
   // ---- audit (union over levels)
   const merged = {};

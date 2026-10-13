@@ -37,6 +37,7 @@ function bedCurveDb(e) {
   }
   return 0;
 }
+const KIT_BED = new Set(['kmain', 'kcym', 'ktex']);
 const BUDGET_RATE = 30, BUDGET_MAX = 80;
 const HIT_COST = { kick: 15, snare: 22, rim: 9, clap: 16, hatC: 12, hatO: 14, ride: 18, crash: 20, tomL: 12, tomM: 12, tomH: 12, timp: 18, gong: 40, click: 7, snap: 9, grainBurst: 35, breath: 7, reverseSwell: 12, metal: 10, shaker: 6 };
 const STRUCTURAL = new Set(['crash', 'gong', 'timp', 'reverseSwell']);          // always sound
@@ -574,24 +575,34 @@ export class Score {
 
   // -------- ground sounds
   _footstep(ev, now) {
-    if (this.C.d > 0.3 || this.cond.section === 'ebb') return;
+    // the walker drums the land: steps are quantised onto the 16th grid and become soft, cover-coloured hits (subtle, scaled by momentum)
+    const C = this.C;
+    if (C.d > 0.3 || (this.cond.section === 'ebb' && C.m < 0.35)) return;
     if (now - this.lastFootT < 0.2) return;
     this._stepN = (this._stepN || 0) + 1;
-    if (this._stepN % 3 !== 0) return;                                  // every third step: a trace of ground, not a metronome
+    const run = C.v > 0.6;
+    if (this._stepN % 2 !== 0) return;                                  // every other step: a trace of ground, not a metronome
     this.lastFootT = now;
     const ck = this.cov.key;
-    const run = this.C.v > 0.6;
-    if (ev.foot === 1 && (run || this.rng.chance(0.5))) return;      // thin the steps: mostly the left foot
+    if (ev.foot === 1 && (run || this.rng.chance(0.4))) return;      // thin the steps: mostly the left foot
     const q = this.cond.quantise(now + 0.01);
-    const t = (q.t - now) < 0.04 ? q.t : now + 0.01;
-    const vel = 0.06 + 0.06 * this.C.v + 0.03 * this.rng.float();
+    if (q.step === this._lastFootStep) return;                         // one foot hit per 16th
+    this._lastFootStep = q.step;
+    const t = (q.t - now) < 0.1 ? q.t : now + 0.01;
+    const vel = (0.09 + 0.08 * C.v + 0.03 * this.rng.float()) * (0.55 + 0.6 * C.m);
+    const pan = ev.foot ? 0.25 : -0.25;
     if (ck === 'scree' || ck === 'snow') {
-      this.hit('snap', t, vel * 1.4, { tone: ck === 'snow' ? 0.8 : 0.35, decay: 0.01 + 0.008 * this.rng.float(), pitch: ck === 'snow' ? 1.3 : 0.9 });
+      this.hit('snap', t, vel * 1.4, { tone: ck === 'snow' ? 0.8 : 0.35, decay: 0.01 + 0.008 * this.rng.float(), pitch: ck === 'snow' ? 1.3 : 0.9, pan });
     } else if (ck === 'shallow' || ck === 'deep') {
-      this.hit('shaker', t, vel * 1.5, { tone: 0.8, decay: 0.05 + 0.04 * this.rng.float(), pan: ev.foot ? 0.3 : -0.3 });
+      this.hit('shaker', t, vel * 1.5, { tone: 0.8, decay: 0.05 + 0.04 * this.rng.float(), pan });
+    } else if (ck === 'rock' || ck === 'crag') {
+      this.hit('metal', t, vel * 0.5, { midi: this.midi(this.rng.int(0, 4), 24), decay: 0.12 + 0.1 * this.rng.float(), pan });
+    } else if (ck === 'path') {
+      this.hit('rim', t, vel * 0.7, { pitch: 1.1 + 0.2 * this.rng.float(), pan });
     } else {
-      const tone = ck === 'path' ? 0.6 : ck === 'wood' ? 0.45 : ck === 'bog' ? 0.08 : 0.22;
-      this.hit('click', t, vel, { tone: tone + 0.1 * this.rng.float(), pan: ev.foot ? 0.2 : -0.2 });
+      const tone = ck === 'wood' ? 0.45 : ck === 'bog' ? 0.08 : 0.22;
+      this.hit('click', t, vel, { tone: tone + 0.1 * this.rng.float(), pan });
+      if (ck === 'wood' && this.rng.chance(0.25)) this.hit('shaker', t + this.cond.stepDur * 0.5, vel * 0.8, { tone: 0.6, decay: 0.05, pan: -pan });
     }
     this.stats.footsteps++;
   }
@@ -690,11 +701,12 @@ export class Score {
     const A = this.art.cached;
     const pulse = clamp(1 - C.d, 0, 1) * (this.art.pulseHold ? 0 : 1);
 
-    // ---- percussion
-    if (pulse > 0.06) this._kitStep(s, pulse);
+    // ---- percussion (the kit wakes with the walker's momentum, a little before the conductor's section catches up)
+    const effSec = this._effSection(sec);
+    if (pulse > 0.06) this._kitStep(s, pulse, effSec);
 
     // ---- bass
-    if (sec !== 'ebb' && pulse > 0.3) this._bassStep(s);
+    if (effSec !== 'ebb' && pulse > 0.3) this._bassStep(s);
 
     // ---- pad breathing: re-articulate the chord each phrase so the harmony never goes silent
     const sparse = sec === 'ebb' || C.d > 0.3;                      // ebb / drift: the pad swells and ebbs away instead of holding
@@ -740,8 +752,16 @@ export class Score {
     if (s.isPhraseStart && s.phrase % 4 === 3 && sec !== 'swell' && rng.chance(0.25 + 0.4 * C.d)) this._quoteMotif(s);
   }
 
-  _kitStep(s, pulse) {
-    const C = this.C, rng = this.rng, sec = s.section, sd = s.sd;
+  _effSection(sec) {
+    return (sec === 'ebb' && this.C.m > 0.4 && this.C.d < 0.3) ? 'flow' : sec;
+  }
+
+  _kitStep(s, pulse, sec = s.section) {
+    const C = this.C, rng = this.rng, sd = s.sd;
+    const prof = this.profile;
+    // spacious profiles let each phrase breathe: the last bar thins out
+    const bp = prof.kit.spacious ? [1, 0.85, 1, 0.55][s.barInPhrase % 4] : 1;
+    const flowMul = (prof.kit.flowMul ?? 0.65) * (0.85 + 0.3 * C.m) * bp;
     const eN = this.terraced ? (C.e < 0.33 ? 0.2 : C.e < 0.66 ? 0.5 : 0.85) : C.e;
     const dens = 0.45 + 0.9 * eN;
     const running = C.v > 0.62;
@@ -759,7 +779,7 @@ export class Score {
         continue;
       }
       if (spec.hats && !running && (s.i16 & 1)) continue;                     // running doubles the hat grid
-      p = cfg.p * spec.favour * dens * (sec === 'swell' ? 1 : sec === 'flow' ? 0.5 : 0.45);
+      p = cfg.p * spec.favour * dens * (sec === 'swell' ? 1 : sec === 'flow' ? flowMul : 0.45);
       if (spec.slope) p *= 1 + spec.slope * (C.s * 1.6 - 0.3);
       if (spec.speed) p *= 1 + spec.speed * (C.v - 0.4);
       if (spec.scree) p *= 1 + spec.scree * C.scree * 1.5 * (1 + C.slide);
@@ -780,7 +800,7 @@ export class Score {
     if (s.i16 === 0 && h === 'kick') vel = Math.min(1, vel * 1.15);
     const loud = h === 'kick' || h === 'tomL' || h === 'tomM' || h === 'tomH';
     const t = this.at(humanise(s.t, sd, rng, loud ? 0.012 : 0.04, this.now));
-    const o = {};
+    const o = spec.opts ? { ...spec.opts } : {};
     if (spec.tone === 'rand') o.tone = rng.float(); else if (typeof spec.tone === 'number') o.tone = clamp(spec.tone + 0.2 * (rng.float() - 0.5), 0, 1);
     if (h === 'hatC' || h === 'hatO' || h === 'shaker' || h === 'click' || h === 'rim') o.pan = (rng.float() * 2 - 1) * 0.5;
     if (h === 'hatC') o.decay = this.P.kit.hatDecay * (0.7 + 0.8 * rng.float());
@@ -803,8 +823,13 @@ export class Score {
       if (rng.chance(cr.phrase)) this.hit('crash', t, 0.5 + 0.25 * rng.float(), { tone: 0.55, decay: this.P.kit.crashDecay * (0.8 + 0.4 * rng.float()) });
       if (rng.chance(cr.gong * 0.5)) this.hit('gong', t, 0.4, { midi: this.rootNow() - 12 + (rng.chance(0.3) ? 7 : 0), decay: 9 + 4 * rng.float() });
       if (rng.chance(cr.timp * 0.5)) this.hit('timp', t, 0.6, { midi: this.rootNow() - 12 });
-    } else if (sec === 'flow' && pulse > 0.3 && rng.chance(cr.phrase * 0.18)) {
-      this.hit('crash', t, 0.26, { tone: 0.4, decay: this.P.kit.crashDecay * 0.7 });
+    } else if ((sec === 'flow' || (sec === 'ebb' && this.C.m > 0.4)) && pulse > 0.3) {
+      if (rng.chance(cr.phrase * (0.18 + 0.35 * this.C.m))) this.hit('crash', t, 0.26 + 0.06 * this.C.m, { tone: 0.4, decay: this.P.kit.crashDecay * 0.7 });
+      // a quiet wash every other phrase: the moor exhales
+      if (s.phrase % 2 === 1 && rng.chance(0.5 + 0.3 * this.C.m)) {
+        if (cr.ride) this.hit('ride', t, 0.2, { tone: 0.35 });
+        else if (t - this.cond.barDur * 0.5 > this.now + 0.05) this.hit('reverseSwell', t - this.cond.barDur * 0.5, 0.3, { length: this.cond.barDur * 0.5, tone: 0.4 });
+      }
     }
   }
 
@@ -913,6 +938,8 @@ export class Score {
 
     // --- channels: all ten parameters, baseline from the level's colouring
     const bedMul = Math.pow(10, ((prof.bedDb || 0) + bedCurveDb(C.e)) / 20);
+    // the kit's own presence: momentum lifts it back out of the flow section's bed pull-down
+    const kitLift = Math.pow(10, ((prof.kitLift ?? 2.5) * C.m * (1 - C.d) * (1 - C.sw)) / 20);
     // front channels (lead, resonance echoes, the concord pad, artefact bodies) step back while the land is quiet and no
     // artefact sounds, and a little more in drift: the 'calm' is what makes an artefact's arrival an event
     const calmDb = this.art.activeCount ? 0 : -6.5 * (1 - smoothstep(C.e / 0.5)) - 3 * C.d;
@@ -920,7 +947,8 @@ export class Score {
     const leadMul = frontMul;
     for (const name of CHANNEL_NAMES) {
       const o = applyChannelMods(channelTarget(name, this.base[name], C, prof), name, A);
-      if (bedMul !== 1 && !FRONT_CHANNELS.includes(name)) o.gain *= bedMul;
+      if (kitLift !== 1 && KIT_BED.has(name)) o.gain *= bedMul * kitLift;
+      else if (bedMul !== 1 && !FRONT_CHANNELS.includes(name)) o.gain *= bedMul;
       else if (name === 'lead') o.gain *= leadMul;
       else if (frontMul !== 1) o.gain *= frontMul;
       if (this.mute && this.mute.has(name)) o.gain = 0;

@@ -2,12 +2,13 @@
  * Game simulation. Pure JS, no DOM. Fixed-step: call step(input, 1/60).
  * See docs/CONTRACTS.md section 2 for GameState / Event shapes; deviations are noted inline.
  */
-import { GRID_CELLS, DAY_SECONDS, dayPhase } from '../world/codes.js';
+import { GRID_CELLS, DAY_SECONDS, RESONANCE_SECONDS, dayPhase } from '../world/codes.js';
 import { createPlayer, stepPlayer } from './player.js';
-import { PoiSystem, centre } from './pois.js';
+import { PoiSystem, centre, conditionKeys } from './pois.js';
 import {
-  normalizeProgress, revealNote, completeLevel, chainProgress, chainSatisfied, gateCentre, GATE_RADIUS,
+  normalizeProgress, revealNote, completeLevel, chainProgress, chainSatisfied, gateCentre, GATE_RADIUS, knowledgeFor,
 } from './progression.js';
+import { describeCondition } from './describe.js';
 
 // The world builder is written by another module; load it lazily so this file (and the tests that
 // inject their own buildWorld) still load while terrain.js is missing or broken.
@@ -19,8 +20,16 @@ try {
 
 export const REST_TIME_MULT = 8;
 export const START_TIME = 0.05;
+export const TRAIL_SPACING = 1.5;    // cells between trail points
+export const TRAIL_CAP = 4000;
+export const BOTHY_NEAR_RADIUS = 14;
+export const GATE_NEAR_RADIUS = 10;
+export const GATE_REARM_DIST = 20;
+export const GATE_REARM_SECONDS = 30;
+const NEAREST_EVERY = 10;            // steps between nearest-per-chain-type recomputes
 const ZERO_INPUT = Object.freeze({ x: 0, y: 0, run: false, rest: false });
 
+const conditionKeysOf = (poi) => conditionKeys(poi.condition);
 const mod = (n, m) => ((n % m) + m) % m;
 
 export class Game {
@@ -38,6 +47,13 @@ export class Game {
     this._gateCell = { x: -1, y: -1 };
     this._gateLatched = false;
     this._onFire = (poi, full, ev) => this._handleFire(poi, full, ev);
+    this._afterFire = (poi, full, ev, events) => this._handleAfterFire(poi, full, ev, events);
+    this._knowledge = {};
+    this._chainIdx = [];
+    this._bothyIdx = [];
+    this._bothyNear = new Set();
+    this._gateArmed = true; this._gateNearT = -1e9;
+    this._stepN = 0;
   }
 
   _passable(cx, cy) {
@@ -48,6 +64,71 @@ export class Game {
   _handleFire(poi, full, ev) {
     if (poi.type === 'bothy') ev.note = revealNote(this.progress, this.level);
     if (!full && poi.hint) ev.hint = poi.hint;
+  }
+
+  _chainTypes() { return (this.world && this.world.gate && this.world.gate.chain) || []; }
+
+  _keysSounding() {
+    const chain = this._chainTypes();
+    let n = 0;
+    for (let i = 0; i < chain.length; i++) if (this.pois.isResonating(chain[i])) n++;
+    return n;
+  }
+
+  /** Knowledge bookkeeping, graduated reveal and bothy guidance. Runs once the resonance is final. */
+  _handleAfterFire(poi, full, ev, events) {
+    const k = this._knowledge;
+    const e = k[poi.id] || (k[poi.id] = { heard: 0, woken: false, learned: [] });
+    const chain = this._chainTypes();
+    ev.inChain = chain.includes(poi.type);
+    ev.keysTotal = chain.length;
+    ev.keysSounding = this._keysSounding();
+    ev.plain = [];
+    ev.learnedNow = [];
+    if (full) {
+      e.woken = true;
+    } else {
+      e.heard++;
+      const reveal = this.level.index === 0 || e.heard >= 2;
+      if (reveal) {
+        for (const key of ev.missing) {
+          if (!e.learned.includes(key)) { e.learned.push(key); ev.learnedNow.push(key); }
+        }
+      }
+      for (const key of ev.missing) {
+        if (e.learned.includes(key)) ev.plain.push(describeCondition(key, poi.condition, this.level));
+      }
+    }
+    if (poi.type === 'bothy') this._bothyGuide(poi, events);
+  }
+
+  /** A bothy note points at one unlearned condition of the nearest un-woken POI of the first silent key. */
+  _bothyGuide(bothy, events) {
+    const chain = this._chainTypes();
+    const pl = this.player, pois = this.pois.pois, pc = this.pois.centres, k = this._knowledge;
+    for (let ci = 0; ci < chain.length; ci++) {
+      const type = chain[ci];
+      if (this.pois.isResonating(type)) continue;
+      let best = -1, bestD = Infinity, bestKey = null;
+      for (let i = 0; i < pois.length; i++) {
+        const p = pois[i];
+        if (p.type !== type) continue;
+        const e = k[p.id];
+        if (e && e.woken) continue;
+        const key = conditionKeysOf(p).find((kk) => !e || !e.learned.includes(kk));
+        if (!key) continue;
+        const d = Math.hypot(pl.x - pc[i].x, pl.y - pc[i].y);
+        if (d < bestD) { bestD = d; best = i; bestKey = key; }
+      }
+      if (best < 0) continue;
+      const target = pois[best];
+      const e = k[target.id] || (k[target.id] = { heard: 0, woken: false, learned: [] });
+      e.learned.push(bestKey);
+      const plain = describeCondition(bestKey, target.condition, this.level);
+      const text = `A note pinned by the door: ${target.name || target.id} — ${plain.charAt(0).toLowerCase()}${plain.slice(1)}`;
+      events.push({ type: 'bothy-guide', poi: bothy, target, key: bestKey, text });
+      return;
+    }
   }
 
   loadLevel(index) {
@@ -72,7 +153,18 @@ export class Game {
     p.contourIndex = Math.floor(p.elevation / world.contourInterval);
     this.player = p;
 
-    this.pois = new PoiSystem(world, { onFire: this._onFire });
+    this._knowledge = knowledgeFor(this.progress, level.id);
+    this.pois = new PoiSystem(world, { onFire: this._onFire, afterFire: this._afterFire });
+    this._chainIdx = this._chainTypes().map((type) => {
+      const idx = [];
+      this.pois.pois.forEach((q, i) => { if (q.type === type) idx.push(i); });
+      return idx;
+    });
+    this._bothyIdx = [];
+    this.pois.pois.forEach((q, i) => { if (q.type === 'bothy') this._bothyIdx.push(i); });
+    this._bothyNear = new Set();
+    this._gateArmed = true; this._gateNearT = -1e9;
+    this._stepN = 0;
     this._gx = Math.floor(p.x / GRID_CELLS);
     this._gy = Math.floor(p.y / GRID_CELLS);
     const tod = level.startTime ?? START_TIME;
@@ -87,12 +179,44 @@ export class Game {
       resonance: this.pois.resonance,
       gateOpen: false,
       chainProgress: chainProgress(g, (type) => this.pois.isResonating(type)),
+      knowledge: this._knowledge,
+      trail: [{ x: p.x, y: p.y }],
       fragments: this.progress.fragments,
       discovered: this.pois.discovered,
       levelComplete: false,
     };
+    this._updateChainExtras(true);
     this._refreshProximity();
     return this.state;
+  }
+
+  /** remaining/count every call (cheap); nearest only every NEAREST_EVERY steps (or when forced). */
+  _updateChainExtras(force) {
+    const cp = this.state.chainProgress, res = this.pois.resonance, p = this.player, pc = this.pois.centres, pois = this.pois.pois;
+    const doNearest = force || this._stepN % NEAREST_EVERY === 0;
+    for (let i = 0; i < cp.length; i++) {
+      const c = cp[i];
+      let rem = 0;
+      for (let r = 0; r < res.length; r++) {
+        if (res[r].type === c.type) { const v = res[r].strength * RESONANCE_SECONDS; if (v > rem) rem = v; }
+      }
+      c.remaining = rem;
+      const idx = this._chainIdx[i];
+      c.count = idx.length;
+      if (!doNearest) continue;
+      let best = -1, bestD = Infinity;
+      for (let j = 0; j < idx.length; j++) {
+        const q = pc[idx[j]];
+        const d = Math.hypot(q.x - p.x, q.y - p.y);
+        if (d < bestD) { bestD = d; best = idx[j]; }
+      }
+      if (best < 0) { c.nearest = null; continue; }
+      const q = pc[best];
+      let n = c.nearest;
+      if (!n) n = c.nearest = { poiId: '', name: '', x: 0, y: 0, dist: 0, bearing: 0 };
+      n.poiId = pois[best].id; n.name = pois[best].name || pois[best].id;
+      n.x = q.x; n.y = q.y; n.dist = bestD; n.bearing = Math.atan2(q.y - p.y, q.x - p.x);
+    }
   }
 
   _refreshProximity() {
@@ -173,7 +297,9 @@ export class Game {
 
     // --- gate chain
     const cp = s.chainProgress;
+    this._stepN++;
     for (let i = 0; i < cp.length; i++) cp[i].resonating = this.pois.isResonating(cp[i].type);
+    this._updateChainExtras(false);
     if (!this._gateLatched && chainSatisfied(cp)) {
       this._gateLatched = true;
       s.gateOpen = true;
@@ -186,6 +312,35 @@ export class Game {
         completeLevel(this.progress, this.levels, this.levelIndex);
         events.push({ type: 'level-complete', levelId: this.level.id });
       }
+    }
+
+    // --- walked route
+    const tr = s.trail, last = tr[tr.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= TRAIL_SPACING) {
+      if (tr.length >= TRAIL_CAP) tr.splice(0, 100);
+      tr.push({ x: p.x, y: p.y });
+    }
+
+    // --- proximity hints: bothies and the gate
+    for (let b = 0; b < this._bothyIdx.length; b++) {
+      const i = this._bothyIdx[b], bp = this.pois.pois[i];
+      if (this._bothyNear.has(bp.id)) continue;
+      const kn = this._knowledge[bp.id];
+      if (kn && (kn.woken || kn.heard > 0)) { this._bothyNear.add(bp.id); continue; }
+      const c = this.pois.centres[i];
+      if (Math.hypot(p.x - c.x, p.y - c.y) <= BOTHY_NEAR_RADIUS) {
+        this._bothyNear.add(bp.id);
+        events.push({ type: 'bothy-near', poi: bp });
+      }
+    }
+    if (world.gate && this._chainTypes().length) {
+      const gc = gateCentre(world.gate), gd = Math.hypot(p.x - gc.x, p.y - gc.y);
+      if (this._gateArmed) {
+        if (gd <= GATE_NEAR_RADIUS) {
+          this._gateArmed = false; this._gateNearT = s.t;
+          events.push({ type: 'gate-near', chain: this._chainTypes().slice(), open: s.gateOpen });
+        }
+      } else if (gd > GATE_REARM_DIST && s.t - this._gateNearT >= GATE_REARM_SECONDS) this._gateArmed = true;
     }
 
     this._refreshProximity();

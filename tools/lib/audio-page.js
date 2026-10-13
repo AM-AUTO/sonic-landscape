@@ -123,6 +123,28 @@ function chroma(ch, sr) {
   return Array.from(acc, (v) => (sum ? v / sum : 0));
 }
 
+
+/**
+ * Kit tap: the dry output of the three bed kit channels (kmain / kcym / ktex, post-fader, pre-send) is summed, scaled by the
+ * master final gain (so it is on the same footing as the stereo mix) and written to channels 2-3 of a 4-channel offline
+ * destination. The stereo master on channels 0-1 is untouched. Reverb / delay returns are not included (a conservative reading).
+ * Also logs every bed kit hit that actually sounded ([time, name]).
+ */
+function attachKitTap(ctx, audio) {
+  const st = audio.score.stage;
+  const tap = new GainNode(ctx, { gain: 0.8 });
+  for (const n of ['kmain', 'kcym', 'ktex']) st.ch[n].output.connect(tap);
+  const merger = new ChannelMergerNode(ctx, { numberOfInputs: 4 });
+  tap.connect(merger, 0, 2); tap.connect(merger, 0, 3);
+  merger.connect(ctx.destination);
+  const hitLog = [];
+  const kit = st.v.kit, orig = kit.hit.bind(kit);
+  kit.hit = (name, t, ...rest) => { hitLog.push([+(+t).toFixed(3), name]); return orig(name, t, ...rest); };
+  return { tap, hitLog, sync: () => { tap.gain.value = Math.max(0, audio.score.gainNow || 0); } };
+}
+
+const powMean = (a) => (a.length ? 10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length) : -120);
+
 window.renderLevel = async function renderLevel(id, opts = {}) {
   const idx = LEVELS.findIndex((l) => l.id === id);
   if (idx < 0) throw new Error('unknown level ' + id);
@@ -133,9 +155,10 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   const { game, buckets } = ps;
   const lastBucket = buckets.length - 1;
   const duration = lastBucket * UPDATE + TAIL;
-  const ctx = new OfflineAudioContext(2, Math.ceil(duration * SR), SR);
+  const ctx = new OfflineAudioContext(4, Math.ceil(duration * SR), SR);
   const audio = await createAudio(ctx, { seed: game.level.seed });
   audio.setLevel(game.level);
+  const kitTap = attachKitTap(ctx, audio);
   if (opts.mute && opts.mute.length) audio.score.mute = new Set(opts.mute);
   if (opts.tweak) new Function('audio', 'score', opts.tweak)(audio, audio.score);          // diagnostic hook (--tweak 'js')
   const quantum = 128 / SR;
@@ -150,6 +173,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     const u0 = performance.now();
     try {
       audio.update(buckets[k]);
+      kitTap.sync();
     } catch (e) { errors.push(`update ${k}: ${e && e.stack ? e.stack : e}`); }
     const du = performance.now() - u0; upd.n++; upd.sum += du; if (du > upd.max) upd.max = du;
     if (du > 25) upd.slow.push([+(k * UPDATE).toFixed(2), Math.round(du), buckets[k].events.map((e) => e.type).filter((x) => x !== 'step' && x !== 'cover').join('+')]);
@@ -179,6 +203,9 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   const total = analyse(channels, SR, 0, buf.duration);
   const perSec = [];
   for (let s = 0; s < Math.floor(buf.duration); s++) perSec.push(+analyse(channels, SR, s, s + 1).rmsDb.toFixed(2));
+  const kitCh = [buf.getChannelData(2)];
+  const kitCurve = [];
+  for (let s = 0; s < Math.floor(buf.duration); s++) kitCurve.push(+analyse(kitCh, SR, s, s + 1).rmsDb.toFixed(2));
   // silent 100 ms windows
   const w100 = Math.floor(0.1 * SR);
   let silent = 0, wins = 0;
@@ -241,7 +268,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     wrongApproach: ps.wrong, planWarnings: ps.warnings, renderMs: Math.round(renderMs),
     peakDb: +total.peakDb.toFixed(2), rmsDb: +total.rmsDb.toFixed(2), nan: total.nan, silentPct: +((100 * silent) / wins).toFixed(2),
     dynRangeDb: +dyn.toFixed(1), dynP90P10: +dynP.toFixed(1), codaDb: ps.completeT ? +codaDb.toFixed(1) : null, centroidMean: Math.round(centroidMean),
-    rmsCurve: perSec, ctl,
+    rmsCurve: perSec, kitCurve, kitHits: kitTap.hitLog.length, kitHitTimes: kitTap.hitLog.map((h) => h[0]), ctl,
     chroma: Array.from(ch, (v) => +v.toFixed(4)), chromaTop: names[top], rootTriad: triad.map((p) => names[p]), chromaInTriad: triad.includes(top),
     artefacts: arts, gameEvents,
     nodes: { perSecMean: +nodesMean.toFixed(1), perSecMedian: nodeMedian(), perSecMax: perSecNodes.length ? Math.max(...perSecNodes) : 0, total: nodeCount - nodeStart, by: Object.fromEntries(Object.entries(nodesBy).sort((a, b) => b[1] - a[1]).slice(0, 14)) },
@@ -249,6 +276,64 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     updateMs: { mean: +(upd.sum / Math.max(1, upd.n)).toFixed(2), max: +upd.max.toFixed(1), calls: upd.n, slow: upd.slow.slice(0, 24) },
     audit, errors, uploaded: upload,
   };
+};
+
+
+/**
+ * Stroll check: a synthetic, perfectly flat walk. 2 s standing, then steady walking at the moor's walking pace for `walk` s
+ * (footstep events at the real stride), then standing again. Reports how soon the land answers: first bed kit hit, flow section,
+ * hits / kit level over the first seconds of walking, and where the score has settled after standing.
+ */
+window.renderStroll = async function renderStroll(id, o = {}) {
+  const idx = LEVELS.findIndex((l) => l.id === id);
+  if (idx < 0) throw new Error('unknown level ' + id);
+  const speed = o.speed ?? 4.4, t0 = 2, walk = o.walk ?? 18, rest = o.rest ?? 22, total = t0 + walk + rest;
+  const ps = presim(idx, { seconds: 4, noWrong: true, idle: 4 });
+  const base = ps.buckets[ps.buckets.length - 1];
+  const n = Math.ceil(total / UPDATE) + 1;
+  const buckets = [];
+  let stride = 0, foot = 0, stillT = 0;
+  for (let k = 0; k < n; k++) {
+    const t = k * UPDATE;
+    const walking = t >= t0 && t < t0 + walk;
+    const sp = walking ? speed * Math.min(1, (t - t0) / 0.3) : 0;
+    const ev = [];
+    if (walking) { stride += sp * UPDATE; const need = 0.9 + 0.12 * sp; if (stride >= need) { stride -= need; foot ^= 1; ev.push({ type: 'step', foot }); } }
+    stillT = sp > 0.3 ? 0 : stillT + UPDATE;
+    buckets.push({ ...base, events: ev, player: { ...base.player, speed: sp, moving: sp > 0.3, running: false, still: stillT, slope: 0.04, cover: 0, sliding: false, heading: 0 }, proximity: [], resonance: [], chainProgress: base.chainProgress });
+  }
+  const ctx = new OfflineAudioContext(4, Math.ceil((total + 2) * SR), SR);
+  const audio = await createAudio(ctx, { seed: ps.game.level.seed });
+  audio.setLevel(ps.game.level);
+  const kitTap = attachKitTap(ctx, audio);
+  const errors = [], ctl = [];
+  const quantum = 128 / SR;
+  let k = 0, lastSec = -1;
+  const step = () => {
+    try { audio.update(buckets[k]); kitTap.sync(); } catch (e) { errors.push(String(e && e.stack || e)); }
+    const t = k * UPDATE, sec = Math.floor(t);
+    if (sec !== lastSec) { lastSec = sec; ctl.push([sec, +audio.score.C.e.toFixed(2), audio.score.cond.section, +audio.score.C.m.toFixed(2)]); }
+  };
+  step();
+  const schedule = () => {
+    k++;
+    if (k >= buckets.length) return;
+    const at = Math.max(ctx.currentTime + quantum, Math.round((k * UPDATE) / quantum) * quantum);
+    ctx.suspend(at).then(() => { step(); schedule(); ctx.resume(); }).catch((e) => errors.push('suspend: ' + e));
+  };
+  schedule();
+  const buf = await ctx.startRendering();
+  for (const e of audio.errors) errors.push(e);
+  const kitCh = [buf.getChannelData(2)], mixCh = [buf.getChannelData(0), buf.getChannelData(1)];
+  const hits = kitTap.hitLog.filter((h) => h[0] >= t0);
+  const firstHit = hits.length ? +(hits[0][0] - t0).toFixed(2) : null;
+  const flowRow = ctl.find((c) => c[0] >= t0 && (c[2] === 'flow' || c[2] === 'swell'));
+  const hits4to14 = hits.filter((h) => h[0] >= t0 + 4 && h[0] < t0 + 14).length;
+  const kitDb = analyse(kitCh, SR, t0 + 6, t0 + 16).rmsDb;
+  const mixDb = analyse(mixCh, SR, t0 + 6, t0 + 16).rmsDb;
+  const endRow = ctl.find((c) => c[0] === Math.floor(total - 1));
+  const names = {}; for (const h of hits.filter((h) => h[0] >= t0 + 2 && h[0] < t0 + walk)) names[h[1]] = (names[h[1]] || 0) + 1;
+  return { id, firstHit, flowAt: flowRow ? flowRow[0] - t0 : null, hits4to14, hitNames: names, kitDb: +kitDb.toFixed(1), mixDb: +mixDb.toFixed(1), endSection: endRow ? endRow[2] : null, endEnergy: endRow ? endRow[1] : null, ctl, errors };
 };
 
 /**
