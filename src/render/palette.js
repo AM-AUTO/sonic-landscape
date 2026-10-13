@@ -115,9 +115,9 @@ export function bayer(x, y) { return (BAYER8[((y & 7) << 3) | (x & 7)] + 0.5) / 
 // }
 const KEYS = {
   //            night  warm   wash
-  dawn: { night: 0, warm: 0.3, wash: { magenta: 0.04, contour: 0 } },
+  dawn: { night: 0, warm: 0.3, wash: { magenta: 0, contour: 0 } },
   day: { night: 0, warm: 0, wash: { magenta: 0, contour: 0 } },
-  dusk: { night: 0.12, warm: 0.4, wash: { magenta: 0, contour: 0.05 } },
+  dusk: { night: 0.12, warm: 0.4, wash: { magenta: 0, contour: 0 } },
   night: { night: 0.97, warm: 0, wash: { magenta: 0, contour: 0 } },
 };
 const PHASE_CENTRE = { dawn: 0.125, day: 0.375, dusk: 0.625, night: 0.875 };

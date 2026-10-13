@@ -128,7 +128,10 @@ export function createRenderer(canvas) {
     }
   }
 
-  function applyFlashes(camX, camY) {
+  // The crossed contour lights up only around the walker (a pool of light that fades with
+  // distance), so a crossing reads as "this line, here" instead of recolouring the whole sheet.
+  const FLASH_RADIUS = 72;
+  function applyFlashes(camX, camY, pcx, pcy) {
     const fl = R.flashes;
     if (!fl.length) return;
     const lut = R.flashLut;
@@ -142,17 +145,22 @@ export function createRenderer(canvas) {
     }
     if (!fl.length) return;
     const MW = R.baked.W, lvl = R.baked.lvl;
-    for (let y = 0; y < SH; y++) {
+    const R2 = FLASH_RADIUS * FLASH_RADIUS;
+    const y0 = Math.max(0, Math.floor(pcy - FLASH_RADIUS)), y1 = Math.min(SH - 1, Math.ceil(pcy + FLASH_RADIUS));
+    const x0 = Math.max(0, Math.floor(pcx - FLASH_RADIUS)), x1 = Math.min(SW - 1, Math.ceil(pcx + FLASH_RADIUS));
+    for (let y = y0; y <= y1; y++) {
       const mo = (camY + y) * MW + camX;
-      for (let x = 0; x < SW; x++) {
+      const dy = y - pcy;
+      for (let x = x0; x <= x1; x++) {
         const l = lvl[mo + x];
-        if (l) {
-          const c = lut[l & 1023];
-          if (c) {
-            fb[y * SW + x] = c;
-            if (x + 1 < SW && !lvl[mo + x + 1]) fb[y * SW + x + 1] = c;
-          }
-        }
+        if (!l) continue;
+        const c = lut[l & 1023];
+        if (!c) continue;
+        const dx = x - pcx, d2 = dx * dx + dy * dy;
+        if (d2 > R2) continue;
+        // ordered-dither falloff toward the rim keeps the palette strict
+        if (d2 > R2 * 0.36 && (BAYER8[((y + camY) & 7) * 8 + ((x + camX) & 7)] / 64) < (d2 / R2 - 0.36) / 0.64) continue;
+        fb[y * SW + x] = c;
       }
     }
   }
@@ -377,7 +385,8 @@ export function createRenderer(canvas) {
     copyMapRegion(camX, camY);
     const tint = tintAt(state.timeOfDay != null ? state.timeOfDay : 0.3, state.world && state.world.level && state.world.level.palette && state.world.level.palette.tint);
     applyTint(fb, SW, SH, dim ? { night: dim, warm: 0, wash: [] } : tint, camX, camY);
-    applyFlashes(camX, camY);     // after the tint so feedback stays bright at night
+    const pl = state.player || { x: 0, y: 0 };
+    applyFlashes(camX, camY, pl.x * CELL_PX - camX, pl.y * CELL_PX - camY);     // after the tint so feedback stays bright at night
     applyRipples(camX, camY);
     ctx.putImageData(fbImg, 0, 0);
     updateTrail(state, dt);
