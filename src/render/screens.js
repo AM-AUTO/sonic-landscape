@@ -12,7 +12,7 @@ import { gridRef, bearingDeg } from './hud.js';
 import { gatePlacement } from './mapbake.js';
 import { hash2f } from '../core/rng.js';
 import { ROMAN, TITLE, SELECT, PAUSE, NOTES, COMPLETE, MAP, STORY, fmt } from '../text.js';
-import { PANEL, TITLE_SCENE, THUMB, drawPanel } from './panels.js';
+import { PANEL, TITLE_SCENE, THUMB, drawPanel, TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT } from './panels.js';
 import { revealCount } from '../story.js';
 import { LEVELS } from '../world/levels/index.js';
 
@@ -80,27 +80,31 @@ function levelList(ui) {
 }
 
 // ================================================================== title
-// The cover is one full-bleed painting (panels.js 'title': the map as a landscape under a red-gold sky, a stag,
-// the wanderer, the logo painted on top); only the small lines of text are drawn over it.
-const TITLE_SPEC = Object.freeze({ kind: 'title', levelIndex: 3 });
+// The cover is one full-bleed painting (panels.js 'title', three variants A Survey / B Summit / C Close: a standing stone on an
+// Ordnance Survey sheet, the logo painted on top); only the small lines of text are drawn over it, where TITLE_LAYOUT says.
+const TITLE_SPECS = Object.freeze(Object.fromEntries(TITLE_VARIANTS.map((v) => [v, Object.freeze({ kind: 'title', levelIndex: 3, variant: v, warm: true })])));
+const TITLE_SPEC = TITLE_SPECS[TITLE_DEFAULT];
 function title(env) {
   const { ctx, t, SW, SH, ui } = env;
-  drawPanel(ctx, TITLE_SPEC, 0, 0, TITLE_SCENE.w, TITLE_SCENE.h, t);
+  const v = TITLE_SPECS[ui.titleVariant] ? ui.titleVariant : TITLE_DEFAULT;
+  const L = TITLE_LAYOUT[v];
+  drawPanel(ctx, TITLE_SPECS[v] || TITLE_SPEC, 0, 0, TITLE_SCENE.w, TITLE_SCENE.h, t);
   const halo = { halo: PAL.ink };
   drawText(ctx, TITLE.cornerLeft[0], 8, 4, PAL.paper2, { font: 'small', spacing: 0, ...halo });
   drawText(ctx, TITLE.cornerLeft[1], 8, 11, PAL.rock, { font: 'small', spacing: 0, ...halo });
   drawText(ctx, TITLE.cornerRight[0], SW - 8, 4, PAL.paper2, { font: 'small', spacing: 0, align: 'right', ...halo });
   drawText(ctx, TITLE.cornerRight[1], SW - 8, 11, PAL.rock, { font: 'small', spacing: 0, align: 'right', ...halo });
-  drawText(ctx, TITLE.subtitle, SW / 2, 78, PAL.paper, { italic: true, spacing: 1, align: 'center', halo: PAL.blood });
+  const sub = L.subtitle.maxW ? wrapText(TITLE.subtitle, L.subtitle.maxW, { italic: true, spacing: 1 }) : [TITLE.subtitle];
+  sub.forEach((ln, i) => drawText(ctx, ln, L.subtitle.x, L.subtitle.y + i * (L.subtitle.lh || 11), PAL.paper, { italic: true, spacing: 1, align: L.subtitle.align, halo: PAL.blood }));
   if (blink(t, 1.2, 0.65)) {
-    drawText(ctx, TITLE.prompt, SW / 2, 172, PAL.snow, { spacing: 1, align: 'center', halo: PAL.ink });
+    drawText(ctx, TITLE.prompt, L.prompt.x, L.prompt.y, PAL.snow, { spacing: 1, align: 'center', halo: PAL.ink });
     const w = measureText(TITLE.prompt, { spacing: 1 });
-    drawText(ctx, '→', SW / 2 - w / 2 - 12 + (Math.floor(t * 3) & 1), 172, PAL.ember, { halo: PAL.ink });
-    drawText(ctx, '←', SW / 2 + w / 2 + 6 - (Math.floor(t * 3) & 1), 172, PAL.ember, { halo: PAL.ink });
+    drawText(ctx, '→', L.prompt.x - w / 2 - 12 + (Math.floor(t * 3) & 1), L.prompt.y, PAL.ember, { halo: PAL.ink });
+    drawText(ctx, '←', L.prompt.x + w / 2 + 6 - (Math.floor(t * 3) & 1), L.prompt.y, PAL.ember, { halo: PAL.ink });
   }
   const how = ui.touchVisible ? TITLE.controlsTouch : TITLE.controlsKeys;
-  drawText(ctx, how, SW / 2, 191, PAL.rock, { font: 'small', align: 'center', halo: PAL.ink });
-  drawText(ctx, TITLE.strapline, SW / 2, 201, PAL.contour, { font: 'small', align: 'center', spacing: 1, halo: PAL.ink });
+  drawText(ctx, how, SW / 2, L.controls, PAL.rock, { font: 'small', align: 'center', halo: PAL.ink });
+  drawText(ctx, TITLE.strapline, SW / 2, L.strapline, PAL.contour, { font: 'small', align: 'center', spacing: 1, halo: PAL.ink });
 }
 
 // ================================================================== select

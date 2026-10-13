@@ -18,12 +18,14 @@
  *   bothy   a vast red-black moor, one small lit window and a thread of smoke (field notes)
  *   stone   a Pictish symbol stone at dawn, warm glow (track complete)
  *   dawn    a wide dawn over the whole set of ridges (album complete)
- *   title   the cover: the map as a landscape, a stag on the skyline, the wanderer, the logo painted on top
+ *   title   the cover, three variants (spec.variant 'A'|'B'|'C'): a standing stone on a contour map, the logo painted on top
  */
-import { PAL, PAL_NAMES, PAL_U32 as C, BAYER8 } from './palette.js';
+import { PAL, PAL_NAMES, PAL_U32 as C } from './palette.js';
 import { hash2f } from '../core/rng.js';
+import { paintStandingStone } from './stone.js';
+import { paintTitleArt, animTitleArt, setTerrain, hasTerrain, TITLE_LEVELS, TITLE_DEFAULT, TITLE_VARIANTS, TITLE_LAYOUT } from './titleart.js';
+import { Raster, bay, clamp, vnoise, lift, sink, skyAt, mistBand, drawMistBand } from './artkit.js';
 import * as SP from './sprites.js';
-import { FONTS } from './font.js';
 import { LEVELS } from '../world/levels/index.js';
 import { createSculptKit } from '../world/sculpt.js';
 
@@ -35,60 +37,7 @@ export const TITLE_SCENE = Object.freeze({ w: 384, h: 216 });
 export const THUMB = Object.freeze({ w: 112, h: 84 });
 
 // ----------------------------------------------------------------------------- raster
-const bay = (x, y) => (BAYER8[((y & 7) << 3) | (x & 7)] + 0.5) / 64;
-const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const HEX2U32 = Object.fromEntries(PAL_NAMES.map((n) => [PAL[n].toLowerCase(), C[n]]));
-
-class Raster {
-  constructor(w, h) { this.w = w; this.h = h; this.d = new Uint32Array(w * h); this.lay = new Uint8Array(w * h); }
-  px(x, y, c, l) {
-    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
-    const i = y * this.w + x;
-    this.d[i] = c;
-    if (l !== undefined) this.lay[i] = l;
-  }
-  get(x, y) { return x < 0 || y < 0 || x >= this.w || y >= this.h ? 0 : this.d[y * this.w + x]; }
-  layer(x, y) { return x < 0 || y < 0 || x >= this.w || y >= this.h ? 0 : this.lay[y * this.w + x]; }
-  rect(x, y, w, h, c, l) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, c, l); }
-  line(x0, y0, x1, y1, c, l) {
-    x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
-    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-    let err = dx + dy;
-    for (;;) {
-      this.px(x0, y0, c, l);
-      if (x0 === x1 && y0 === y1) break;
-      const e2 = 2 * err;
-      if (e2 >= dy) { err += dy; x0 += sx; }
-      if (e2 <= dx) { err += dx; y0 += sy; }
-    }
-  }
-}
-
-/** value noise on an integer lattice; per/perY > 0 make it wrap (tileable) */
-function vnoise(x, y, seed, per = 0, perY = 0) {
-  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
-  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-  const H = (i, j) => hash2f(per ? ((i % per) + per) % per : i, perY ? ((j % perY) + perY) % perY : j, seed);
-  const a = H(x0, y0), b = H(x0 + 1, y0), c = H(x0, y0 + 1), d = H(x0 + 1, y0 + 1);
-  return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sy;
-}
-
-// ----------------------------------------------------------------------------- colour ramps
-/** The red hours, dark to bright. Lifting a colour is one step up this ramp; mist and glow do that. */
-const RED = [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame, C.paper];
-const LIFT = new Map();
-const SINK = new Map();
-RED.forEach((c, i) => { if (i + 1 < RED.length) { LIFT.set(c, RED[i + 1]); SINK.set(RED[i + 1], c); } });
-for (const [a, b] of [[C.night, C.dusk], [C.dusk, C.heather], [C.contourIdx, C.contour], [C.contour, C.paper2], [C.rock, C.paper2], [C.woodDark, C.wood], [C.waterInk, C.grid], [C.grid, C.water], [C.bog, C.water], [C.bolt, C.paper]]) { if (!LIFT.has(a)) LIFT.set(a, b); if (!SINK.has(b)) SINK.set(b, a); }
-const lift = (c) => LIFT.get(c) || c;
-const sink = (c) => SINK.get(c) || c;
-
-/** Sky colour at t (0 top .. 1 horizon): ordered dither between neighbouring stops. */
-function skyAt(stops, t, x, y) {
-  const pos = clamp(t, 0, 1) * (stops.length - 1);
-  const i = Math.min(stops.length - 2, Math.floor(pos)), f = pos - i;
-  return bay(x, y) < f ? stops[i + 1] : stops[i];
-}
 
 // ----------------------------------------------------------------------------- track data
 const accentU = (levelIndex) => {
@@ -127,7 +76,11 @@ export function setProfile(levelIndex, profile) { profiles.set(levelIndex, profi
 export function hasProfile(levelIndex) { return profiles.has(levelIndex); }
 export function getProfile(levelIndex) { return profiles.get(levelIndex) || null; }
 /** Seed a track's profile from a built world (main.js does this on entering a track). */
-export function setProfileFromWorld(levelIndex, world) { profiles.set(levelIndex, buildProfile((x, y) => world.heightAt(x, y), world.minH, world.maxH, world.size || 256)); }
+export function setProfileFromWorld(levelIndex, world) {
+  profiles.set(levelIndex, buildProfile((x, y) => world.heightAt(x, y), world.minH, world.maxH, world.size || 256));
+  const S = world.size || 256;
+  if (world.height && world.height.length === S * S) setTerrain(levelIndex, world.height, S);
+}
 /**
  * Build a track's profile from its sculpt alone (about 100 ms, no hydrology or cover): gives the tracklist and
  * the cover every track's real skyline without building eight worlds. Returns true once it exists.
@@ -142,6 +95,7 @@ export function warmProfile(levelIndex) {
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < h.length; i++) { if (h[i] < lo) lo = h[i]; if (h[i] > hi) hi = h[i]; }
   profiles.set(levelIndex, buildProfile((x, y) => h[Math.min(S - 1, y) * S + Math.min(S - 1, x)], lo, hi, S));
+  setTerrain(levelIndex, h, S);                                       // the cover draws on the same field
   return true;
 }
 /** A believable stand-in skyline until the real one is built (so a panel is never empty). */
@@ -250,39 +204,6 @@ function pines(r, id, tops, W, density, seed, sc, col) {
       for (let i = -w; i <= w; i++) r.px(x + i, top - h + k + 2, col, id);
     }
     r.px(x, top + 2, col, id); r.px(x, top + 3, col, id);
-  }
-}
-
-// ----------------------------------------------------------------------------- mist (animated)
-/** A tileable streaky noise strip; scrolling it is the whole animation. */
-function mistBand(W, rows, seed, opts) {
-  const TW = 512;
-  const tex = new Float32Array(TW * rows);
-  for (let y = 0; y < rows; y++) {
-    const env = Math.pow(Math.max(0, 1 - Math.abs((y - rows / 2) / (rows / 2))), 0.9);
-    for (let x = 0; x < TW; x++) {
-      const n = vnoise(x / 26, y / 3.4, seed, TW / 26, 0) * 0.65 + vnoise(x / 10, y / 1.7, seed + 11, TW / 10, 0) * 0.35;
-      tex[y * TW + x] = clamp((n - 0.32) * 2.4, 0, 1) * env;
-    }
-  }
-  return { tex, TW, rows, ...opts };
-}
-function drawMistBand(r, B, t) {
-  const { tex, TW, rows, y: y0, layerMax, speed, dens } = B;
-  const off = Math.floor(t * speed) + B.phase, bob = Math.round(Math.sin(t * 0.35 + B.phase) * 1.2);
-  const W = r.w;
-  for (let j = 0; j < rows; j++) {
-    const y = y0 + j + bob;
-    if (y < 0 || y >= r.h) continue;
-    const row = j * TW;
-    for (let x = 0; x < W; x++) {
-      const v = tex[row + ((x + off) % TW + TW) % TW] * dens;
-      if (v <= 0.02) continue;
-      const i = y * W + x;
-      if (r.lay[i] > layerMax) continue;
-      if (bay(x, y) < v) r.d[i] = lift(r.d[i]);
-      if (v > 0.6 && bay(x + 4, y + 2) < v - 0.42) r.d[i] = lift(r.d[i]);
-    }
   }
 }
 
@@ -739,167 +660,29 @@ function paintDawn(r, spec, S) {
 function animDawn(r, spec, S, t) { for (const b of S.bands) drawMistBand(r, b, t); }
 
 // ======================================================================================== TITLE
-/** Mask of a word in the 5x7 font at integer scale: Uint8Array(w*h) plus its size. */
-function textMask(text, scale, spacing) {
-  const f = FONTS.main;
-  const chars = [...text];
-  const adv = (g) => (g.w + 1 + spacing) * scale;
-  let w = 0;
-  for (const ch of chars) w += adv(f.glyphs[ch] || f.glyphs['?']);
-  w -= spacing * scale;
-  const h = 7 * scale;
-  const m = new Uint8Array(w * h);
-  let x0 = 0;
-  for (const ch of chars) {
-    const g = f.glyphs[ch] || f.glyphs['?'];
-    g.rows.slice(0, 7).forEach((bits, row) => {
-      for (let b = 0; b < g.w; b++) if (bits & (1 << (f.bits - 1 - b))) for (let j = 0; j < scale; j++) for (let i = 0; i < scale; i++) { const X = x0 + b * scale + i, Y = row * scale + j; if (X < w) m[Y * w + X] = 1; }
-    });
-    x0 += adv(g);
-  }
-  return { m, w, h };
-}
-
-/**
- * The logo, painted on the art: a cast shadow, a block of extrusion, a hard outline, and a face that runs
- * flame -> ember -> rust with a lit edge and a shaded one, grained like carved stone. Returns the face pixels.
- */
-function paintLogo(r, text, cx, top, scale, spacing) {
-  const base = textMask(text, scale, spacing);
-  // fatten the strokes: every lit block grows by two pixels, so the letters are carved slabs rather than outlines
-  const w = base.w + 3, h = base.h + 3, m = new Uint8Array(w * h);
-  for (let y = 0; y < base.h; y++) for (let x = 0; x < base.w; x++) if (base.m[y * base.w + x]) for (let j = 0; j <= 3; j++) for (let i = 0; i <= 3; i++) m[(y + j) * w + x + i] = 1;
-  const x0 = Math.round(cx - w / 2), y0 = top;
-  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && m[y * w + x] === 1;
-  const EX = Math.max(3, Math.round(scale * 0.8));
-  for (let y = -2; y < h + EX + 8; y++) for (let x = -2; x < w + EX + 8; x++) {            // cast shadow, dithered
-    if (at(x - EX - 4, y - EX - 5) && bay(x0 + x, y0 + y) < 0.6) { const X = x0 + x, Y = y0 + y; r.px(X, Y, sink(sink(r.get(X, Y))), 6); }
-  }
-  for (let k = EX; k >= 1; k--) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y)) r.px(x0 + x + k, y0 + y + k, k >= EX - 1 ? C.ink : k > EX / 2 ? C.blood : C.rust, 6);   // extrusion
-  const near = (x, y) => { for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (at(x + i, y + j)) return true; return false; };
-  for (let y = -2; y < h + 2; y++) for (let x = -2; x < w + 2; x++) if (!at(x, y) && near(x, y)) r.px(x0 + x, y0 + y, C.ink, 6);   // outline
-  const face = [];
-  const stops = [C.paper, C.flame, C.lamp, C.ember, C.rust];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (!at(x, y)) continue;
-    const X = x0 + x, Y = y0 + y;
-    let c = skyAt(stops, Math.pow(y / (h - 1), 0.9), X, Y);
-    if (hash2f(X, Y, 1234) < 0.07) c = sink(c);                                                    // carved grain
-    if (!at(x - 1, y) || !at(x, y - 1)) c = bay(X, Y) < 0.8 ? C.paper : C.flame;                  // lit edge
-    else if (!at(x + 1, y) || !at(x, y + 1)) c = bay(X, Y) < 0.7 ? C.blood : C.rust;              // shaded edge
-    r.px(X, Y, c, 6);
-    face.push(Y * r.w + X);
-  }
-  return { face, x0, y0, w, h };
-}
-
-function paintTitle(r, spec, S) {
-  const W = r.w, H = r.h, sc = H / 216;
-  const seed = 4242 + (spec.seed | 0);
-  S.seed = seed; S.sc = sc;
-  const horizon = Math.round(H * 0.58);
-  // the sky: ink above, bleeding through blood and heather to a huge red-gold glow
-  paintSky(r, W, H, horizon, [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame], 1.1);
-  paintStreaks(r, W, horizon, seed + 3, 1.2);
-  const sunX = Math.round(W * 0.7), sunY = Math.round(H * 0.56);
-  paintSun(r, sunX, sunY, Math.round(30 * sc), 4.4);
-  S.stars = [];
-  for (let i = 0; i < 40; i++) { const x = Math.floor(hash2f(i, 1, seed) * W), y = Math.floor(Math.pow(hash2f(i, 2, seed), 1.6) * horizon * 0.4); if (r.get(x, y) === C.ink) S.stars.push({ x, y, ph: hash2f(i, 3, seed) * 6.28 }); }
-  // the map as a landscape: stacked ridges, each a dithered band traced by fine contour lines
-  const lvIdx = [6, 4, 3, 0];
-  const bandIdx = [1, 1, 1, 2];
-  const cfgs = [
-    { base: 0.58, amp: 0.2, upper: C.heather, lower: C.blood, rim: C.ember, contours: 4, cstep: 4 },
-    { base: 0.67, amp: 0.15, upper: C.rust, lower: C.blood, rim: C.lamp, contours: 5, cstep: 4, cline: C.heather },
-    { base: 0.73, amp: 0.13, upper: C.blood, lower: C.ink, rim: C.rust, contours: 4, cstep: 5, cline: C.heather },
-    { base: 0.8, amp: 0.1, upper: C.ink, lower: C.ink, rim: C.heather, contours: 0 },
-  ];
-  S.tops = [];
-  cfgs.forEach((o, i) => {
-    const prof = profileOf(lvIdx[i]);
-    const t = ridgeTops(W, prof.bands[bandIdx[i]], prof.size, { span: 0.8, off: 6 + i * 11, base: o.base * H, amp: o.amp * H, gamma: prof.gamma, smooth: i === 0 });
-    S.tops.push(t);
-    ridgeLayer(r, i + 1, W, H, t, { upper: o.upper, lower: o.lower, fade: H * 0.1, rim: o.rim, contours: o.contours, cstep: (o.cstep || 4) * sc, cline: o.cline });
-  });
-  // a lochan between the last two ridges, mirroring the sun
-  const wy0 = Math.round(H * 0.8), wy1 = Math.round(H * 0.86);
-  const stops = [C.ink, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame];
-  for (let y = wy0; y < wy1; y++) for (let x = 0; x < W; x++) {
-    if (r.lay[y * W + x] > 3) continue;
-    const t = 1 - (y - wy0) / (wy1 - wy0);
-    const tt = clamp(0.25 + t * 0.45 + 0.45 * Math.exp(-(((x - sunX) / (W * 0.13)) ** 2)), 0, 1);
-    let c = skyAt(stops, tt, x, y);
-    if ((y % 3 === 0) && hash2f(x >> 2, y, seed + 2) < 0.3) c = sink(sink(c));
-    r.px(x, y, c, 4);
-  }
-  S.glints = [];
-  for (let i = 0; i < 90; i++) { const x = Math.floor(hash2f(i, 4, seed) * W), y = wy0 + 1 + Math.floor(hash2f(i, 5, seed) * (wy1 - wy0 - 2)); S.glints.push([x, y, r.get(x, y)]); }
-  // the foreground: peat-black, a heather-rimmed brow for the wanderer, flecks of bracken and dun grass
-  const fore = new Int16Array(W);
-  for (let x = 0; x < W; x++) fore[x] = Math.round(H * 0.855 + 4 * Math.sin(x * 0.02 + 1) + 5 * vnoise(x * 0.03, 4, seed) - (x > W * 0.6 ? (x - W * 0.6) * 0.1 : 0));
-  for (let x = 0; x < W; x++) for (let y = fore[x]; y < H; y++) {
-    const t = (y - fore[x]) / (H - fore[x] + 1), k = hash2f(x, y, seed + 9);
-    let c = C.ink;
-    if (y - fore[x] < 2) c = C.blood;
-    else if (k < 0.03 * (1 - t)) c = k < 0.01 ? C.rust : k < 0.02 ? C.contourIdx : C.heather;
-    r.px(x, y, c, 5);
-  }
-  for (let x = 0; x < W; x++) if (hash2f(x, 21, seed) < 0.12) { const h = 2 + Math.floor(hash2f(x, 22, seed) * 4); for (let k = 0; k < h; k++) r.px(x + (k > 2 ? 1 : 0), fore[x] - k, C.ink, 5); }
-  // a stag on the far skyline, antlers against the glow
-  const sx = Math.round(W * 0.075);
-  drawStag(r, sx, S.tops[0][sx] + 2, 0.62 * sc, C.ink, 1);
-  // a standing stone on the second ridge: a tapering slab, its sunward edge lit
-  const stx = Math.round(W * 0.44), sty = S.tops[1][stx] + 3, stH = Math.round(20 * sc);
-  for (let y = 0; y < stH; y++) {
-    const half = Math.round((1.2 + (y / stH) * 2.2) * sc), top = stH - 1 - y;
-    const cut = y === stH - 1 ? 1 : 0;
-    for (let x = -half + cut; x <= half - cut - (y > stH - 3 ? 1 : 0); x++) r.px(stx + x, sty - stH + y + 1, x === -half + cut && y > 2 ? C.ember : C.ink, 2);
-    void top;
-  }
-  // the wanderer, small, with the lantern lit
-  { const wx = Math.round(W * 0.8); S.lantern = drawWanderer(r, wx, S.tops[2][wx] + 3, 2, 3, C.ink); }
-  S.bands = [
-    mistBand(W, Math.round(H * 0.12), seed + 1, { y: Math.round(H * 0.6), layerMax: 1, speed: 4, dens: 0.9, phase: 1 }),
-    mistBand(W, Math.round(H * 0.1), seed + 2, { y: Math.round(H * 0.74), layerMax: 2, speed: 6, dens: 0.8, phase: 2 }),
-    mistBand(W, Math.round(H * 0.1), seed + 3, { y: Math.round(H * 0.85), layerMax: 4, speed: 9, dens: 0.6, phase: 3 }),
-  ];
-  S.birds = [0, 1].map((i) => ({ x: W * (0.2 + 0.4 * i), y: H * (0.26 + 0.06 * i), sp: 9 + i * 4, ph: i * 2 }));
-  // the logo goes on last: it is painted on the art
-  S.logo = paintLogo(r, spec.logoText || 'CONTOURS', Math.round(W / 2), Math.round(H * 0.07), Math.round(6 * sc), 1);
-}
-function animTitle(r, spec, S, t) {
-  const W = r.w, sc = S.sc || 1;
-  for (const s of S.stars) { const k = Math.sin(t * 1.5 + s.ph); if (k < 0.7 && r.lay[s.y * W + s.x] === 0 && r.d[s.y * W + s.x] === C.ink) r.d[s.y * W + s.x] = k > 0.1 ? C.paper2 : C.rock; }
-  for (const b of S.bands) drawMistBand(r, b, t);
-  for (const g of S.glints) { const k = Math.sin(t * 2.1 + g[0] * 0.7 + g[1] * 1.9); if (k > 0.6) r.px(g[0], g[1], lift(lift(g[2]))); }
-  S.birds.forEach((b) => drawBird(r, Math.round(((b.x + t * b.sp) % (W + 30)) - 15), Math.round(b.y + Math.sin(t * 0.7 + b.ph) * 4), Math.floor(t * 2.5 + b.ph) & 1, C.ink, 2 * sc));
-  const f = 0.55 + 0.45 * vnoise(t * 6, 3.3, S.seed + 50);
-  lanternGlow(r, S.lantern.x, S.lantern.y, 22, 5, f * 0.85);
-  r.rect(S.lantern.x - 1, S.lantern.y - 1, 3, 3, f > 0.7 ? C.flame : C.lamp);
-  // a glint sweeps across the lettering now and then, as light on carved metal
-  const L = S.logo, u = (t % 5.5) / 5.5;
-  if (u < 0.35) {
-    const pos = (u / 0.35) * (L.w + L.h * 1.2) - L.h;
-    for (const i of L.face) {
-      const d = (i % W - L.x0) - (((i / W) | 0) - L.y0) * 0.7 - pos;
-      if (d > 0 && d < 5) r.d[i] = C.paper;
-      else if (d > -3 && d <= 0) r.d[i] = lift(r.d[i]);
-    }
-  }
-}
+// The cover is three full-bleed paintings of one idea (a standing stone on an Ordnance Survey sheet); titleart.js paints them
+// and spec.variant ('A' Survey, 'B' Summit, 'C' Close) picks one. The field each draws on is a track's own heightfield.
+function paintTitle(r, spec, S) { paintTitleArt(r, spec, S); }
+function animTitle(r, spec, S, t) { animTitleArt(r, spec, S, t); }
 
 // ======================================================================================== registry
 const PAINTERS = {
   ridge: [paintRidge, animScene], bothy: [paintBothy, animBothy], stone: [paintStone, animStone], dawn: [paintDawn, animDawn], title: [paintTitle, animTitle],
 };
 export const PANEL_KINDS = Object.freeze(Object.keys(PAINTERS));
+export { TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT, TITLE_LEVELS, Raster, paintStandingStone };
 
 const cache = new Map();
-const stemOf = (spec) => `${spec.kind}|${spec.levelIndex | 0}|${spec.seed | 0}|${spec.motif || ''}|${spec.locked ? 'L' : ''}|`;
-const cacheKey = (spec, W, H) => `${stemOf(spec)}${hasProfile(spec.levelIndex | 0) ? 'p' : 'q'}|${W}x${H}`;
+const variantOf = (spec) => (spec.kind === 'title' ? (TITLE_VARIANTS.includes(spec.variant) ? spec.variant : TITLE_DEFAULT) : '');
+const stemOf = (spec) => `${spec.kind}|${spec.levelIndex | 0}|${spec.seed | 0}|${spec.motif || ''}|${spec.locked ? 'L' : ''}|${variantOf(spec)}|`;
+/** 'p' once the field(s) a panel draws on are real, 'q' while it still uses stand-ins (the panel is then repainted once). */
+const readyOf = (spec) => (spec.kind === 'title' ? TITLE_LEVELS[variantOf(spec)].every((i) => hasTerrain(i)) : hasProfile(spec.levelIndex | 0));
+const cacheKey = (spec, W, H) => `${stemOf(spec)}${readyOf(spec) ? 'p' : 'q'}|${W}x${H}`;
 
 /** The cached state of a panel: base raster, work raster, per-panel animation data. */
 export function getPanel(spec, W = PANEL.w, H = PANEL.h) {
+  // a screen that asks for it ({ warm: true }) has the fields its cover draws on built first (about 100 ms each, once), so it never shows a stand-in
+  if (spec.warm && spec.kind === 'title') for (const i of TITLE_LEVELS[variantOf(spec)]) warmProfile(i);
   const key = cacheKey(spec, W, H);
   let p = cache.get(key);
   if (p) return p;
