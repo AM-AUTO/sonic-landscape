@@ -413,6 +413,7 @@ test('lightning frame: flash dither of bolt/snow appears at the strike, a bolt p
   const flash = paintFrame(w, { tod: 0.875, clock: t0 + 0.02, fill: [U.night] });
   let b = 0, sn = 0; for (const v of flash.fb) { if (v === U.bolt) b++; else if (v === U.snow) sn++; }
   assert.ok(b > 3000 && sn > 3000, 'flash dither ' + b + '/' + sn);
+  assert.ok(b + sn > 0.3 * SW * SH && b + sn < 0.42 * SW * SH, 'frame A is a sparse ~35% wash, the map shows through: ' + (b + sn));
   const bolt = paintFrame(w, { tod: 0.875, clock: t0 + 0.2, fill: [U.night] });
   let bb = 0, ss = 0; for (const v of bolt.fb) { if (v === U.bolt) bb++; else if (v === U.snow) ss++; }
   assert.ok(bb > 40 && bb < 1500, 'bolt pixels ' + bb);
