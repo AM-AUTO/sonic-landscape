@@ -226,15 +226,11 @@ test('fit: resting panel and touch captions', () => {
 
 test('fit: title cover', () => {
   const band = SW - 24;
-  const mast = measureText(TITLE.masthead, { scale: 4, spacing: 1 });
   const bad = [];
-  const mastL = SW / 2 - mast / 2, mastR = SW / 2 + mast / 2;
-  TITLE.cornerLeft.forEach((s) => { const e = 12 + measureText(s, small); if (e > mastL - 8) bad.push(`left corner "${s}" ends ${e} vs masthead ${mastL}`); });
-  TITLE.cornerRight.forEach((s) => { const b = SW - 12 - measureText(s, small); if (b < mastR + 8) bad.push(`right corner "${s}" starts ${b} vs masthead ${mastR}`); });
-  if (measureText(TITLE.subtitle, { italic: true, spacing: 1 }) > band) bad.push('subtitle');
-  if (measureText(TITLE.prompt, { spacing: 1 }) + 40 > band) bad.push('prompt');
+  // the carved logo auto-fits (paintTitleLogo): even at the smallest scale it uses (2) the game's name must fit
+  if (measureText(TITLE.masthead, { scale: 2, spacing: 1 }) > band) bad.push('masthead at scale 2');
+  for (const s of [TITLE.prompt, TITLE.promptTouch]) if (measureText(s, { spacing: 1 }) + 40 > band) bad.push(`prompt "${s}"`);
   for (const s of [TITLE.controlsKeys, TITLE.controlsTouch]) if (measureText(s, small) > band) bad.push(`controls ${measureText(s, small)}px`);
-  if (measureText(TITLE.strapline, { ...small, spacing: 1 }) > band) bad.push('strapline');
   assert.deepEqual(bad, []);
 });
 

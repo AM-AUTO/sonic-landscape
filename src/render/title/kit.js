@@ -45,7 +45,7 @@
  *                                              o: { pow=1.7, ay=1 (vertical squash, >1 = flatter), strength=1, core=null (solid colour inside coreR*rad),
  *                                                   coreR=0.25 }
  *  pulseEmbers(r, embers, t)                   the incisions breathe: embers [[x, y, phase, dimColour], ...] (stone info .embers) between ember and dim.
- *  paintTitleLogo(r, S, o)                     the carved-stone logo (titleart.paintLogo) into S.logo; o: { text='CONTOURS', cx=192, top=18, scale=5, spacing=1 }.
+ *  paintTitleLogo(r, S, o)                     the carved-stone logo (titleart.paintLogo) into S.logo; o: { text=TITLE.masthead ('TAE BE WALKIT'), cx=192, top=18, scale=5 (auto-fitted down so the width <= maxW=352), spacing=1 }.
  *  animLogo(r, S.logo, t)                      re-exported from titleart: the snow glint that sweeps the carved face every 5.5 s.
  *  monoStone(r, cx, baseY, h, o)               paintStandingStone with { mono: true } defaults ({ outline:1, moss:0.4, lichen:1 }); o overrides.
  *  stoneMask(info)                             stone info -> region mask (screen-oriented).
@@ -58,6 +58,8 @@ import { hash2f, mulberry32 } from '../../core/rng.js';
 import { bay, clamp, smooth, mix, vnoise, fbm, rampAt, stampSmall, smallWidth, mistBand, GREY, liftG, sinkG, Raster } from '../artkit.js';
 import { paintLogo, animLogo, terrainOf, hAt } from '../titleart.js';
 import { paintStandingStone } from '../stone.js';
+import { measureText } from '../font.js';
+import { TITLE } from '../../text.js';
 
 export { GREY, liftG, sinkG, bay, clamp, smooth, mix, vnoise, fbm, rampAt, stampSmall, smallWidth, hash2f, mulberry32, Raster, paintLogo, animLogo, paintStandingStone, C };
 
@@ -364,7 +366,10 @@ export function pulseEmbers(r, embers, t) {
 
 // ================================================================================= logo / stone / terrain
 export function paintTitleLogo(r, S, o = {}) {
-  const { text = 'CONTOURS', cx = 192, top = 18, scale = 5, spacing = 1 } = o;
+  const { text = TITLE.masthead, cx = 192, top = 18, scale: want = 5, spacing = 1, maxW = 352 } = o;
+  // the carved logo is fitted to the screen: the largest scale <= `want` whose width (letters + fattening + extrusion) fits maxW
+  let scale = want;
+  while (scale > 2 && measureText(text, { scale, spacing }) + 3 + Math.max(3, Math.round(scale * 0.8)) > maxW) scale--;
   return (S.logo = paintLogo(r, text, cx, top, scale, spacing));
 }
 export function monoStone(r, cx, baseY, h, o = {}) {

@@ -34,13 +34,8 @@ line('## Title and menus');
 line();
 table(['Screen', 'Element', 'Text'], [
   ['Title', 'Cover masthead', TITLE.masthead],
-  ['Title', 'Cover corner, left', TITLE.cornerLeft[0]],
-  ['Title', 'Cover corner, left', TITLE.cornerLeft[1]],
-  ['Title', 'Cover corner, right', TITLE.cornerRight[0]],
-  ['Title', 'Cover corner, right', TITLE.cornerRight[1]],
-  ['Title', 'Subtitle', TITLE.subtitle],
   ['Title', 'Prompt (blinks)', TITLE.prompt],
-  ['Title', 'Strapline', TITLE.strapline],
+  ['Title', 'Prompt (touch screens)', TITLE.promptTouch],
   ['Title', 'Controls (keyboard)', TITLE.controlsKeys],
   ['Title', 'Controls (touch)', TITLE.controlsTouch],
   ['Tracklist', 'Header', SELECT.header],

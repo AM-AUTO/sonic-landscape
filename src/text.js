@@ -82,19 +82,16 @@ export const HINT = Object.freeze({
 
 // ------------------------------------------------------------------ title and menus
 export const TITLE = Object.freeze({
-  masthead: 'CONTOURS',
-  cornerLeft: Object.freeze(['ALBUM EDITION', 'SHEETS I-VIII']),
-  cornerRight: Object.freeze(['1:25 000', 'SURVEY O SOOND']),
-  subtitle: 'an album in aucht glens, tae be walkit',
-  prompt: 'PRESS ENTER / TAP TAE STERT',
-  strapline: 'AUCHT GLENS ON THE ANE RECORD. THE MAP IS THE SCORE.',
+  masthead: 'TAE BE WALKIT',
+  prompt: 'PRESS ENTER',
+  promptTouch: 'TAP TO START',
   controlsKeys: 'HEIDPHONES · ARROWS/WASD GANG · SHIFT RIN · SPACE HARK · M MAP · L NOTES',
   controlsTouch: 'HEIDPHONES · TOUCH: HARL TAE GANG · BUTTONS: RIN, HARK, MAP, NOTES',
 });
 
 export const SELECT = Object.freeze({
   header: 'INDEX TAE THE TRACKS',
-  headerRight: 'CONTOURS · ALBUM EDITION',
+  headerRight: 'TAE BE WALKIT',
   locked: 'LOCKIT',
   chainHeading: 'CHAIN O YETTS',
   statusOpen: 'OPEN',

@@ -29,22 +29,16 @@ const MODS = { castlerigg, shelter, mentol, dolmen, menhir };
 
 /**
  * Shared defaults for the small lines of text screens.js draws over the art (all positions in framebuffer px, 384x216).
- *   subtitle  { x, y, align:'left'|'center'|'right', maxW?, lh? }   italic line (wrapped at maxW when given)
- *   prompt    { x, y }       centred blinking 'PRESS ENTER' with the ember arrows either side
+ * The title screen shows only the logo (TAE BE WALKIT, painted by paintTitleLogo), the blinking prompt and one small controls line.
+ *   prompt    { x, y }       centred blinking 'PRESS ENTER' with an accent arrow either side
  *   controls  y              small-font controls line, centred on the screen
- *   strapline y              small-font strapline, centred on the screen
- *   cornerLeft / cornerRight  { x, y, lh }   two small lines; cornerRight is right-aligned at x
- *   colors    PAL names (greys + ember only): corner [line1, line2], subtitle, subtitleHalo, prompt, promptHalo, arrow, controls, strapline, halo
- *   hide      names of elements not to draw: 'cornerLeft' 'cornerRight' 'subtitle' 'prompt' 'controls' 'strapline'
+ *   colors    PAL names: prompt, promptHalo, arrow, controls, halo
+ *   hide      names of elements not to draw: 'prompt' 'controls'
  */
 export const DEFAULT_LAYOUT = Object.freeze({
-  subtitle: Object.freeze({ x: 192, y: 66, align: 'center' }),
-  prompt: Object.freeze({ x: 192, y: 172 }),
+  prompt: Object.freeze({ x: 192, y: 177 }),
   controls: 191,
-  strapline: 201,
-  cornerLeft: Object.freeze({ x: 8, y: 4, lh: 7 }),
-  cornerRight: Object.freeze({ x: 376, y: 4, lh: 7 }),
-  colors: Object.freeze({ corner: Object.freeze(['fog', 'ash']), subtitle: 'fog', subtitleHalo: 'ink', prompt: 'snow', promptHalo: 'ink', arrow: 'ember', controls: 'rock', strapline: 'ash', halo: 'ink' }),
+  colors: Object.freeze({ prompt: 'snow', promptHalo: 'ink', arrow: 'paleblue', controls: 'rock', halo: 'ink' }),
   hide: Object.freeze([]),
 });
 

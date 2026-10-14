@@ -90,20 +90,14 @@ function title(env) {
   const L = TITLE_LAYOUT[v], K = L.colors, show = (name) => !L.hide.includes(name);
   drawPanel(ctx, TITLE_SPECS[v] || TITLE_SPEC, 0, 0, TITLE_SCENE.w, TITLE_SCENE.h, t);
   const halo = { halo: PAL[K.halo] };
-  if (show('cornerLeft')) TITLE.cornerLeft.forEach((ln, i) => drawText(ctx, ln, L.cornerLeft.x, L.cornerLeft.y + i * L.cornerLeft.lh, PAL[K.corner[i]], { font: 'small', spacing: 0, ...halo }));
-  if (show('cornerRight')) TITLE.cornerRight.forEach((ln, i) => drawText(ctx, ln, L.cornerRight.x, L.cornerRight.y + i * L.cornerRight.lh, PAL[K.corner[i]], { font: 'small', spacing: 0, align: 'right', ...halo }));
-  if (show('subtitle')) {
-    const sub = L.subtitle.maxW ? wrapText(TITLE.subtitle, L.subtitle.maxW, { italic: true, spacing: 1 }) : [TITLE.subtitle];
-    sub.forEach((ln, i) => drawText(ctx, ln, L.subtitle.x, L.subtitle.y + i * (L.subtitle.lh || 11), PAL[K.subtitle], { italic: true, spacing: 1, align: L.subtitle.align, halo: PAL[K.subtitleHalo] }));
-  }
   if (show('prompt') && blink(t, 1.2, 0.65)) {
-    drawText(ctx, TITLE.prompt, L.prompt.x, L.prompt.y, PAL[K.prompt], { spacing: 1, align: 'center', halo: PAL[K.promptHalo] });
-    const w = measureText(TITLE.prompt, { spacing: 1 });
+    const prompt = ui.touchVisible ? TITLE.promptTouch : TITLE.prompt;
+    drawText(ctx, prompt, L.prompt.x, L.prompt.y, PAL[K.prompt], { spacing: 1, align: 'center', halo: PAL[K.promptHalo] });
+    const w = measureText(prompt, { spacing: 1 });
     drawText(ctx, '→', L.prompt.x - w / 2 - 12 + (Math.floor(t * 3) & 1), L.prompt.y, PAL[K.arrow], { halo: PAL[K.promptHalo] });
     drawText(ctx, '←', L.prompt.x + w / 2 + 6 - (Math.floor(t * 3) & 1), L.prompt.y, PAL[K.arrow], { halo: PAL[K.promptHalo] });
   }
   if (show('controls')) drawText(ctx, ui.touchVisible ? TITLE.controlsTouch : TITLE.controlsKeys, SW / 2, L.controls, PAL[K.controls], { font: 'small', align: 'center', halo: PAL[K.halo] });
-  if (show('strapline')) drawText(ctx, TITLE.strapline, SW / 2, L.strapline, PAL[K.strapline], { font: 'small', align: 'center', spacing: 1, halo: PAL[K.halo] });
 }
 
 // ================================================================== select

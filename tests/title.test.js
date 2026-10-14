@@ -217,10 +217,10 @@ test('title registry: five variants, castlerigg by default, a layout and a level
   assert.equal(TITLE_DEFAULT, 'castlerigg');
   for (const v of TITLE_VARIANTS) {
     const L = TITLE_LAYOUT[v];
-    assert.ok(L && L.subtitle && L.prompt && L.controls > 0 && L.strapline > 0 && L.cornerLeft && L.cornerRight && L.colors && Array.isArray(L.hide), v);
+    assert.ok(L && L.prompt && L.controls > 0 && L.colors && Array.isArray(L.hide), v);
     assert.ok(Array.isArray(TITLE_LEVELS[v]), v + ' levels');
   }
-  assert.ok(DEFAULT_LAYOUT.colors.arrow === 'ember');
+  assert.ok(DEFAULT_LAYOUT.colors.arrow === 'paleblue');
 });
 
 test('start screens: each variant is a full-bleed deterministic painting in the 29-colour palette, greys + ember only, with the logo', () => {
@@ -294,14 +294,12 @@ test('start screens: the lines of text sit inside the screen, clear of each othe
   const okName = new Set([...GREYS, 'ember', 'paper', 'paper2']);
   for (const v of TITLE_VARIANTS) {
     const L = TITLE_LAYOUT[v];
-    const subW = L.subtitle.maxW ? L.subtitle.maxW : measureText(TITLE.subtitle, { italic: true, spacing: 1 });
-    assert.ok(L.subtitle.x - subW / 2 >= 4 && L.subtitle.x + subW / 2 <= 380, `${v}: subtitle inside the screen`);
-    const pw = measureText(TITLE.prompt, { spacing: 1 }) + 40;
+    const pw = Math.max(measureText(TITLE.prompt, { spacing: 1 }), measureText(TITLE.promptTouch, { spacing: 1 })) + 40;
     assert.ok(L.prompt.x - pw / 2 >= 2 && L.prompt.x + pw / 2 <= 382, `${v}: prompt inside the screen`);
     assert.ok(L.prompt.y + 9 < L.controls, `${v}: prompt above the controls line`);
-    assert.ok(L.controls + 7 < L.strapline && L.strapline + 6 <= H, `${v}: controls above the strapline`);
-    assert.ok(measureText(TITLE.controlsKeys, small) <= 380 && measureText(TITLE.strapline, { ...small, spacing: 1 }) <= 380);
+    assert.ok(L.controls + 7 <= H, `${v}: controls line inside the screen`);
+    assert.ok(measureText(TITLE.controlsKeys, small) <= 380 && measureText(TITLE.controlsTouch, small) <= 380);
     for (const [k, c] of Object.entries(L.colors)) for (const n of [].concat(c)) assert.ok(okName.has(n) && PAL[n], `${v}: colour ${k} = ${n}`);
-    assert.ok(L.hide.every((n) => ['cornerLeft', 'cornerRight', 'subtitle', 'prompt', 'controls', 'strapline'].includes(n)), v + ' hide names');
+    assert.ok(L.hide.every((n) => ['prompt', 'controls'].includes(n)), v + ' hide names');
   }
 });
