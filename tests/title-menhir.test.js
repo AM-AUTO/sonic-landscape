@@ -51,6 +51,6 @@ test('menhir: the animation breathes (mist, ember) and stays greys + ember', () 
   const a = Uint32Array.from(renderPanel(spec, W, H, 0.4)), b = Uint32Array.from(renderPanel(spec, W, H, 2.9));
   let diff = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
   assert.ok(diff > 300, 'frames differ: ' + diff);
-  const ok = new Set([...GREYS, C.ember, C.paper, C.paper2]);
+  const ok = new Set([...GREYS, C.ember, C.paleblue, C.frost, C.paper, C.paper2]);
   for (let i = 0; i < b.length; i++) assert.ok(ok.has(b[i]), 'greys + ember only');
 });

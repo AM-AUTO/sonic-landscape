@@ -6,7 +6,7 @@ import { shadedRock } from '../src/render/title/castlerigg.js';
 
 const W = TITLE_SCENE.w, H = TITLE_SCENE.h;
 const GREYS = ['ink', 'char', 'slate', 'ash', 'rock', 'fog', 'snow'].map((n) => PAL_U32[n]);
-const ALLOWED = new Set([...GREYS, PAL_U32.ember, PAL_U32.paper, PAL_U32.paper2]);
+const ALLOWED = new Set([...GREYS, PAL_U32.ember, PAL_U32.paleblue, PAL_U32.frost, PAL_U32.paper, PAL_U32.paper2]);
 const lumOf = (c) => { const i = GREYS.indexOf(c); return i < 0 ? 3 : i; };
 const rowMean = (d, y0, y1) => { let s = 0, n = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) { s += lumOf(d[y * W + x]); n++; } return s / n; };
 
@@ -15,7 +15,7 @@ test('shadedRock: a lit stone, deterministic, greys + ember only, a sunward embe
   const a = draw({ glow: 0.7 }), b = draw({ glow: 0.7 }), cold = draw({ glow: 0 }), other = draw({ seed: 5, glow: 0.7 });
   assert.equal(pixelHash(a.r.d), pixelHash(b.r.d), 'deterministic');
   assert.notEqual(pixelHash(a.r.d), pixelHash(other.r.d), 'a seed changes the stone');
-  assert.ok(a.r.d.every((c) => ALLOWED.has(c)), 'greys + ember only');
+  assert.ok(a.r.d.every((c) => ALLOWED.has(c)), 'greys + ember (+ the logo paleblue / frost line) only');
   assert.ok(a.info.embers.length > 15 && a.r.d.includes(PAL_U32.ember), 'ember rim on the sunward edge: ' + a.info.embers.length);
   assert.ok(!cold.r.d.includes(PAL_U32.ember) && cold.info.embers.length === 0, 'no glow, no ember');
   assert.ok(a.info.w > 60 && a.info.h > 25, 'a big stone, not a pebble');

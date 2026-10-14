@@ -1,5 +1,5 @@
 /**
- * The five start screens (title covers), greyscale with one ember accent. Registry + dispatch.
+ * The five start screens (title covers), greyscale (+ a second, blue tonal ramp) with one accent: ember in four of them, frost in the winter `mentol`. Registry + dispatch.
  *
  *   TITLE_VARIANTS  ['castlerigg', 'shelter', 'mentol', 'dolmen', 'menhir']  (ui.titleVariant / spec.variant pick one)
  *   TITLE_DEFAULT   'castlerigg'
@@ -13,7 +13,7 @@
  *   export function paint(r, spec, S)        // paint the whole 384x216 Raster `r` once (cached base). Put everything the animation needs into S.
  *   export function anim(r, spec, S, t)      // cheap per-frame pass on a COPY of the base (a few ms at most): mist, ember pulse, glints, twinkle
  * A module imports from './kit.js' (and, if it wants, ../stone.js, ../artkit.js, ../titleart.js), writes only into `r` and `S`, uses no
- * Math.random / Date, and writes only the palette colours: ink char slate ash rock fog snow + ember (paper / paper2 as light endpoints).
+ * Math.random / Date, and writes only the palette colours: ink char slate ash rock fog snow + the blue ramp deepblue steelD steel blue paleblue frost + ember (paper / paper2 as light endpoints).
  * The registry sets S.variant and S.seed (a per-variant base + spec.seed) before calling paint. The logo is NOT painted for you: call
  * paintTitleLogo(r, S) (kit.js) wherever it belongs, and animLogo(r, S.logo, t) from anim() if you want the glint.
  */
@@ -32,7 +32,7 @@ const MODS = { castlerigg, shelter, mentol, dolmen, menhir };
  * The title screen shows only the logo (TAE BE WALKIT, painted by paintTitleLogo), the blinking prompt and one small controls line.
  *   prompt    { x, y }       centred blinking 'PRESS ENTER' with an accent arrow either side
  *   controls  y              small-font controls line, centred on the screen
- *   colors    PAL names: prompt, promptHalo, arrow, controls, halo
+ *   colors    PAL names (greys, blues, ember): prompt, promptHalo, arrow (paleblue), controls, halo
  *   hide      names of elements not to draw: 'prompt' 'controls'
  */
 export const DEFAULT_LAYOUT = Object.freeze({

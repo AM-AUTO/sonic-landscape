@@ -1,7 +1,8 @@
 /**
- * CONTOURS palette: the strict 29 colours (the original 16 OS-sheet colours, the five
- * gothic-ballad colours lamp / flame / bolt / ice / dusk, the four reds blood / rust / ember / heather and the four
- * warm-neutral greys char / slate / ash / fog), plus the day/night tint machinery.
+ * CONTOURS palette: the strict 35 colours (the original 16 OS-sheet colours, the five
+ * gothic-ballad colours lamp / flame / bolt / ice / dusk, the four reds blood / rust / ember / heather, the four
+ * warm-neutral greys char / slate / ash / fog, and the six cold blues deepblue / steelD / steel / blue / paleblue / frost
+ * that form a second tonal ramp matched in value to the greys), plus the day/night tint machinery.
  * No DOM here: everything works on plain typed arrays so it can run in Node.
  */
 
@@ -38,14 +39,26 @@ export const PAL = Object.freeze({
   slate: '#5f5c58',     // dark stone
   ash: '#807c77',       // mid stone
   fog: '#c9c5be',       // pale stone, mist
+  // the cold ramp (indices 29..34): each step pairs with a grey of similar value (ink~deepblue char~steelD slate~steel ash~blue rock~paleblue fog~frost snow=snow)
+  deepblue: '#1b2a47',  // ~ink: cold deep shadow
+  steelD: '#2f4468',    // ~char
+  steel: '#4a6a94',     // ~slate: shadowed stone, distant ridge, contour line
+  blue: '#6f90b8',      // ~ash
+  paleblue: '#a3bcd8',  // ~rock: sky-lit shade, frost, the accent's dim step
+  frost: '#cfe0ee',     // ~fog: cold light, the accent (glowing carved grooves)
 });
 
 /** Number of colours in the strict palette. */
-export const PAL_COUNT = 29;
+export const PAL_COUNT = 35;
+/** The colours nearest-colour snapping (quantize / quantizeHex) searches by default: the legacy 29, so the main game's colours never land on a blue. */
+export const SNAP_COUNT = 29;
 /** The original OS-sheet colours (indices 0..15). Level tints still snap to these only. */
 export const BASE_COUNT = 16;
 
 export const PAL_NAMES = Object.freeze(Object.keys(PAL));
+/** The start-screen tonal ramps, dark -> light (snow is shared). Same step = similar value. */
+export const GREY_RAMP = Object.freeze(['ink', 'char', 'slate', 'ash', 'rock', 'fog', 'snow']);
+export const BLUE_RAMP = Object.freeze(['deepblue', 'steelD', 'steel', 'blue', 'paleblue', 'frost', 'snow']);
 export const PAL_INDEX = Object.freeze(Object.fromEntries(PAL_NAMES.map((n, i) => [n, i])));
 
 function hexToRgb(h) {
@@ -69,8 +82,8 @@ export const PAL_U32_LIST = Object.freeze(PAL_NAMES.map((n) => PAL_U32[n]));
 export function rgbU32(r, g, b) { return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0; }
 
 // ---------------------------------------------------------------- quantize
-/** Nearest palette index for an r,g,b triple (searches the first `limit` colours, default all). */
-export function quantize(r, g, b, limit = PAL_NAMES.length) {
+/** Nearest palette index for an r,g,b triple (searches the first `limit` colours, default SNAP_COUNT: the legacy 29; pass PAL_COUNT to reach the blues). */
+export function quantize(r, g, b, limit = SNAP_COUNT) {
   let best = 0, bd = Infinity;
   for (let i = 0; i < limit; i++) {
     const c = PAL_RGB[PAL_NAMES[i]];
@@ -80,7 +93,7 @@ export function quantize(r, g, b, limit = PAL_NAMES.length) {
   }
   return best;
 }
-export function quantizeHex(hex, limit = PAL_NAMES.length) {
+export function quantizeHex(hex, limit = SNAP_COUNT) {
   const c = hexToRgb(hex);
   return PAL_NAMES[quantize(c[0], c[1], c[2], limit)];
 }

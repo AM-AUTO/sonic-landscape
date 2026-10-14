@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { render, renderSync } from '../tools/render3d/render.mjs';
-import { quantise, rampLevels, DEFAULT_RAMP } from '../tools/render3d/quantise.mjs';
+import { quantise, quantiseFull, rampLevels, DEFAULT_RAMP } from '../tools/render3d/quantise.mjs';
 import { encodeSymbols, bakedModuleSource, fnv1a } from '../tools/render3d/bakefmt.mjs';
 import { Group, box, sphere, slab, capsule, torus, column, cylinder, ellipsoid } from '../tools/render3d/shapes.mjs';
 import * as S from '../tools/render3d/sdf.mjs';
@@ -13,7 +13,8 @@ import { stoneAlbedo, makeSky, terrainHeightfield } from '../tools/render3d/help
 import { indexPNG } from '../tools/render3d/png.mjs';
 import { decodeBaked, decodeSymbols, blitBaked, pulseBakedEmbers, layerMaskOf } from '../src/render/title/bakedkit.js';
 import { Raster } from '../src/render/artkit.js';
-import { PAL_INDEX, PAL_U32_LIST, PAL_COUNT } from '../src/render/palette.js';
+import { PAL_INDEX, PAL_U32_LIST, PAL_COUNT, BLUE_RAMP } from '../src/render/palette.js';
+import { liftG, sinkG, GREY, BLUE } from '../src/render/artkit.js';
 import { mulberry32 } from '../src/core/rng.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -22,7 +23,9 @@ const W = 48, H = 27;
 const hashF = (a) => fnv1a(new Uint8Array(a.buffer, a.byteOffset, a.byteLength));
 
 const RAMP_IDX = new Set(DEFAULT_RAMP.map((n) => PAL_INDEX[n]));
-const ALLOWED = new Set([...RAMP_IDX, PAL_INDEX.ember]);
+const BLUE_IDX = new Set(BLUE_RAMP.map((n) => PAL_INDEX[n]));
+const ACCENT = [PAL_INDEX.frost, PAL_INDEX.paleblue];
+const ALLOWED = new Set([...RAMP_IDX, ...BLUE_IDX, PAL_INDEX.ember]);
 
 // ----------------------------------------------------------------------------------------------- renderer
 test('render: tiny demo render is deterministic, also across the multi-worker path', async () => {
@@ -32,6 +35,10 @@ test('render: tiny demo render is deterministic, also across the multi-worker pa
   assert.equal(hashF(a.lum), hashF(b.lum), 'same thread, two runs');
   assert.equal(hashF(a.lum), hashF(c.lum), 'three workers agree with one thread (lum)');
   assert.equal(hashF(a.emis), hashF(c.emis), 'emis');
+  assert.equal(hashF(a.cool), hashF(c.cool), 'cool (coolness channel)');
+  assert.equal(hashF(a.cool), hashF(b.cool), 'cool, same thread');
+  let cmin = 9, cmax = -9; for (const v of a.cool) { assert.ok(Number.isFinite(v) && v >= 0 && v <= 1); if (v < cmin) cmin = v; if (v > cmax) cmax = v; }
+  assert.ok(cmax - cmin > 0.15, 'the automatic cool defaults (shadow, AO, sky gradient) vary across the picture: ' + (cmax - cmin));
   assert.equal(hashF(a.depth), hashF(c.depth), 'depth');
   assert.equal(fnv1a(a.layer), fnv1a(c.layer), 'layer');
   // sanity: a picture, not a blank
@@ -56,21 +63,25 @@ test('render: supersampling changes the image smoothly (ss2 close to a downsampl
 });
 
 // ----------------------------------------------------------------------------------------------- quantiser
-test('quantise: only ramp colours and ember come out; ember follows emis; dither is ordered', () => {
+test('quantise: only ramp colours and the accent come out; the accent follows emis; dither is ordered', () => {
   const w = 64, h = 32, lum = new Float32Array(w * h), emis = new Float32Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) lum[y * w + x] = x / (w - 1);
   for (let y = 8; y < 16; y++) for (let x = 10; x < 20; x++) emis[y * w + x] = 1;
   for (let y = 8; y < 16; y++) for (let x = 20; x < 24; x++) emis[y * w + x] = 0.4;
   const idx = quantise({ lum, emis }, w, h);
   assert.equal(idx.length, w * h);
+  for (const v of idx) assert.ok(RAMP_IDX.has(v) || ACCENT.includes(v), 'no cool buffer: greys + the accent only');
   const seen = new Set();
   for (const v of idx) { assert.ok(ALLOWED.has(v), 'palette index ' + v + ' is in the ramp + ember'); seen.add(v); }
   for (const r of RAMP_IDX) assert.ok(seen.has(r), 'the gradient reaches every ramp colour');
-  assert.ok(seen.has(PAL_INDEX.ember));
-  assert.equal(idx[10 * w + 15], PAL_INDEX.ember, 'emis 1 -> ember');
-  let partial = 0; for (let x = 20; x < 24; x++) for (let y = 8; y < 16; y++) if (idx[y * w + x] === PAL_INDEX.ember) partial++;
+  assert.ok(seen.has(PAL_INDEX.frost));
+  assert.equal(idx[10 * w + 15], PAL_INDEX.frost, 'emis 1 -> frost (the blue accent)');
+  let partial = 0; for (let x = 20; x < 24; x++) for (let y = 8; y < 16; y++) if (idx[y * w + x] === PAL_INDEX.paleblue) partial++;
   assert.ok(partial > 0 && partial < 32, 'emis .4 is a dithered edge: ' + partial + ' of 32');
   assert.equal(idx[0], PAL_INDEX.ink); assert.equal(idx[w - 1], PAL_INDEX.snow);
+  // the old red accent is still available (shelter / demo)
+  const red = quantise({ lum, emis }, w, h, { accent: 'ember' });
+  assert.equal(red[10 * w + 15], PAL_INDEX.ember);
   // ordered: the same input gives the same output, and a constant tone dithers with a repeating 8x8 pattern
   const flat = new Float32Array(w * h).fill(0.55);
   const q = quantise({ lum: flat }, w, h, { ditherScale: 1 });
@@ -83,18 +94,56 @@ test('quantise: only ramp colours and ember come out; ember follows emis; dither
   for (let i = 1; i < lv.length; i++) assert.ok(lv[i] > lv[i - 1], 'ramp levels ascend');
 });
 
+test('quantise: coolness picks the ramp per pixel: 0 all grey, 1 all blue, between an ordered Bayer mix; tone steps pair grey~blue', () => {
+  const w = 64, h = 32, lum = new Float32Array(w * h), cool = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) lum[y * w + x] = x / (w - 1);
+  const grey = quantise({ lum, cool }, w, h), g0 = quantise({ lum }, w, h);
+  assert.deepEqual(grey, g0, 'cool 0 is the plain grey result');
+  cool.fill(1);
+  const blue = quantise({ lum, cool }, w, h);
+  for (let i = 0; i < blue.length; i++) {
+    const gi = DEFAULT_RAMP.findIndex((n) => PAL_INDEX[n] === grey[i]);
+    assert.equal(blue[i], PAL_INDEX[BLUE_RAMP[gi]], 'same step, blue colour at ' + i);
+  }
+  assert.ok([...blue].every((v) => BLUE_IDX.has(v)));
+  assert.ok(blue.includes(PAL_INDEX.deepblue) && blue.includes(PAL_INDEX.steel) && blue.includes(PAL_INDEX.frost));
+  // half cool: both ramps appear, as a repeating 8x8 ordered pattern, and a coolMix of 0 switches it off
+  cool.fill(0.5);
+  const mix = quantise({ lum: new Float32Array(w * h).fill(0.55), cool }, w, h, { ditherScale: 1, coolDither: 1 });
+  let nb = 0; for (const v of mix) if (BLUE_IDX.has(v) && !RAMP_IDX.has(v)) nb++;
+  assert.ok(nb > w * h * 0.3 && nb < w * h * 0.7, 'about half blue: ' + nb / (w * h));
+  for (let y = 0; y < h - 8; y++) for (let x = 0; x < w - 8; x++) assert.equal(mix[y * w + x], mix[(y + 8) * w + x + 8]);
+  assert.deepEqual(quantise({ lum, cool }, w, h, { coolMix: 0 }), g0);
+  // cool ramps by value: a cold gradient (cool follows x) is monotonic in tone
+  const r = quantiseFull({ lum, cool: Float32Array.from({ length: w * h }, (_, i) => (i % w) / (w - 1)) }, w, h);
+  assert.equal(r.accent.length, w * h);
+  assert.ok(r.idx.some((v) => RAMP_IDX.has(v) && v !== PAL_INDEX.snow) && r.idx.some((v) => BLUE_IDX.has(v) && v !== PAL_INDEX.snow));
+});
+
+test('artkit liftG / sinkG walk the ramp a colour belongs to (grey stays grey, blue stays blue)', () => {
+  for (let i = 0; i < 6; i++) { assert.equal(liftG(GREY[i]), GREY[i + 1]); assert.equal(sinkG(GREY[i + 1]), GREY[i]); }
+  for (let i = 0; i < 5; i++) { assert.equal(liftG(BLUE[i]), BLUE[i + 1]); assert.equal(sinkG(BLUE[i + 1]), BLUE[i]); }
+  assert.equal(sinkG(BLUE[0]), BLUE[0]); assert.equal(liftG(PAL_U32_LIST[PAL_INDEX.ember]), PAL_U32_LIST[PAL_INDEX.ember]);
+});
+
 // ----------------------------------------------------------------------------------------------- bake round trip
 test('bake -> decode round trip reproduces the quantised buffer and the layer hints exactly', async () => {
   const r = await render({ scene: DEMO, w: 96, h: 54, ss: 1, workers: 2 });
-  const idx = quantise(r, 96, 54, { ditherScale: 0.6 });
-  const { source, embers } = bakedModuleSource({ w: 96, h: 54, idx, layer: r.layer, emberIdx: PAL_INDEX.ember, meta: { scene: 'demo', ss: 1, hash: fnv1a(idx) } });
+  const { idx, accent } = quantiseFull(r, 96, 54, { ditherScale: 0.6 });
+  const { source, embers } = bakedModuleSource({ w: 96, h: 54, idx, layer: r.layer, accent, meta: { scene: 'demo', ss: 1, hash: fnv1a(idx) } });
   const mod = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   const baked = decodeBaked(mod);
   assert.equal(baked.w, 96); assert.equal(baked.h, 54);
   assert.deepEqual(baked.idx, idx);
   assert.deepEqual(baked.layer, r.layer);
   assert.equal(baked.embers.length, embers.length);
-  for (const [x, y, , dim] of baked.embers) { assert.equal(idx[y * 96 + x], PAL_INDEX.ember); assert.ok(RAMP_IDX.has(dim)); }
+  assert.equal(embers.length, accent.reduce((a, v) => a + v, 0), 'the accent list is the accent mask');
+  for (const [x, y, , dim] of baked.embers) { assert.ok(ACCENT.includes(idx[y * 96 + x])); assert.ok(BLUE_IDX.has(dim) && dim !== idx[y * 96 + x], 'dims one step down the blue ramp'); }
+  // legacy data: an ember-coloured accent is found by colour and keeps its grey fallback
+  const red = quantiseFull(r, 96, 54, { accent: 'ember' }), srcRed = bakedModuleSource({ w: 96, h: 54, idx: red.idx, layer: r.layer, emberIdx: PAL_INDEX.ember, meta: { scene: 'demo' } });
+  const bakedRed = decodeBaked(await import('data:text/javascript;base64,' + Buffer.from(srcRed.source).toString('base64')));
+  assert.ok(bakedRed.embers.length > 0);
+  for (const [x, y, , dim] of bakedRed.embers) { assert.equal(red.idx[y * 96 + x], PAL_INDEX.ember); assert.ok(RAMP_IDX.has(dim)); }
   assert.equal(baked.meta.hash, fnv1a(idx));
   assert.ok(source.length < 100 * 1024, 'module size ' + source.length);
   assert.deepEqual(decodeBaked(mod.default).idx, idx, 'accepts the default export too');
@@ -107,7 +156,7 @@ test('codec: bit-packed and RLE modes both round-trip (noise, flat, one symbol, 
     flat: new Uint8Array(70000).fill(3),
     runs: Uint8Array.from({ length: 3000 }, (_, i) => (i >> 5) % 5),
     long: (() => { const a = new Uint8Array(1500).fill(4); a.fill(7, 600, 1100); return a; })(),
-    many: Uint8Array.from({ length: 4000 }, () => Math.floor(rng() * 29)),
+    many: Uint8Array.from({ length: 4000 }, () => Math.floor(rng() * 35)),
     wide: Uint8Array.from({ length: 2000 }, () => Math.floor(rng() * 200)),
   };
   for (const [name, data] of Object.entries(cases)) {
@@ -122,8 +171,8 @@ test('codec: bit-packed and RLE modes both round-trip (noise, flat, one symbol, 
 
 test('bakedkit: blit paints only palette colours with layer ids; embers pulse between ember and a grey; filter and offset work', async () => {
   const r = await render({ scene: DEMO, w: 96, h: 54, ss: 1, workers: 0 });
-  const idx = quantise(r, 96, 54);
-  const { source } = bakedModuleSource({ w: 96, h: 54, idx, layer: r.layer, emberIdx: PAL_INDEX.ember, meta: { scene: 'demo' } });
+  const { idx, accent } = quantiseFull(r, 96, 54);
+  const { source } = bakedModuleSource({ w: 96, h: 54, idx, layer: r.layer, accent, meta: { scene: 'demo' } });
   const baked = decodeBaked(await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64')));
   const R = new Raster(120, 70);
   blitBaked(R, baked, { x: 10, y: 5 });
@@ -146,8 +195,8 @@ test('bakedkit: blit paints only palette colours with layer ids; embers pulse be
     for (const [x, y] of baked.embers) seen.add(R.d[(y + 5) * 120 + x + 10]);
   }
   for (const c of seen) assert.ok(PAL.has(c));
-  assert.ok(seen.has(PAL_U32_LIST[PAL_INDEX.ember]) && seen.size >= 2, 'ember pulses between ember and a dim grey');
-  assert.equal(PAL_COUNT, 29);
+  assert.ok(seen.has(PAL_U32_LIST[PAL_INDEX.frost]) && seen.size >= 2, 'the accent pulses between frost and a dimmer blue');
+  assert.equal(PAL_COUNT, 35);
 });
 
 // ----------------------------------------------------------------------------------------------- Group

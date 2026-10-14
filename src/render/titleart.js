@@ -126,8 +126,8 @@ function textMask(text, scale, spacing) {
 /**
  * The logo, carved in stone and painted on the art: a dithered cast shadow, a block of extrusion (char / ink), a hard ink outline and a
  * face that runs fog -> ash -> slate down the letters with horizontal strata and grain, a lit upper-left edge in snow / fog with one thin
- * ember line just inside it (the light catching a fresh cut), and a shaded lower-right edge in char / ink. Greys + ember only.
- *   paintLogo(r, text, cx, top, scale, spacing) -> { face: [pixel index...], ember: [pixel index...], x0, y0, w, h }
+ * thin paleblue / frost line just inside it (the light catching a fresh cut), and a shaded lower-right edge in char / ink. Greys + the blue accent only.
+ *   paintLogo(r, text, cx, top, scale, spacing) -> { face: [pixel index...], ember: [pixel index...] (= accent, the paleblue/frost line pixels), x0, y0, w, h }
  * `face` is every face pixel (the glint sweep of animLogo walks it); the shadow and extrusion are written to layer 6 like the face.
  */
 export function paintLogo(r, text, cx, top, scale, spacing) {
@@ -163,7 +163,7 @@ export function paintLogo(r, text, cx, top, scale, spacing) {
     const litEdge = !at(x - 1, y) || !at(x, y - 1), shadeEdge = !at(x + 1, y) || !at(x, y + 1);
     if (litEdge) c = bay(X, Y) < 0.8 ? C.snow : C.fog;                                           // lit edge
     else if (shadeEdge) c = bay(X, Y) < 0.7 ? C.char : C.ink;                                    // shaded edge
-    else if ((at(x - 1, y) && !at(x - 2, y)) || (at(x, y - 1) && !at(x, y - 2))) { if (bay(X + 1, Y) < 0.8) { c = C.ember; ember.push(Y * r.w + X); } }   // the ember line, lit edge only
+    else if ((at(x - 1, y) && !at(x - 2, y)) || (at(x, y - 1) && !at(x, y - 2))) { if (bay(X + 1, Y) < 0.8) { c = bay(X + 3, Y + 1) < 0.3 ? C.frost : C.paleblue; ember.push(Y * r.w + X); } }   // the cold accent line (paleblue, a little frost), lit edge only
     else if (!at(x + 2, y) || !at(x, y + 2)) c = bay(X, Y) < 0.5 ? C.slate : c;                  // a second step of shade
     r.px(X, Y, c, 6);
     face.push(Y * r.w + X);

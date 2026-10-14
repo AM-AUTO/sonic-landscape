@@ -5,11 +5,13 @@
  *
  *   decodeBaked(mod) -> { w, h, idx: Uint8Array (PAL_INDEX per pixel), layer: Uint8Array (0 sky/far, 1 mid, 3 near),
  *                         embers: [[x, y, phase, dimIdx], ...], meta }
- *        mod = the baked module's default export (or the module namespace). dimIdx = the grey beside each ember pixel (what it falls back to).
+ *        mod = the baked module's default export (or the module namespace). `embers` is the ACCENT: the emissive pixels of the render (glowing carvings).
+ *        dimIdx = what each falls back to when it dims: for a blue accent the next step down the blue ramp (frost -> paleblue, paleblue -> blue);
+ *        for an old red ember (shelter) the grey beside it.
  *   blitBaked(r, baked, { x = 0, y = 0, filter })
  *        paints every pixel into Raster `r` (PAL_U32 colour + layer id, so mist / glow helpers' `layerMax` keep working).
  *        filter(px, py, idx, layer) -> false skips a pixel (e.g. keep a hand-painted sky: filter: (x, y, i, l) => l > 0).
- *   pulseBakedEmbers(r, baked, t, o)   the incisions breathe: call from anim() on the copy. o: { x, y, dim = 0.2 (fraction of the cycle spent dim) }.
+ *   pulseBakedEmbers(r, baked, t, o)   the incisions breathe (frost <-> paleblue; old ember <-> grey): call from anim() on the copy. o: { x, y, dim = 0.2 (fraction of the cycle spent dim) }.
  *   layerMaskOf(baked, minLayer, maxLayer) -> Uint8Array(w*h) 1 where layer is in range (build regions for paintMistBands / textClear etc.)
  *
  * Typical screen module:
@@ -20,6 +22,7 @@
 import { PAL_U32_LIST, PAL_INDEX } from '../palette.js';
 
 const EMBER = PAL_INDEX.ember;
+const BLUE_STEPS = ['deepblue', 'steelD', 'steel', 'blue', 'paleblue', 'frost'].map((n) => PAL_INDEX[n]);
 
 function b64bytes(s) {
   const bin = atob(s), out = new Uint8Array(bin.length);
@@ -58,6 +61,8 @@ export function decodeBaked(mod) {
   const { w, h } = m, n = w * h;
   const idx = decodeSymbols(m.idx, n), layer = decodeSymbols(m.layer, n);
   const embers = (m.embers || []).map(([x, y, ph]) => {
+    const at = idx[y * w + x], bi = BLUE_STEPS.indexOf(at);
+    if (at !== EMBER && bi > 0) return [x, y, ph, BLUE_STEPS[bi - 1]];                  // blue accent: dims one step down the blue ramp
     let dim = PAL_INDEX.char;
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [1, -1], [-1, 1]]) {
       const X = x + dx, Y = y + dy;
@@ -92,7 +97,7 @@ export function pulseBakedEmbers(r, baked, t, o = {}) {
     const X = x + ox, Y = y + oy;
     if (X < 0 || Y < 0 || X >= r.w || Y >= r.h) continue;
     const k = 0.5 + 0.5 * Math.sin(t * 1.3 + ph * 0.55 + x * 0.05);
-    r.d[Y * r.w + X] = PAL_U32_LIST[k < dim ? d : EMBER];
+    r.d[Y * r.w + X] = PAL_U32_LIST[k < dim ? d : baked.idx[y * baked.w + x]];
   }
 }
 

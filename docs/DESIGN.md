@@ -17,7 +17,7 @@ Move and it becomes yours.
 5. **Shared sound world.** Drone foundation, a soloed lead, envelope percussion and granular/reverb/delay space. Each level re-weights these, and none drops any.
 
 ## Visual language
-An Ordnance Survey Landranger sheet rendered by an 8-bit console. The internal framebuffer is 384×216, integer-scaled with no smoothing. The 29-colour palette (the original 16 OS-sheet colours, five gothic-ballad colours, four reds and four warm greys). The start screens use greys + ember only (ink / snow / paper as endpoints):
+An Ordnance Survey Landranger sheet rendered by an 8-bit console. The internal framebuffer is 384×216, integer-scaled with no smoothing. The 35-colour palette (the original 16 OS-sheet colours, five gothic-ballad colours, four reds, four warm greys and six cold blues). The start screens use the grey ramp, the blue ramp (a second tonal ramp matched step for step in value to the greys: ink~deepblue char~steelD slate~steel ash~blue rock~paleblue fog~frost) and, in four of them, the ember accent (ink / snow / paper as endpoints; the winter `mentol` cover is greys + blues only, its accent is frost):
 
 | Name | Hex | Use |
 |---|---|---|
@@ -50,6 +50,12 @@ An Ordnance Survey Landranger sheet rendered by an 8-bit console. The internal f
 | slate | #5f5c58 | warm grey: dark stone |
 | ash | #807c77 | warm grey: mid stone |
 | fog | #c9c5be | warm grey: pale stone, mist |
+| deepblue | #1b2a47 | cold ramp (~ink): deep cold shadow |
+| steelD | #2f4468 | cold ramp (~char) |
+| steel | #4a6a94 | cold ramp (~slate): shadowed stone, distant ridge, contour lines on the winter moor |
+| blue | #6f90b8 | cold ramp (~ash) |
+| paleblue | #a3bcd8 | cold ramp (~rock): sky-lit shade, frost, the title accent's dim step |
+| frost | #cfe0ee | cold ramp (~fog): cold light, the accent (glowing grooves, the logo's lit-edge line) |
 
 Map conventions:
 - 10 m contours (20 m in steep levels), with an index contour every 5th, thicker and labelled in tiny pixel digits that follow the slope.

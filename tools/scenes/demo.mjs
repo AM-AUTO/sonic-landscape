@@ -12,7 +12,7 @@ import {
 import { mulberry32 } from '../../src/core/rng.js';
 
 const ID_GROUND = 0, ID_STONE = 1, ID_EMBER = 2, ID_WALL = 3;
-export const quantise = { gamma: 1.05, contrast: 1.12, ditherScale: 0.55, sharpen: 0.3 };
+export const quantise = { gamma: 1.05, contrast: 1.12, ditherScale: 0.55, sharpen: 0.3, coolMix: 0, accent: 'ember' };
 
 export function build(params = {}) {
   const { sunAz = 20, sunEl = 17, seed = 5, groove = 1, fog = 0.0032 } = params;

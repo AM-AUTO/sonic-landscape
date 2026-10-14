@@ -76,7 +76,7 @@ corries and named summits with real Gaelic names. It is a stylisation, not surve
 src/core      seeded RNG, noise
 src/world     heightfield sculpting toolkit, hydrology, land cover, 8 level definitions
 src/game      walker physics, POI conditions, resonance, gate chains, progression, autopilot, input
-src/render    384×216 strict-29-colour framebuffer: OS-sheet map bake, HUD, sprites, screens, atmosphere (mist, weather, lightning, lantern light)
+src/render    384×216 strict-35-colour framebuffer: OS-sheet map bake, HUD, sprites, screens, atmosphere (mist, weather, lightning, lantern light)
 src/audio     modular synth backend (see below)
 src/main.js   integration: fixed-step loop, menus, event feedback
 ```

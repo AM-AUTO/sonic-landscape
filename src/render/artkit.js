@@ -74,9 +74,13 @@ export const sink = (c) => SINK.get(c) || c;
 /** The greyscale ramp of the start screens, dark -> light. ember is the one accent, kept apart from the ramp. */
 export const GREY = Object.freeze([C.ink, C.char, C.slate, C.ash, C.rock, C.fog, C.snow]);
 const GREY_AT = new Map(GREY.map((c, i) => [c, i]));
-/** One step up / down the GREY ramp (a non-grey colour is returned unchanged; ink sinks to ink, snow lifts to snow). */
-export const liftG = (c) => { const i = GREY_AT.get(c); return i === undefined ? c : GREY[Math.min(GREY.length - 1, i + 1)]; };
-export const sinkG = (c) => { const i = GREY_AT.get(c); return i === undefined ? c : GREY[Math.max(0, i - 1)]; };
+/** The cold ramp, dark -> light, paired step for step with GREY (snow is shared). */
+export const BLUE = Object.freeze([C.deepblue, C.steelD, C.steel, C.blue, C.paleblue, C.frost, C.snow]);
+const BLUE_AT = new Map(BLUE.map((c, i) => [c, i]));
+/** One step up / down the ramp a colour belongs to: GREY stays grey, a blue stays blue (snow is both: it follows GREY). Any other colour is returned
+ *  unchanged; the darkest step sinks to itself, snow lifts to snow. */
+export const liftG = (c) => { let i = GREY_AT.get(c); if (i !== undefined) return GREY[Math.min(GREY.length - 1, i + 1)]; i = BLUE_AT.get(c); return i === undefined ? c : BLUE[Math.min(BLUE.length - 1, i + 1)]; };
+export const sinkG = (c) => { let i = GREY_AT.get(c); if (i !== undefined) return GREY[Math.max(0, i - 1)]; i = BLUE_AT.get(c); return i === undefined ? c : BLUE[Math.max(0, i - 1)]; };
 
 /** Sky colour at t (0 top .. 1 horizon): ordered dither between neighbouring stops. */
 export function skyAt(stops, t, x, y) {

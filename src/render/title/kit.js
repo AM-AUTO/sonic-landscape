@@ -1,7 +1,7 @@
 /**
- * Shared kit for the five start screens (src/render/title/*.js). GREYSCALE + ONE ACCENT:
+ * Shared kit for the five start screens (src/render/title/*.js). GREYSCALE + a second BLUE ramp + ONE ACCENT:
  *
- *   colours   ink char slate ash rock fog snow (artkit GREY, dark -> light) and ember (the accent). paper / paper2 only as warm light endpoints.
+ *   colours   ink char slate ash rock fog snow (artkit GREY, dark -> light), the blue ramp deepblue steelD steel blue paleblue frost (artkit BLUE; liftG / sinkG walk whichever ramp a colour is on) and ember (the old accent; the logo line and `mentol` use paleblue / frost). paper / paper2 only as warm light endpoints.
  *   rasters   everything writes strict palette u32 colours (PAL_U32 = `C`) into a Raster (artkit.js): r.px(x, y, colour, layer), r.get(x, y).
  *             `layer` is the depth id of a pixel (0 sky .. 6 logo); mist and glows take a `layerMax` so they only cover what lies behind them.
  *   determinism   no Math.random anywhere: every random choice comes from `seed` (hash2f / vnoise / mulberry32), so a painting is a pure function of its spec.

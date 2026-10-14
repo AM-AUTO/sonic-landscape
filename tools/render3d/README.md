@@ -1,7 +1,7 @@
 # render3d: real 3D start screens, baked to the palette
 
 A dependency-free CPU **signed-distance-field ray marcher** (Node 22, worker_threads, deterministic) renders a scene,
-a **quantiser** turns it into palette indices (ink char slate ash rock fog snow + the ember accent, 8x8 ordered dither, nothing else),
+a **quantiser** turns it into palette indices (two tonal ramps, the greys ink char slate ash rock fog snow and the blues deepblue steelD steel blue paleblue frost, chosen per pixel from a **coolness** channel, plus the frost accent; 8x8 ordered dither, nothing else),
 `tools/bake-title.mjs` writes it as a small JS module, and `src/render/title/bakedkit.js` blits it into a screen's Raster.
 Changing the sun, the camera or a stone is a parameter and a few seconds (demo, 384x216 at SS2: about 9 s on 4 cores), not a repaint.
 
@@ -54,8 +54,12 @@ The full contract (camera, sun, sky, map, shade/hit fields, fog, emissive, layer
 `stoneAlbedo(x,y,z, seed)` so every stone gets its own strata and lichen. For a smooth union of ground and stones, compute the distances yourself, `smin` them,
 and set `M.id`/`M.i` by hand (see `tools/scenes/demo.mjs`).
 
-### Emission (the ember)
-Two ways. (1) A material id listed in `scene.emissiveMats`: no lighting is computed, `shade` returns `emissive: 1` (carved groove cores, a doorway glow). (2) Any material:
+### Coolness (blue as a second tonal ramp)
+`render()` returns `cool` (0..1) beside `lum`. The quantiser picks the step from `lum`, then the grey or the blue colour of that step from `cool` by an ordered dither (cool 0 all grey, 1 all blue, between a Bayer mix, `coolDither` narrows the band), so blue defines contrast: cold shadow, distance, ice against neutral sunlit stone and snow.
+Per sample: `cool = coolBase + coolShadow * (1 - sunlit) + coolAO * (1 - ao) + coolSnow * shade.snow + shade.cool`, then aerial perspective pulls it to 1 by `coolHaze * fog`. Scene knobs: `coolBase 0, coolShadow .45, coolAO .25, coolSnow .3, coolHaze .8, coolLit .15`; `shade()` may return `cool` (additive), `snow` (0..1) or `coolSet` (replaces the automatic part). Sky: `scene.skyShade(dir, out)` fills `out.lum` and `out.cool` (else `sky(dir)` plus `skyCool: {horizon, zenith}`). A scene that wants the old greys-only bake sets `export const quantise = { coolMix: 0 }` (demo, shelter do, with `accent: 'ember'`). `--cool png` writes the coolness buffer.
+
+### Emission (the accent)
+The accent is now cold light: frost (`emissive >= 0.5`) with a dithered paleblue edge (`0.25..0.5`); `accent: 'ember'` in the scene's `quantise` export brings back the red ember. Two ways. (1) A material id listed in `scene.emissiveMats`: no lighting is computed, `shade` returns `emissive: 1` (carved groove cores, a doorway glow). (2) Any material:
 `shade` returns `emissive` 0..1 as coverage; `>= 0.5` is ember, `0.25..0.5` becomes a dithered ember edge, so a soft `emissive` falloff makes a sparse ember halo.
 Ember glow lighting the surrounding stone in greys: add to `lum` from a distance field to the groove inside `shade` (the demo does).
 Carving: `shapeSub(stone, grooveShape, 0.01)`, then put a thinner `capsule` core (emissive material) just behind the face so it shows in the groove.
@@ -70,9 +74,9 @@ Carving: `shapeSub(stone, grooveShape, 0.01)`, then put a thinner `capsule` core
 | noise | `makeNoise(seed)` -> `n3 n2 fbm3 fbm2 ridge3`; `getNoise(seed)` (cached); `worley3(x,y,z,seed)` + `WORLEY`; `hash3 hash3f` |
 
 ## Quantiser (`quantise.mjs`)
-`quantise({lum, emis, depth}, W, H, opts) -> Uint8Array` of PAL_INDEX. `ramp` (names/indices dark->light; default the 7 greys), `gamma`, `contrast`/`pivot`/`exposure`,
+`quantise({lum, cool, emis, depth}, W, H, opts) -> Uint8Array` of PAL_INDEX (`quantiseFull` also returns the accent mask, which the baked file lists as its `embers`). `ramp` / `blueRamp` (names/indices dark->light; default the 7 greys / the 7 blues, snow shared), `coolMix` (0 ignores cool), `coolGain`, `coolDither` (0.6), `accent`/`accentEdge` ('frost'/'paleblue'), `gamma`, `contrast`/`pivot`/`exposure`,
 `ditherScale` (default 0.6: **flat tints with narrow dithered seams**, like the painted covers; 1 = full Bayer blend, noisy), `sharpen` (unsharp, 0..1.5),
-`outline` (ink line at depth discontinuities), `emberLo/Hi` (0.25/0.5). Tune per scene with `export const quantise = {...}`.
+`outline` (ink line at depth discontinuities), `emberLo/Hi` (0.25/0.5: accent coverage thresholds). Tune per scene with `export const quantise = {...}`.
 
 ## Consuming a baked scene in a screen module
 ```js
@@ -89,7 +93,7 @@ export function paint(r, spec, S) {
 export function anim(r, spec, S, t) { animMistBands(r, S.mist, t); pulseBakedEmbers(r, S.baked, t); animLogo(r, S.logo, t); }
 ```
 `blitBaked(r, baked, {x, y, filter})` can overlay a baked scene on a hand-painted base (`filter: (x, y, idx, layer) => layer > 0` keeps your sky).
-Baked modules are about 35-70 KB (bit-packed or RLE, whichever is smaller; embers are listed as pixels).
+Baked modules are about 35-70 KB (bit-packed or RLE, whichever is smaller; the accent pixels are listed explicitly, and `pulseBakedEmbers` breathes them frost <-> paleblue, or the old ember <-> grey for red data).
 
 ## Tests
 `tests/render3d.test.js`: multi-worker determinism, quantiser palette strictness, bake -> decode round trip, Group vs brute force, primitives, noise.

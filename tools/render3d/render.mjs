@@ -5,7 +5,7 @@
  *        scene   a path to a scene module (tools/scenes/<name>.mjs, absolute or relative to cwd) -- required for workers > 0 --
  *                or an already built scene object (then it renders in this thread)
  *        params  passed to the module's build(params)
- *        lum Float32Array 0..1 (display luminance), emis Float32Array 0..1, depth Float32Array (metres along the ray; 1e4 = sky),
+ *        lum Float32Array 0..1 (display luminance), cool Float32Array 0..1 (coolness: grey ramp -> blue ramp), emis Float32Array 0..1, depth Float32Array (metres along the ray; 1e4 = sky),
  *        layer Uint8Array (0 sky/far, 1 mid, 3 near; thresholds scene.layers = [nearMax, midMax] metres)
  *   renderSync(scene, {w,h,ss}) -> same, single thread.   prepare(scene, w, h, ss) / renderRows(ctx, y0, y1) are what workers run.
  *
@@ -13,6 +13,11 @@
  * widens with distance (cone tracing), tetrahedral normal at pixel-footprint scale, SDF soft shadow (penumbra from sun.softness),
  * 5-sample ambient occlusion, hemisphere ambient + bounce + rim light, exponential aerial perspective, sky for misses.
  * SSxSS regular samples per pixel are box-averaged; emissive samples are averaged separately so a glow edge keeps its grey.
+ *
+ * COOLNESS (0..1, a second output beside lum): the quantiser picks the grey or the blue ramp per pixel from it. Per surface sample:
+ *   cool = coolBase + coolShadow * (1 - sunlit, where sunlit = soft shadow visibility * min(1, ndl / coolLit)) + coolAO * (1 - ao) + coolSnow * shade.snow + shade.cool, then aerial perspective pulls it towards 1
+ *   by coolHaze * (fog fraction). shade() may return `coolSet` to REPLACE the automatic part (then `cool` and `snow` still add). Sky misses use scene.skyShade(dir, out) -> out.lum/out.cool when present, else sky(dir) with a skyCool gradient.
+ *   render() returns { lum, emis, cool, depth, layer }.
  */
 import os from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -21,6 +26,7 @@ import { Worker } from 'node:worker_threads';
 import { M } from './sdf.mjs';
 
 const FAR = 1e4;
+const SKYTMP = { lum: 0, cool: 0 };
 
 function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
 
@@ -54,7 +60,11 @@ export function prepare(scene, W, H, SS = 2) {
     shadowDist: scene.shadowDist == null ? 40 : scene.shadowDist, shadowSteps: scene.shadowSteps || 56,
     near: scene.near == null ? 0.05 : scene.near, far: scene.far == null ? 400 : scene.far, maxSteps: scene.maxSteps || 200, omega: scene.omega || 1.3, minStep: scene.minStep == null ? 0.6 : scene.minStep,
     fogDensity: scene.fogDensity || 0, fogFall: scene.fogFall || 0, fogY0: scene.fogY0 || 0,
-    fogLum: scene.fogLum != null ? scene.fogLum : sky(hd),
+    fogLum: scene.fogLum != null ? scene.fogLum : (scene.skyShade ? (scene.skyShade(hd, SKYTMP), SKYTMP.lum) : sky(hd)),
+    coolBase: scene.coolBase == null ? 0 : scene.coolBase, coolShadow: scene.coolShadow == null ? 0.45 : scene.coolShadow,
+    coolAO: scene.coolAO == null ? 0.25 : scene.coolAO, coolSnow: scene.coolSnow == null ? 0.3 : scene.coolSnow, coolHaze: scene.coolHaze == null ? 0.8 : scene.coolHaze, coolLit: scene.coolLit == null ? 0.15 : scene.coolLit,
+    skyCoolH: scene.skyCool ? scene.skyCool.horizon : 0.25, skyCoolZ: scene.skyCool ? scene.skyCool.zenith : 0.6,
+    skyOut: { lum: 0, cool: 0 },
     emissive, layers, bounds, shift: cam.shift || [0, 0],
     hit: { x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0, id: 0, i: 0, a: 0, b: 0, c: 0, t: 0, vx: 0, vy: 0, vz: 1, ndl: 0, shadow: 1, ao: 1, sun: 0, hemi: 0, rim: 0, light: 0, lit: true, px: 0, py: 0 },
     dir: new Float64Array(3),
@@ -141,10 +151,14 @@ function shadeHit(ctx, ox, oy, oz, dx, dy, dz, t, out) {
     light = sunT + hemi + bounce + rim;
   }
   hit.ndl = ndl; hit.shadow = shadow; hit.ao = ao; hit.sun = sunT; hit.hemi = hemi; hit.rim = rim; hit.light = light; hit.lit = !emissiveMat;
-  let lum, emis = 0;
+  let lum, emis = 0, cool = ctx.coolBase;
+  if (!emissiveMat) {
+    const lit = shadow * (ndl <= 0 ? 0 : ndl >= ctx.coolLit ? 1 : ndl / ctx.coolLit);
+    cool += ctx.coolShadow * (1 - lit) + ctx.coolAO * (1 - ao);
+  }
   if (scene.shade) {
     const s = scene.shade(hit);
-    if (typeof s === 'number') lum = s; else { lum = s.lum; emis = s.emissive || 0; }
+    if (typeof s === 'number') lum = s; else { lum = s.lum; emis = s.emissive || 0; if (s.coolSet != null) cool = s.coolSet; if (s.cool) cool += s.cool; if (s.snow) cool += ctx.coolSnow * s.snow; }
   } else lum = 0.5 * light;
   if (ctx.fogDensity > 0) {
     const ym = (oy + py) * 0.5;
@@ -152,22 +166,23 @@ function shadeHit(ctx, ox, oy, oz, dx, dy, dz, t, out) {
     const fg = 1 - Math.exp(-dens * t);
     lum += (ctx.fogLum - lum) * fg;
     emis *= 1 - fg;
+    cool += (1 - (cool > 1 ? 1 : cool)) * fg * ctx.coolHaze;
   }
-  out[0] = lum; out[1] = emis;
+  out[0] = lum; out[1] = emis; out[2] = cool < 0 ? 0 : cool > 1 ? 1 : cool;
 }
 
-/** rows y0..y1-1 of the final image. Returns { lum, emis, depth, layer } (typed arrays of W*(y1-y0)). */
+/** rows y0..y1-1 of the final image. Returns { lum, emis, cool, depth, layer } (typed arrays of W*(y1-y0)). */
 export function renderRows(ctx, y0, y1) {
   const { W, SS, scene, pos, f, right, up, tanH, aspect, hit, dir } = ctx;
   const H = ctx.H, n = W * (y1 - y0);
-  const lumO = new Float32Array(n), emisO = new Float32Array(n), depthO = new Float32Array(n), layerO = new Uint8Array(n);
-  const out = [0, 0], inv = 1 / SS, cnt = SS * SS;
+  const lumO = new Float32Array(n), coolO = new Float32Array(n), emisO = new Float32Array(n), depthO = new Float32Array(n), layerO = new Uint8Array(n);
+  const out = [0, 0, 0], inv = 1 / SS, cnt = SS * SS;
   const [nearMax, midMax] = ctx.layers;
   const bd = ctx.bounds;
   const ox = pos[0], oy = pos[1], oz = pos[2];
   for (let y = y0; y < y1; y++) {
     for (let x = 0; x < W; x++) {
-      let lumNE = 0, nNE = 0, lumE = 0, nE = 0, emisS = 0, dSum = 0, nHit = 0, dMin = FAR;
+      let lumNE = 0, coolNE = 0, nNE = 0, lumE = 0, coolE = 0, nE = 0, emisS = 0, dSum = 0, nHit = 0, dMin = FAR;
       for (let sy = 0; sy < SS; sy++) for (let sx = 0; sx < SS; sx++) {
         const u = ((x + (sx + 0.5) * inv) / W * 2 - 1 + ctx.shift[0]) * tanH * aspect;
         const v = (1 - (y + (sy + 0.5) * inv) / H * 2 + ctx.shift[1]) * tanH;
@@ -190,20 +205,23 @@ export function renderRows(ctx, y0, y1) {
         const t = ok ? trace(ctx, ox, oy, oz, dx, dy, dz, t0, t1) : -1;
         if (t < 0) {
           dir[0] = dx; dir[1] = dy; dir[2] = dz;
-          lumNE += ctx.sky(dir); nNE++;
+          if (ctx.scene.skyShade) { const so = ctx.skyOut; ctx.scene.skyShade(dir, so); lumNE += so.lum; coolNE += so.cool; }
+          else { const dy2 = dir[1]; lumNE += ctx.sky(dir); coolNE += ctx.skyCoolH + (ctx.skyCoolZ - ctx.skyCoolH) * (dy2 > 0 ? (dy2 > 0.75 ? 1 : dy2 / 0.75) : 0); }
+          nNE++;
         } else {
           shadeHit(ctx, ox, oy, oz, dx, dy, dz, t, out);
           nHit++; dSum += t; if (t < dMin) dMin = t;
-          if (out[1] > 0) { lumE += out[0]; nE++; emisS += out[1] > 1 ? 1 : out[1]; } else { lumNE += out[0]; nNE++; }
+          if (out[1] > 0) { lumE += out[0]; coolE += out[2]; nE++; emisS += out[1] > 1 ? 1 : out[1]; } else { lumNE += out[0]; coolNE += out[2]; nNE++; }
         }
       }
       const i = (y - y0) * W + x;
       lumO[i] = nNE > 0 ? lumNE / nNE : lumE / nE;
+      coolO[i] = nNE > 0 ? coolNE / nNE : coolE / nE;
       emisO[i] = emisS / cnt;
       if (nHit * 2 >= cnt) { depthO[i] = dSum / nHit; layerO[i] = dMin <= nearMax ? 3 : dMin <= midMax ? 1 : 0; } else { depthO[i] = FAR; layerO[i] = 0; }
     }
   }
-  return { lum: lumO, emis: emisO, depth: depthO, layer: layerO };
+  return { lum: lumO, emis: emisO, cool: coolO, depth: depthO, layer: layerO };
 }
 
 export function renderSync(scene, { w = 384, h = 216, ss = 2 } = {}) {
@@ -222,7 +240,7 @@ export async function render({ scene, params = {}, w = 384, h = 216, ss = 2, wor
     return r;
   }
   const url = pathToFileURL(path.resolve(scene)).href;
-  const out = { w, h, lum: new Float32Array(w * h), emis: new Float32Array(w * h), depth: new Float32Array(w * h), layer: new Uint8Array(w * h) };
+  const out = { w, h, lum: new Float32Array(w * h), cool: new Float32Array(w * h), emis: new Float32Array(w * h), depth: new Float32Array(w * h), layer: new Uint8Array(w * h) };
   const strip = 3, tasks = [];
   for (let y = 0; y < h; y += strip) tasks.push([y, Math.min(h, y + strip)]);
   let next = 0, done = 0;
@@ -238,7 +256,7 @@ export async function render({ scene, params = {}, w = 384, h = 216, ss = 2, wor
       wk.on('message', (m) => {
         if (m.ready) { give(); return; }
         const o = m.y0 * w;
-        out.lum.set(m.lum, o); out.emis.set(m.emis, o); out.depth.set(m.depth, o); out.layer.set(m.layer, o);
+        out.lum.set(m.lum, o); out.cool.set(m.cool, o); out.emis.set(m.emis, o); out.depth.set(m.depth, o); out.layer.set(m.layer, o);
         done++;
         if (onProgress) onProgress(done / tasks.length);
         if (done === tasks.length) finish(); else give();

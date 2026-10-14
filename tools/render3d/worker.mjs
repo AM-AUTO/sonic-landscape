@@ -8,5 +8,5 @@ const ctx = prepare(mod.build(params), w, h, ss);
 parentPort.postMessage({ ready: true });
 parentPort.on('message', ({ y0, y1 }) => {
   const r = renderRows(ctx, y0, y1);
-  parentPort.postMessage({ y0, y1, ...r }, [r.lum.buffer, r.emis.buffer, r.depth.buffer, r.layer.buffer]);
+  parentPort.postMessage({ y0, y1, ...r }, [r.lum.buffer, r.cool.buffer, r.emis.buffer, r.depth.buffer, r.layer.buffer]);
 });

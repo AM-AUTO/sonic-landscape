@@ -311,8 +311,8 @@ ui.story = { panel:{kind:'ridge'|'cross'|'bothy'|'gate', levelIndex, seed?}, cap
 ```
 ```js
 // src/render/font.js  — drawText(ctx, text, x, y, color, {align, scale}) with an embedded 5×7 bitmap font (ASCII + accented Gaelic vowels à è ì ò ù)
-// src/render/palette.js — PAL (29 named colours) + tintFor(phase, levelTint)
-//   original 16 + lamp #e8832a, flame #f4c43c, bolt #f6c8f6, ice #8ee6e6, dusk #4b4a7a, then the reds blood #5e1f2b, rust #a9402a, ember #dd5a38, heather #7d3a62, then the warm greys char #3a3835, slate #5f5c58, ash #807c77, fog #c9c5be (indices 25..28; start screens = greys + ember) (PAL.lamp, PAL.ember etc.)
+// src/render/palette.js — PAL (35 named colours) + tintFor(phase, levelTint); SNAP_COUNT = 29 (quantize/quantizeHex snap to the legacy 29 unless given a limit), GREY_RAMP / BLUE_RAMP
+//   original 16 + lamp #e8832a, flame #f4c43c, bolt #f6c8f6, ice #8ee6e6, dusk #4b4a7a, then the reds blood #5e1f2b, rust #a9402a, ember #dd5a38, heather #7d3a62, then the warm greys char #3a3835, slate #5f5c58, ash #807c77, fog #c9c5be (indices 25..28), then the cold blue ramp deepblue #1b2a47, steelD #2f4468, steel #4a6a94, blue #6f90b8, paleblue #a3bcd8, frost #cfe0ee (indices 29..34; start screens = greys + blues, and ember in four of them) (PAL.lamp, PAL.ember, PAL.frost etc.)
 //   applyTint(buf,w,h,tint,ox,oy,y0,y1,lightMap?) — optional per-pixel light map scales the night dither
 // src/render/sprites.js — walkerSprite(dir,pose,frame) (12x12 ragged wanderer with a lit lantern),
 //   lanternAnchor(dir,pose,frame[,out]) -> {x,y} of the flame inside the sprite, gateSprite(open) (Pictish symbol stone)
@@ -324,9 +324,9 @@ ui.story = { panel:{kind:'ridge'|'cross'|'bothy'|'gate', levelIndex, seed?}, cap
 //   flashDensity, stampLight, precipitationFor, smokePuff, visibleBothies, darknessAt, effectiveNight
 // renderer.fx / renderer.onLightning expose the same fx instance (tools/render-preview uses fx.strikeTime(i))
 ```
-**Start screens** (`src/render/title/`): five greyscale + ember (`PAL.ember`) full-bleed paintings, `ui.titleVariant` / `spec.variant` in `['castlerigg','shelter','mentol','dolmen','menhir']` (default castlerigg).
+**Start screens** (`src/render/title/`): five greyscale full-bleed paintings with an accent (four with `PAL.ember`; `mentol`, the winter cover, with the blue ramp and a frost accent), `ui.titleVariant` / `spec.variant` in `['castlerigg','shelter','mentol','dolmen','menhir']` (default castlerigg).
 `index.js` exports `TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT, TITLE_LEVELS, paintTitleArt(r, spec, S), animTitleArt(r, spec, S, t)`; each variant module exports `layout?`, `levels?`, `paint(r, spec, S)`, `anim(r, spec, S, t)`; `kit.js` is the shared toolkit (documented in its header).
-Colours: ink char slate ash rock fog snow + ember only (paper/paper2 as light endpoints). `node tools/render-preview.mjs --proof-title --out <dir>` renders `render-title-<name>.png`.
+Colours: ink char slate ash rock fog snow + the blue ramp (deepblue steelD steel blue paleblue frost; `artkit.liftG/sinkG` step along the ramp a colour belongs to) + ember only (paper/paper2 as light endpoints). The logo's lit-edge accent line is paleblue / frost. `mentol` uses no ember. `node tools/composite-title.mjs mentol` writes the real composite (logo, prompt, controls) as a PNG. `node tools/render-preview.mjs --proof-title --out <dir>` renders `render-title-<name>.png`.
 
 ---------------------------------------------------------------------------
 

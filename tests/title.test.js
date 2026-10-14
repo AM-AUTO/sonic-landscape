@@ -120,7 +120,9 @@ test('paintStandingStone: tilt shows the flat top of the slab, moss and lichen c
 
 // ------------------------------------------------------------------ greyscale + one accent
 const GREYS = ['ink', 'char', 'slate', 'ash', 'rock', 'fog', 'snow'];
-const ALLOWED = new Set([...GREYS, 'ember', 'paper', 'paper2'].map((n) => PAL_U32[n]));
+const BLUES = ['deepblue', 'steelD', 'steel', 'blue', 'paleblue', 'frost'];
+const ALLOWED = new Set([...GREYS, ...BLUES, 'ember', 'paper', 'paper2'].map((n) => PAL_U32[n]));
+const BLUE_U32 = new Set(BLUES.map((n) => PAL_U32[n]));
 const foreign = (d) => { let n = 0; for (let i = 0; i < d.length; i++) if (!ALLOWED.has(d[i])) n++; return n; };
 
 test('mono stone: greys + ember only, deterministic, the ember sits in the incisions and the rim, the colour stone is untouched', () => {
@@ -137,12 +139,14 @@ test('mono stone: greys + ember only, deterministic, the ember sits in the incis
   assert.ok(foreign(col.r.d) > 0, 'the colour stone is still coloured');
 });
 
-test('logo: carved stone in greys with a thin ember line on the lit edge only', () => {
+test('logo: carved stone in greys with a thin paleblue / frost line on the lit edge only', () => {
   const r = new Raster(384, 216); r.d.fill(PAL_U32.char); r.lay.fill(0);
   const L = K.paintTitleLogo(r, {});
   assert.equal(foreign(r.d), 0);
   assert.ok(L.face.length > 1500 && L.ember.length > 100, `face ${L.face.length}, ember ${L.ember.length}`);
-  for (const i of L.ember) assert.equal(r.d[i], PAL_U32.ember, 'the ember line is painted');
+  for (const i of L.ember) assert.ok(r.d[i] === PAL_U32.paleblue || r.d[i] === PAL_U32.frost, 'the cold accent line is painted');
+  assert.ok(!r.d.includes(PAL_U32.ember), 'the logo has no ember any more');
+  assert.ok(L.ember.filter((i) => r.d[i] === PAL_U32.paleblue).length > L.ember.length * 0.5, 'mostly paleblue');
   const before = pixelHash(r.d);
   K.animLogo(r, L, 1.0);
   assert.notEqual(pixelHash(r.d), before, 'the glint sweeps');
@@ -223,14 +227,20 @@ test('title registry: five variants, castlerigg by default, a layout and a level
   assert.ok(DEFAULT_LAYOUT.colors.arrow === 'paleblue');
 });
 
-test('start screens: each variant is a full-bleed deterministic painting in the 29-colour palette, greys + ember only, with the logo', () => {
+test('start screens: each variant is a full-bleed deterministic painting in the 35-colour palette, greys + blues + ember only, with the logo', () => {
   const hashes = new Set();
   for (const v of TITLE_VARIANTS) {
     const d = freshBase(spec(v), W, H);
     assert.equal(d.length, W * H);
     assert.ok(d.every((c) => c !== 0), v + ': every pixel painted');
     assert.equal(offPalette(d), 0, v + ' palette');
-    assert.equal(foreign(d), 0, v + ': greys + ember (+ paper endpoints) only');
+    assert.equal(foreign(d), 0, v + ': greys + blues + ember (+ paper endpoints) only');
+    const blueOutside = (() => { let n = 0; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (BLUE_U32.has(d[y * W + x]) && (v === 'mentol' || y > 90 || y < 8)) n++; return n; })();
+    if (v === 'mentol') {
+      // the Men-an-Tol cover is greys + blues ONLY (no ember), and the blue is a real second ramp across the picture, not just the logo's edge line
+      assert.ok(!d.includes(PAL_U32.ember), 'mentol: no ember');
+      assert.ok(blueOutside > 3000, 'mentol: blue ramp used across the picture: ' + blueOutside);
+    } else assert.equal(blueOutside, 0, v + ': blue only on the logo\'s accent line');
     assert.equal(pixelHash(d), pixelHash(freshBase(spec(v), W, H)), v + ' deterministic');
     assert.ok(d.includes(PAL_U32.ink) && d.includes(PAL_U32.fog), v + ' spans the greys');
     hashes.add(pixelHash(d));
@@ -256,7 +266,8 @@ test('start screens: animated, deterministic per time, and the animation never t
     assert.equal(pixelHash(renderPanel(s, W, H, 1.0)), a, v + ' same time, same frame');
     assert.equal(pixelHash(paintBase(s, W, H)), base, v + ' base untouched');
     assert.equal(offPalette(renderPanel(s, W, H, 2.2)), 0, v + ' frame palette');
-    assert.equal(foreign(renderPanel(s, W, H, 2.2)), 0, v + ' frame greys + ember');
+    assert.equal(foreign(renderPanel(s, W, H, 2.2)), 0, v + ' frame greys + blues + ember');
+    if (v === 'mentol') assert.ok(!renderPanel(s, W, H, 2.2).includes(PAL_U32.ember), 'mentol frame: no ember');
   }
 });
 
@@ -289,9 +300,9 @@ test('start screens: the old A / B / C covers are unreachable and no stag, wande
   assert.ok(!/paintLegacyTitleArt|LEGACY_TITLE/.test(panels), 'panels.js does not reach the legacy covers');
 });
 
-test('start screens: the lines of text sit inside the screen, clear of each other, in greys + ember', () => {
+test('start screens: the lines of text sit inside the screen, clear of each other, in greys + blues + ember', () => {
   const small = { font: 'small' };
-  const okName = new Set([...GREYS, 'ember', 'paper', 'paper2']);
+  const okName = new Set([...GREYS, ...BLUES, 'ember', 'paper', 'paper2']);
   for (const v of TITLE_VARIANTS) {
     const L = TITLE_LAYOUT[v];
     const pw = Math.max(measureText(TITLE.prompt, { spacing: 1 }), measureText(TITLE.promptTouch, { spacing: 1 })) + 40;

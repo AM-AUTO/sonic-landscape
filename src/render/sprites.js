@@ -15,6 +15,8 @@ export const COLORS = {
   B: PAL.blood, R: PAL.rust, E: PAL.ember, H: PAL.heather,
   // the warm-neutral greys (start screens): C char, T slate, a ash, F fog
   C: PAL.char, T: PAL.slate, a: PAL.ash, F: PAL.fog,
+  // the cold blue ramp (start screens): N deepblue, e steelD, u steel, q blue, P paleblue, W frost
+  N: PAL.deepblue, e: PAL.steelD, u: PAL.steel, q: PAL.blue, P: PAL.paleblue, W: PAL.frost,
 };
 
 function makeCanvas(w, h) {

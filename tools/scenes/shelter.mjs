@@ -82,7 +82,7 @@ export const TUNE = {
   skyZenith: 0.62, skyHorizon: 0.86, cloudCover: 0.34,
 };
 
-export const quantise = { gamma: 1.05, contrast: 1.12, ditherScale: 0.55, sharpen: 0.4 };
+export const quantise = { gamma: 1.05, contrast: 1.12, ditherScale: 0.55, sharpen: 0.4, coolMix: 0, accent: 'ember' };
 
 const ID_GROUND = 0, ID_WALL = 1, ID_CORE = 2, ID_TURF = 3, ID_BLADE = 4, ID_TUSSOCK = 5, ID_ROCK = 6, ID_EMBER = 7, ID_LINTEL = 8;
 const rad = (d) => d * Math.PI / 180;
