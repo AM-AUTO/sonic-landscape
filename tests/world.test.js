@@ -294,3 +294,31 @@ test('level-specific features', () => {
   const ra = by.rannoch.pois;
   assert.deepEqual(ra.find((p) => p.type === 'cairn').condition, { approach: 'descending' });
 });
+
+test('sculpt kit: T.loch islands stay dry land above the water, the loch around them is water', async () => {
+  const { createSculptKit } = await import('../src/world/sculpt.js');
+  const make = (islands) => {
+    const { T, state } = createSculptKit({ seed: 77 });
+    T.fill(60);
+    const opts = { points: [[100, 192], [284, 192]], width: 14, level: 40, depth: 12 };
+    if (islands) opts.islands = islands;
+    const body = T.loch(opts);
+    return { state, body };
+  };
+  const at = (st, x, y) => y * S + x;
+  // backwards compatible: no islands -> the whole outline is water
+  const open = make(null);
+  assert.ok(open.state.bodyMask[at(open.state, 150, 192)], 'open loch: centre is water');
+  // with islands: the island cells are land rising above the surface, ringed by water
+  const { state, body } = make([{ x: 150, y: 192, r: 6 }, { x: 230, y: 192, r: 4, height: 9 }]);
+  assert.equal(state.bodyMask[at(state, 150, 192)], 0, 'island centre is not water');
+  assert.ok(state.h[at(state, 150, 192)] > body.level + 2, 'island centre stands above the water');
+  assert.ok(state.h[at(state, 230, 192)] > body.level + 7, 'island height option');
+  for (const [x, y] of [[150, 192], [230, 192]]) for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2, r = 10.5;
+    assert.ok(state.bodyMask[at(state, Math.round(x + Math.cos(a) * r), Math.round(y + Math.sin(a) * r))], `water round the island at ${x}`);
+  }
+  let dry = 0;
+  for (let y = 180; y <= 204; y++) for (let x = 140; x <= 160; x++) if (!state.bodyMask[at(state, x, y)] && state.h[at(state, x, y)] > body.level) dry++;
+  assert.ok(dry > 40 && dry < 260, `island about the size asked for (${dry} cells)`);
+});

@@ -315,6 +315,9 @@ export function createSculptKit(levelDef, size = MAP_SIZE) {
      * Flooded basin. Either points + width (half-width, cells) for elongated lochs, or x,y,rx,ry[,angle].
      * level: water surface (m). depth: max depth below level. sea: drains as the ocean (outlet for streams).
      * shallow: width (cells) of the wadeable rim.
+     * islands: [{ x, y, r, height? }] — land left standing in the water: cells within r (cells, the shore
+     * wobbled by noise) stay dry, rising from just above the water level to `height` metres above it
+     * (default 4) at the centre. Islands sit inside the body's outline; omit for an open loch.
      */
     loch(opts) { return makeBody(opts); },
 
@@ -442,6 +445,16 @@ export function createSculptKit(levelDef, size = MAP_SIZE) {
     const shore = o.shore ?? 5;
     const wobble = o.wobble ?? 0.35;
     const shallow = o.shallow ?? 2;
+    const islands = Array.isArray(o.islands) ? o.islands.filter((q) => q && Number.isFinite(q.x) && Number.isFinite(q.y) && q.r > 0) : [];
+    /** 0..1 height share if (x,y) is island ground (1 at the centre), else -1 */
+    const islandAt = (x, y) => {
+      let best = -1;
+      for (const q of islands) {
+        const d = Math.hypot(x - q.x, y - q.y) / (q.r * (1 + 0.3 * nz(x, y, 0.17)));
+        if (d < 1) best = Math.max(best, smooth01(1 - d));
+      }
+      return best;
+    };
     let x0, y0, x1, y1, inside; // inside(x,y,i) -> {e, out} via closure
     let level = o.level;
     let fieldCache = null, halfW = 0, ellipse = null;
@@ -478,6 +491,15 @@ export function createSculptKit(levelDef, size = MAP_SIZE) {
         const u = dx * ellipse.ca + dy * ellipse.sa, v = -dx * ellipse.sa + dy * ellipse.ca;
         e = Math.hypot(u / ellipse.a, v / ellipse.b) * (1 + wobble * 0.5 * nz(x, y, 0.13));
         outCells = (e - 1) * Math.min(ellipse.a, ellipse.b);
+      }
+      if (e < 1 && islands.length) {
+        const k = islandAt(x, y);
+        if (k >= 0) {
+          let top = 4;
+          for (const q of islands) if (Math.hypot(x - q.x, y - q.y) <= q.r * 1.4 && Number.isFinite(q.height)) top = q.height;
+          h[i] = level + 0.6 + top * k;
+          continue;
+        }
       }
       if (e < 1) {
         const bowl = smooth01((1 - e) / 0.6);
