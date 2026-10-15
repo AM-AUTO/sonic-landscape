@@ -31,8 +31,41 @@ export const SCREEN_H = 216;
 export const RESONANCE_SECONDS = 90; // how long a fully-triggered artefact keeps resonating
 export const DAY_SECONDS = 360;      // full dawn→day→dusk→night cycle
 
-/** timeOfDay ∈ [0,1): 0 dawn, .25 day, .5 dusk, .75 night. Returns phase name. */
-export function dayPhase(tod) {
+/**
+ * Seasons. A level's `season` sets how the day cycle divides: shares of dawn, day, dusk and night
+ * (in that order from timeOfDay 0), summing to 1. With no season every phase gets a quarter, as before.
+ *   season: { night: 0.66, dawn: 0.08, dusk: 0.08, startTime?, snowline? }   (day = the remainder)
+ */
+export const DEFAULT_SEASON = Object.freeze({ dawn: 0.25, day: 0.25, dusk: 0.25, night: 0.25 });
+const seasonCache = new WeakMap();
+/** Normalised { dawn, day, dusk, night } shares for a season object (or a level carrying one). */
+export function seasonOf(s) {
+  if (s && s.season) s = s.season;
+  if (!s || typeof s !== 'object') return DEFAULT_SEASON;
+  const hit = seasonCache.get(s);
+  if (hit) return hit;
+  const num = (v, d) => (Number.isFinite(v) && v >= 0 ? v : d);
+  const night = Math.min(0.9, num(s.night, 0.25));
+  const dawn = num(s.dawn, 0.25), dusk = num(s.dusk, 0.25);
+  const day = Number.isFinite(s.day) ? s.day : Math.max(0.02, 1 - night - dawn - dusk);
+  const sum = dawn + day + dusk + night;
+  const out = Object.freeze({ dawn: dawn / sum, day: day / sum, dusk: dusk / sum, night: night / sum });
+  seasonCache.set(s, out);
+  return out;
+}
+/** Phase boundaries [endDawn, endDay, endDusk] in timeOfDay units. */
+export function phaseBounds(s) {
+  const q = seasonOf(s);
+  return [q.dawn, q.dawn + q.day, q.dawn + q.day + q.dusk];
+}
+/** Centre of each phase in timeOfDay units ({ dawn, day, dusk, night }). */
+export function phaseCentres(s) {
+  const q = seasonOf(s), [a, b, c] = phaseBounds(s);
+  return { dawn: a / 2, day: a + q.day / 2, dusk: b + q.dusk / 2, night: (c + q.night / 2) % 1 };
+}
+/** timeOfDay ∈ [0,1) → 'dawn' | 'day' | 'dusk' | 'night'. `season` (or a level) is optional: quarters without it. */
+export function dayPhase(tod, season) {
   const p = ((tod % 1) + 1) % 1;
-  return p < 0.25 ? 'dawn' : p < 0.5 ? 'day' : p < 0.75 ? 'dusk' : 'night';
+  const [a, b, c] = phaseBounds(season);
+  return p < a ? 'dawn' : p < b ? 'day' : p < c ? 'dusk' : 'night';
 }
