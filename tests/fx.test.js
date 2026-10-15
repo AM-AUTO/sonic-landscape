@@ -55,15 +55,15 @@ test('there is a weather entry for every level id, with sane numbers', () => {
   assert.ok(WEATHER.affric.woods > 0 && WEATHER.affric.rain === 0);
 });
 
-test('darkness follows the day: none by day, a lot at night, dusk in between; storms add gloom', () => {
+test('darkness follows the day: none by day, a lot at night, dusk in between; storms deepen the dusk, not the day', () => {
   assert.equal(darknessAt(0.375), 0);
   assert.ok(darknessAt(0.875) > 0.99);
   const d = darknessAt(0.625);
   assert.ok(d > 0.5 && d < 0.85, 'dusk ' + d);
-  assert.ok(twilightAt(0.625) === 1 && twilightAt(0.375) === 0 && twilightAt(0.875) < 0.2 && twilightAt(0.125) > 0.9, 'the red hours');
+  for (let t = 0; t < 1; t += 0.05) assert.equal(twilightAt(t), 0, 'no red-hours stipple at any time');
   assert.equal(effectiveNight(0, 0.375, WEATHER.assynt), 0);
-  assert.ok(effectiveNight(0, 0.375, WEATHER.coe) > 0);
-  assert.ok(effectiveNight(0, 0.375, WEATHER.coe) < 0.15);
+  assert.equal(effectiveNight(0, 0.375, WEATHER.coe), 0, 'storm gloom by day lives in the cloud-shadow patches, not an even stipple');
+  assert.ok(effectiveNight(0, 0.625, WEATHER.coe) > effectiveNight(0, 0.625, WEATHER.assynt), 'the storm deepens the dusk');
   assert.ok(effectiveNight(0.97, 0.875, WEATHER.coe) >= 0.97);
   assert.ok(effectiveNight(0, 0.625, WEATHER.assynt) > 0.3);
 });
@@ -416,19 +416,20 @@ test('determinism: the same level and clock always draw the same frame', () => {
   }
 });
 
-test('lightning frame: flash dither of bolt/snow appears at the strike, a bolt polyline in bolt colour with a snow core, gone later', () => {
+test('lightning frame: a white / frost flash dither at the strike (no pink), a bolt polyline with frost flanks and a snow core, gone later', () => {
   const w = synth({ id: 'coe', seed: 3303 });
   const fx0 = createFx(); fx0.setWorld(w);
   const t0 = fx0.strikeTime(0);
   const flash = paintFrame(w, { tod: 0.875, clock: t0 + 0.02, fill: [U.night] });
-  let b = 0, sn = 0; for (const v of flash.fb) { if (v === U.bolt) b++; else if (v === U.heather) sn++; }
+  let b = 0, sn = 0; for (const v of flash.fb) { if (v === U.snow) b++; else if (v === U.frost) sn++; }
+  for (const v of flash.fb) assert.ok(v !== U.bolt && v !== U.heather, 'no pink in the flash');
   assert.ok(b > 3000 && sn > 3000, 'flash dither ' + b + '/' + sn);
   assert.ok(b + sn > 0.3 * SW * SH && b + sn < 0.42 * SW * SH, 'frame A is a sparse ~35% wash, the map shows through: ' + (b + sn));
   const bolt = paintFrame(w, { tod: 0.875, clock: t0 + 0.2, fill: [U.night] });
-  let bb = 0, ss = 0; for (const v of bolt.fb) { if (v === U.bolt) bb++; else if (v === U.snow) ss++; }
+  let bb = 0, ss = 0; for (const v of bolt.fb) { if (v === U.frost) bb++; else if (v === U.snow) ss++; }
   assert.ok(bb > 40 && bb < 1500, 'bolt pixels ' + bb);
   assert.ok(ss > 20 && ss < bb, 'snow core ' + ss);
   const later = paintFrame(w, { tod: 0.875, clock: t0 + 1.0, fill: [U.night] });
-  let lb = 0; for (const v of later.fb) if (v === U.bolt) lb++;
+  let lb = 0; for (const v of later.fb) if (v === U.frost || v === U.snow) lb++;
   assert.equal(lb, 0);
 });

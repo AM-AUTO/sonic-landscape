@@ -13,7 +13,7 @@
  *   whiteout    by day the visibility closes in round the walker, in gusts; the rest whites out
  *   aurora      at night slow curtains of green and pale blue over the top of the view
  *   spindrift   snow blown low across the snowfields in gusts
- *   clearing    the showers move off one edge; a rainbow stands in the trailing rain
+ *   clearing    the showers move off one edge (opt-in rainbow in the trailing rain: params.clearing.rainbow)
  *   firstSnow   snow starts falling only once the gate has opened
  *   storm       lightning and heavy rain (fx.js's own machinery)
  * Effects come from WEATHER[id].effects plus any atmosphere names in level.look.signature; parameters from the
@@ -253,7 +253,7 @@ export function bankDensity(A, camX, camY, clock, tod, season) {
         const env = smooth(front + 0.1, front - 0.05, e);
         if (env > 0) {
           const n = texAt(ta, ((wx - fdx * t * 9) * 0.5) | 0, ((wy - fdy * t * 9) * 0.7) | 0) / 255;
-          const v = A.fret[i] * env * clamp((n - 0.4) * 2.6, 0, 1.15);   // banks with clear lanes between
+          const v = A.fret[i] * env * clamp((n - 0.5) * 3.6, 0, 1.2);    // banks with wide clear lanes between
           if (v > d) d = v;
         }
       }
@@ -286,20 +286,22 @@ export function bankDensity(A, camX, camY, clock, tod, season) {
 /** paint the banks into the framebuffer (after the night pass): day / twilight / night colours */
 export function paintBanks(A, fb, camX, camY, night, twilight, lvl, MW) {
   if (!A.bankOn) return;
+  const lit = twilight > 0 || (night > 0.1 && night < 0.6);
   const bank = A.bank;
-  const dayThin = A.cold ? U.fog : U.snow, dayCore = A.cold ? U.snow : U.snow;
-  const twThin = U.bolt, twCore = U.snow, twLit = U.bolt;           // the red hours: cloud lit pink from below the horizon
-  const ntThin = U.dusk, ntCore = U.steel;
+  // greys, whites and blues only: white cloud by day (grey-edged on the white prints), steel-blue cloud at night;
+  // at dawn and dusk the core stays white with a thin flame edge where the cloud top meets clear air
+  const dayThin = A.cold ? U.fog : U.snow, dayCore = U.snow;
+  const ntThin = U.steelD, ntCore = U.steel;
   for (let y = 0; y < SH; y++) {
     const gRow = (y >> 1) * GW, wy = y + camY;
     const bRow = (wy & 7) << 3, bRow2 = ((wy + 4) & 7) << 3;
     const mrow = lvl ? wy * MW + camX : 0;
     for (let x = 0; x < SW; x++) {
       const d = bank[gRow + (x >> 1)];
-      if (d === 0) continue;
+      if (d < 56) continue;                                             // no faint even haze: banks have edges
       const wx = x + camX;
       const th = BAYER8[bRow | (wx & 7)] << 2;
-      if (d <= th) continue;
+      if (d <= th && d < 205) continue;                                 // a dense bank is solid: no map speckle left in it
       const i = y * SW + x;
       const pi = paletteIndexOf(fb[i]);
       if (pi === 255 || SKIP_INK[pi]) continue;
@@ -307,8 +309,12 @@ export function paintBanks(A, fb, camX, camY, night, twilight, lvl, MW) {
       if (!core && lvl && lvl[mrow + x] !== 0 && d < 200) continue;   // thin haze leaves the contours alone
       let c;
       if (night > 0.7) c = core ? ntCore : ntThin;
-      else if (night > 0.12 && twilight > 0.3) c = core ? (BAYER8[bRow2 | ((wx + 6) & 7)] < 20 ? twLit : twCore) : twThin;
+      else if (night > 0.6) c = core ? U.blue : U.steel;
       else c = core ? dayCore : dayThin;
+      if (lit && core && night > 0.1 && night < 0.6) {                // dawn / dusk: a 1 px flame rim on the lit top edge
+        const up = y > 0 ? bank[(((y - 2) >> 1) < 0 ? 0 : (y - 2) >> 1) * GW + (x >> 1)] : 255;
+        if (up < 60) c = U.flame;
+      }
       fb[i] = c;
     }
   }
@@ -380,7 +386,7 @@ export function paintWhirlpool(A, fb, camX, camY, clock, night) {
 export function paintDeer(A, fb, camX, camY, clock, night) {
   const H = A.herd;
   if (!H || night > 0.75) return;
-  const col = night > 0.35 ? U.blood : U.ink;
+  const col = night > 0.35 ? U.char : U.ink;
   const halo = U[(A.look && A.look.present && A.look.print.base) || 'paper'];
   for (let k = 0; k < H.members.length; k++) {
     const m = H.members[k];
@@ -522,9 +528,9 @@ export function paintAurora(A, fb, camX, camY, clock, night) {
 }
 
 // ------------------------------------------------------------------------------------------ rainbow (clearing)
-const BOW = [U.ember, U.lamp, U.flame, U.wood, U.grid, U.dusk];
+const BOW = [U.lamp, U.flame, U.wood, U.grid, U.blue, U.steel];   // no red band: the palette rule bars red stipple
 export function paintRainbow(A, fb, camX, camY, clock, night, px, py) {
-  if (night > 0.2 || (A.params.clearing && A.params.clearing.rainbow === false)) return;
+  if (night > 0.2 || !(A.params.clearing && A.params.clearing.rainbow === true)) return;   // opt-in: clearing: { rainbow: true }
   const cx = px, cy = py + 60, R = 120;
   for (let y = 14; y < Math.min(SH, cy); y++) {
     const dy = y - cy, wy = y + camY, bRow = (wy & 7) << 3;

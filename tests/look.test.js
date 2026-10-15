@@ -265,6 +265,8 @@ test('atmosphere: every effect, on every print, at every time of day, stays stri
     for (const tod of [0.02, 0.1, 0.375, 0.55, 0.66, 0.875]) {
       const { fb } = frame(wp, { tod, clock: 33.3, sheet, gateOpen: true, steps: 3 });
       assert.equal(offPalette(fb), 0, `${paper} tod ${tod}`);
+      // no red or pink washes / stipple from the atmosphere or the tints (only what the sheet itself carries)
+      for (const c of [U.heather, U.blood, U.bolt, U.ember, U.rust]) assert.equal(count(fb, c), 0, `${paper} tod ${tod}: red/pink ${c.toString(16)}`);
     }
   }
 });
@@ -299,6 +301,16 @@ test('atmosphere: each effect shows when it should and not otherwise', () => {
   let wo = 0; for (let c = 0; c < 64; c += 4) wo = Math.max(wo, whiteoutAmount(c, 0));
   assert.ok(wo > 0.8);
   for (let c = 0; c < 64; c += 4) assert.equal(whiteoutAmount(c, 0.97), 0);
+});
+
+test('snow and frost sheets at night go to deep blues, never violet or red', () => {
+  for (const paper of ['snow', 'frost']) {
+    const w = synthAtmos('x', { paper, signature: [] });
+    const sheet = bakeMap(w);
+    const { fb } = frame(w, { tod: 0.875, clock: 20, sheet, cam: [0, 0] });
+    for (const c of [U.dusk, U.heather, U.blood]) assert.ok(count(fb, c) < 40, `${paper} night: ${c.toString(16)} ${count(fb, c)}`);
+    assert.ok(count(fb, U.steelD) + count(fb, U.deepblue) + count(fb, U.night) > 20000, paper);
+  }
 });
 
 test('first snow falls only after the gate opens', () => {

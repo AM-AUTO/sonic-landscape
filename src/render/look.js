@@ -33,12 +33,13 @@ export const ATMOSPHERES = Object.freeze([
 /**
  * Season prints. base = the sheet's ground, shade / deep = relief tones on it, snowShade / snowDeep = relief on snow
  * cover, rock = the fill of bare rock, ice = the fill of a frozen lochan (palette names); relief scales the shade
- * dither on the darker prints so the sheet stays light.
+ * dither on the darker prints so the sheet stays light; contour / contourIdx (optional) recolour the contour lines.
  */
 export const PAPERS = Object.freeze({
   paper: Object.freeze({ base: 'paper', shade: 'paper2', deep: 'fog', snowShade: 'paper2', snowDeep: 'rock', rock: 'rock', ice: 'frost', relief: 1 }),
   paper2: Object.freeze({ base: 'paper2', shade: 'fog', deep: 'rock', snowShade: 'fog', snowDeep: 'rock', rock: 'rock', ice: 'frost', relief: 0.85 }),
-  fog: Object.freeze({ base: 'fog', shade: 'rock', deep: 'ash', snowShade: 'frost', snowDeep: 'paleblue', rock: 'ash', ice: 'frost', relief: 0.62 }),
+  fog: Object.freeze({ base: 'fog', shade: 'rock', deep: 'ash', snowShade: 'frost', snowDeep: 'paleblue', rock: 'slate', ice: 'frost', relief: 0.42,
+    contour: 'contourIdx', contourIdx: 'char' }),   // grey paper: darker lines and rock for value separation
   frost: Object.freeze({ base: 'frost', shade: 'paleblue', deep: 'blue', snowShade: 'paleblue', snowDeep: 'blue', rock: 'rock', ice: 'snow', relief: 0.9 }),
   snow: Object.freeze({ base: 'snow', shade: 'frost', deep: 'paleblue', snowShade: 'frost', snowDeep: 'paleblue', rock: 'rock', ice: 'frost', relief: 1 }),
 });

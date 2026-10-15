@@ -324,6 +324,8 @@ export function bakeMap(world, opts = {}) {
     const pr = look.print;
     C.paper = U[pr.base]; C.paper2 = U[pr.shade]; C.rock = U[pr.rock];
     C.deep = U[pr.deep]; C.snowShade = U[pr.snowShade]; C.snowDeep = U[pr.snowDeep];
+    if (pr.contour) C.contour = U[pr.contour];
+    if (pr.contourIdx) C.contourIdx = U[pr.contourIdx];
   }
   const BY = new Float32Array(16);                   // 4x4 bayer thresholds
   for (let i = 0; i < 16; i++) BY[i] = ([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][i] + 0.5) / 16;

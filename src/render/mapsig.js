@@ -276,11 +276,11 @@ function bracken(S) {
       const en = (H[idx] - world.minH) / span;
       if (en < 0.03 || en > 0.62) continue;
       if (reg && !inRegion(reg, X / S.P, Y / S.P)) continue;
-      const patch = vnoise(X, Y, 26, 20, seed + 91);
-      const k = smooth01(0.42, 0.62, patch) * smooth01(1.0, 2.2, g) * (1 - smooth01(0.5, 0.62, en));
+      const patch = vnoise(X, Y, 34, 26, seed + 91) * 0.75 + vnoise(X, Y, 9, 7, seed + 92) * 0.25;
+      const k = smooth01(0.58, 0.68, patch) * smooth01(1.0, 2.2, g) * (1 - smooth01(0.5, 0.62, en));   // sparse patches
       if (k <= 0) continue;
       const r = hash2(X, Y, seed + 93) % 100;
-      if (r < 15 * k) { buf[idx] = rust; if (r < 5 * k && X < W - 1 && cls[idx + 1] === COVER.MOOR) buf[idx + 1] = rust; }
+      if (r < 22 * k) { buf[idx] = rust; if (r < 8 * k && X < W - 1 && cls[idx + 1] === COVER.MOOR) buf[idx + 1] = rust; }
     }
   }
 }

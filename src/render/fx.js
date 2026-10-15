@@ -106,14 +106,20 @@ export function darknessAt(timeOfDay, season) {
   return PHASE_DARK[a] + (PHASE_DARK[b] - PHASE_DARK[a]) * f;
 }
 /** How red the dark is (0..1): the red hours at dusk, paler at dawn, a faint heather cast at night, none by day. */
-export const PHASE_TWILIGHT = Object.freeze({ dawn: 1, day: 0, dusk: 1, night: 0.12 });
+// The red-hours grade (ember / rust / heather / blood stipple at dawn and dusk, a heather cast at night) is retired:
+// no red or pink stipple in the tints. Dawn and dusk now darken on the cold ramp only. (The WARM ramp tables below
+// stay, unused at weight 0, so a later pass can bring a warm grade back in other colours.)
+export const PHASE_TWILIGHT = Object.freeze({ dawn: 0, day: 0, dusk: 0, night: 0 });
 export function twilightAt(timeOfDay, season) {
   const { a, b, f } = phaseBlend(timeOfDay, season);
   return PHASE_TWILIGHT[a] + (PHASE_TWILIGHT[b] - PHASE_TWILIGHT[a]) * f;
 }
 /** Night amount (0..0.97, what the tint pass dithers) from the clock-of-day darkness plus weather. */
 export function effectiveNight(tintNight, timeOfDay, weather, season) {
-  const d = clamp(darknessAt(timeOfDay, season) + (weather ? weather.dark : 0), 0, 1);
+  // storm gloom (weather.dark) deepens dusk and night; by day it is carried by the cloud-shadow patches instead of an
+  // even stipple over the whole screen
+  const base = darknessAt(timeOfDay, season);
+  const d = clamp(base + (weather ? weather.dark * Math.min(1, base / 0.3) : 0), 0, 1);
   const n = Math.max(tintNight, d * 0.97);
   return n < 0.04 ? 0 : n;                          // like the tint itself: no stray lattice dots in full day
 }
@@ -460,10 +466,11 @@ function look(R, k, c, A, B, W) { const i = I[c]; R.A[k][i] = I[A]; R.B[k][i] = 
 const BLUE = makeRamp([0, 0.5, 0.95]);
 const WARM = makeRamp([0, 0.25, 0.5, 0.75, 1.0]);
 //                  colour        A            B           W
-for (const [c, A, B, W] of [['paper', 'rock', 'dusk', 0.30], ['paper2', 'rock', 'dusk', 0.26], ['snow', 'paper2', 'rock', 0.30],
+// look 0 (the dim stage: dawn, dusk, the rim of a light) is a quiet grey step, not a violet stipple
+for (const [c, A, B, W] of [['paper', 'paper2', 'rock', 0.45], ['paper2', 'paper2', 'rock', 0.55], ['snow', 'paleblue', 'steel', 0.30],
   ['water', 'waterDeep', 'waterInk', 0.40], ['waterDeep', 'waterDeep', 'waterInk', 0.45], ['wood', 'woodDark', 'wood', 0.30],
   ['bog', 'woodDark', 'bog', 0.35], ['rock', 'rock', 'contourIdx', 0.40], ['grid', 'grid', 'waterInk', 0.40], ['ink', 'ink', 'rock', 0.5]]) look(BLUE, 0, c, A, B, W);
-for (const [c, A, B, W] of [['paper', 'night', 'dusk', 0.24], ['paper2', 'night', 'dusk', 0.20], ['snow', 'dusk', 'night', 0.40],
+for (const [c, A, B, W] of [['paper', 'night', 'dusk', 0.24], ['paper2', 'night', 'dusk', 0.20], ['snow', 'steelD', 'deepblue', 0.35],
   ['water', 'waterInk', 'night', 0.38], ['waterDeep', 'waterDeep', 'waterInk', 0.30], ['wood', 'night', 'woodDark', 0.22],
   ['woodDark', 'woodDark', 'night', 0.30], ['bog', 'night', 'woodDark', 0.30], ['rock', 'contourIdx', 'night', 0.45],
   ['grid', 'waterInk', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
@@ -490,9 +497,9 @@ for (const [c, A, B, W] of [['paper', 'blood', 'night', 0.14], ['paper2', 'blood
   ['ink', 'rock', 'rock', 0], ['waterInk', 'rock', 'rock', 0]]) look(WARM, 3, c, A, B, W);
 // the season prints (level.look.paper), their relief tones and the signature inks: absent from a sheet without a look,
 // so the legacy night is unchanged. Ground colours sink like paper; line inks (char walls, steel contours) glow like ink.
-for (const [c, A, B, W] of [['fog', 'rock', 'dusk', 0.12], ['frost', 'paleblue', 'dusk', 0.20], ['paleblue', 'blue', 'dusk', 0.30], ['blue', 'steel', 'dusk', 0.30],
+for (const [c, A, B, W] of [['fog', 'rock', 'ash', 0.20], ['frost', 'paleblue', 'steel', 0.25], ['paleblue', 'blue', 'steel', 0.30], ['blue', 'steel', 'steelD', 0.30],
   ['ash', 'slate', 'dusk', 0.30], ['rust', 'blood', 'rust', 0.40], ['char', 'char', 'rock', 0.5], ['ice', 'ice', 'waterDeep', 0.40], ['steel', 'steel', 'blue', 0.5]]) look(BLUE, 0, c, A, B, W);
-for (const [c, A, B, W] of [['fog', 'night', 'dusk', 0.24], ['frost', 'night', 'steelD', 0.28], ['paleblue', 'night', 'steelD', 0.22], ['blue', 'night', 'steelD', 0.30],
+for (const [c, A, B, W] of [['fog', 'night', 'dusk', 0.24], ['frost', 'steelD', 'night', 0.35], ['paleblue', 'night', 'steelD', 0.22], ['blue', 'night', 'steelD', 0.30],
   ['ash', 'night', 'char', 0.30], ['rust', 'night', 'blood', 0.30], ['char', 'rock', 'rock', 0], ['ice', 'waterDeep', 'night', 0.30], ['steel', 'blue', 'blue', 0]]) look(BLUE, 1, c, A, B, W);
 for (const [c, A, B, W] of [['fog', 'fog', 'ember', 0.10], ['frost', 'frost', 'bolt', 0.15], ['paleblue', 'paleblue', 'heather', 0.15], ['blue', 'blue', 'heather', 0.20],
   ['ash', 'ash', 'rust', 0.15], ['rust', 'rust', 'ember', 0.20], ['ice', 'ice', 'frost', 0.20]]) look(WARM, 0, c, A, B, W);
@@ -623,6 +630,7 @@ export function createFx() {
     for (const n of ATMOSPHERES) if (lk.raw[n] && typeof lk.raw[n] === 'object') params[n] = { ...(params[n] || {}), ...lk.raw[n] };
     fx.atmos = createAtmos(world, fx.effects, params, fx.seed, lk);
     MIST_DAY = MIST_DAY_BY_PRINT[lk.present ? lk.paper : 'paper'] || MIST_DAY_BY_PRINT.paper;
+    MIST_NIGHT = lk.present && (lk.paper === 'snow' || lk.paper === 'frost' || lk.paper === 'fog') ? MIST_NIGHT_COLD : MIST_NIGHT_LEGACY;
     if (fx.effects.has('storm') && !fx.weather.lightning) fx.weather = { ...fx.weather, lightning: { min: 8, max: 25 }, rain: Math.max(fx.weather.rain, 0.7), rainStyle: 'heavy', dark: Math.max(fx.weather.dark, 0.07) };
     fx.eff = fx.weather; effSnow = null;
     fx.lastIndex = -1; fx.lastClock = null; fx.strike = null; boltIndex = -1;
@@ -796,7 +804,7 @@ export function createFx() {
           if (d > 255) d = 255;
         }
         dens[gRow + gx] = d;
-        shd[gRow + gx] = doShadow ? Math.min(255, ts[vs | xis[gx]] * shK) : 0;
+        shd[gRow + gx] = doShadow ? Math.min(255, Math.max(0, ts[vs | xis[gx]] - 100) * shK * 1.7) : 0;   // patches with clear gaps
       }
     }
     let n = 0;
@@ -812,7 +820,7 @@ export function createFx() {
         const wx = x + camX;
         let l = 0;
         if (d > 0) {
-          if (d > (BAYER8[bRow | (wx & 7)] << 2)) {
+          if (d > 70 && d > (BAYER8[bRow | (wx & 7)] << 2)) {          // no faint even haze: mist lies in banks
             l = 1;                                                // thin haze: paper2 (by day) / dusk (by night)
             if (d > 135 && d - 135 > (BAYER8[bRow2 | ((wx + 5) & 7)] << 2)) l = 2;   // denser cores: flecks of rock grey
           }
@@ -834,12 +842,14 @@ export function createFx() {
   // ------------------------------------------------------------ paintGround
   // mist by day per season print: the legacy paper haze, a white haze on the cold and grey prints
   const MIST_DAY_BY_PRINT = {
-    paper: [0, U.paper2, U.rock, U.rock, U.dusk], paper2: [0, U.paper, U.rock, U.rock, U.dusk], fog: [0, U.frost, U.rock, U.rock, U.dusk],
+    paper: [0, U.paper2, U.rock, U.rock, U.dusk], paper2: [0, U.paper, U.rock, U.rock, U.dusk], fog: [0, U.frost, U.rock, U.rock, U.ash],
     frost: [0, U.snow, U.fog, U.paleblue, U.blue], snow: [0, U.frost, U.fog, U.paleblue, U.blue],
   };
   let MIST_DAY = MIST_DAY_BY_PRINT.paper;
   const MIST_TWILIGHT = [0, U.rock, U.paper2, 0, 0];          // rose-dun haze in the red hours
-  const MIST_NIGHT = [0, U.dusk, U.rock, 0, 0];
+  const MIST_NIGHT_LEGACY = [0, U.dusk, U.rock, 0, 0];
+  let MIST_NIGHT = MIST_NIGHT_LEGACY;
+  const MIST_NIGHT_COLD = [0, U.steelD, U.steel, 0, 0];             // snow / frost / fog prints: cold, never violet
   let groundLvl = null, groundMW = 0;
   fx.paintGround = function paintGround(fb, camX, camY, clock, lvl, MW) {
     groundLvl = lvl || null; groundMW = MW || 0;
@@ -925,7 +935,7 @@ export function createFx() {
         for (let y = 0; y < SH; y++) {
           const r = (y & 7) << 3;
           for (let x = 0; x < SW; x++) {
-            if (BAYER8[r | (x & 7)] < dd * 64) fb[y * SW + x] = ((x + (y >> 1)) & 1) === 0 ? U.heather : U.bolt;
+            if (BAYER8[r | (x & 7)] < dd * 64) fb[y * SW + x] = ((x + (y >> 1)) & 1) === 0 ? U.frost : U.snow;
           }
         }
       }
@@ -984,6 +994,7 @@ export function createFx() {
     // squalls and clearing showers: precipitation only inside their moving bands
     const A = fx.atmos, wind = fx.weather.wind;
     const mask = !A ? null : fx.effects.has('squalls') ? (x, y) => squallMask(A, x, y, camX, camY, clock, wind)
+      : fx.effects.has('storm') ? (x, y) => 0.22 + 0.78 * squallMask(A, x, y, camX, camY, clock * 1.6, wind)   // rain in bands
       : fx.effects.has('clearing') ? (x, y) => clearingMask(A, x, y, camX, camY, clock) : null;
     const dx = precip.dx, dy = precip.dy;
     const lenBase = precip.len;
@@ -1032,8 +1043,8 @@ export function createFx() {
     let err = dx + dy;
     for (;;) {
       if (!dither || ((x0 + y0) & 1) === 0) {
-        put(fb, x0 + 1, y0, U.bolt);
-        put(fb, x0 - 1, y0, U.bolt);
+        put(fb, x0 + 1, y0, U.frost);
+        put(fb, x0 - 1, y0, U.frost);
         put(fb, x0, y0, U.snow);
       }
       if (x0 === x1 && y0 === y1) break;
