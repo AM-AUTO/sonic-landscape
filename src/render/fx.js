@@ -435,6 +435,9 @@ export function visibleBothies(bothies, px, py, maxCells, out) {
 const MISTABLE = new Uint8Array(PAL_COUNT);       // light ground, water, woods and bog take mist; nothing else does
 [I.paper, I.paper2, I.snow, I.water, I.waterDeep, I.wood, I.bog, I.fog, I.frost, I.paleblue].forEach((i) => { MISTABLE[i] = 1; });   // + the season prints
 const WARM_U32 = Uint32Array.from(Array.from(WARM_MAP, (wi) => U[PAL_NAMES[wi]]));   // u32 of the warmer neighbour, by palette index
+const GLOW_GROUND = new Uint8Array(PAL_COUNT);    // ground the lamp glow shows on: light ground and the season prints
+[I.paper, I.paper2, I.snow, I.fog, I.frost, I.paleblue].forEach((i) => { GLOW_GROUND[i] = 1; });
+const LANTERN_GLOW = 24;                          // px: the warm glow round the walker never reaches further
 const SMOKE_SKIP = new Uint8Array(PAL_COUNT);     // never smoke over ink (symbols, labels, contours of crags) or magenta
 [I.ink, I.magenta].forEach((i) => { SMOKE_SKIP[i] = 1; });
 
@@ -754,9 +757,19 @@ export function createFx() {
     if (fx.lit) {
       lightMap.fill(255); toneMap.fill(0);
       const f = flicker(clock, 0);
-      const lr0 = 40 * f, lr1 = 90 * f;
+      // the lantern: a small pool (fully lit within ~12 px, gone by ~32) and a tight warm glow (<= 24 px, sparse)
+      const lr0 = 12 * f, lr1 = 32 * f;
       lantern.x = lx; lantern.y = ly; lantern.on = true;
-      stampLight(lightMap, toneMap, SW, SH, lx, ly, lr0, lr1, 1, 0.85);
+      stampLight(lightMap, toneMap, SW, SH, lx, ly, lr0, lr1, 1, 0);
+      const gr = LANTERN_GLOW * f;
+      for (let y = Math.max(0, Math.floor(ly - gr)); y <= Math.min(SH - 1, Math.ceil(ly + gr)); y++) {
+        for (let x = Math.max(0, Math.floor(lx - gr)); x <= Math.min(SW - 1, Math.ceil(lx + gr)); x++) {
+          const d = Math.hypot(x - lx, y - ly) / gr;
+          if (d >= 1) continue;
+          const t = Math.round(255 * (1 - d) * (1 - d));
+          if (t > toneMap[y * SW + x]) toneMap[y * SW + x] = t;
+        }
+      }
       box(lx - lr1, ly - lr1, lx + lr1, ly + lr1);
       for (let i = 0; i < bothies.length; i++) {
         const b = bothies[i];
@@ -883,7 +896,7 @@ export function createFx() {
             if (t === 0) continue;
             if (BAYER8[r2 | ((x + camX + 5) & 7)] >= t * (14 / 255) * (64 / 100)) continue;
             const pi = paletteIndexOf(fb[i]);
-            if (pi !== 255 && LIGHT_GROUND[pi]) fb[i] = U.lamp;
+            if (pi !== 255 && GLOW_GROUND[pi]) fb[i] = t > 200 && b === 0 ? U.flame : U.lamp;   // a flame-yellow heart at the lantern
           }
         }
       }

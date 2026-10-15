@@ -92,10 +92,10 @@ test('tint tables cover the whole palette and map only to palette indices', () =
     const i = PAL_INDEX[n];
     assert.equal(NIGHT_A[i], i, n); assert.equal(NIGHT_B[i], i, n); assert.equal(WARM_MAP[i], i, n); assert.equal(LIGHT_GROUND[i], 0, n);
   }
-  // the season prints (level.look.paper fog / frost) are ground: they warm and darken like paper; paleblue (their shade) darkens
+  // the season prints (level.look.paper fog / frost) darken like paper, but take no warm dither (no checker over the sheet)
   for (const n of ['fog', 'frost']) {
     const i = PAL_INDEX[n];
-    assert.equal(LIGHT_GROUND[i], 1, n); assert.notEqual(WARM_MAP[i], i, n); assert.equal(NIGHT_A[i], PAL_INDEX.night, n);
+    assert.equal(LIGHT_GROUND[i], 0, n); assert.equal(WARM_MAP[i], i, n); assert.equal(NIGHT_A[i], PAL_INDEX.night, n);
   }
   assert.equal(NIGHT_A[PAL_INDEX.paleblue], PAL_INDEX.night);
   assert.equal(LIGHT_GROUND[PAL_INDEX.paleblue], 0);

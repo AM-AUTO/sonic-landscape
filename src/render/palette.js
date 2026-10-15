@@ -272,10 +272,10 @@ export function tintAt(timeOfDay, levelTint, season) {
 // colour groups for the tint pass ------------------------------------------
 const I = PAL_INDEX;
 const LIGHT = new Uint8Array(PAL_COUNT);      // takes the warm / wash tints (hues of water and wood stay put)
-[I.paper, I.paper2, I.snow, I.fog, I.frost].forEach((i) => { LIGHT[i] = 1; });   // fog / frost: the season prints
+[I.paper, I.paper2, I.snow].forEach((i) => { LIGHT[i] = 1; });
 // warmer neighbour
 const WARM = new Uint8Array(PAL_COUNT).map((_, i) => i);
-WARM[I.paper] = I.paper2; WARM[I.snow] = I.paper; WARM[I.frost] = I.fog; WARM[I.fog] = I.paper2;
+WARM[I.paper] = I.paper2; WARM[I.snow] = I.paper;
 // Night look: each colour becomes a 2-colour ordered dither (A, then B for a fraction W),
 // chosen so the ground goes quiet and dark while contours, symbols and text glow.
 const NIGHT_A = new Uint8Array(PAL_COUNT).map((_, i) => i);
