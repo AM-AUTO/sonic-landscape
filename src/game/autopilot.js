@@ -11,7 +11,7 @@
  *   - dwell: stand still that many seconds once within `radius`. rest:true holds the rest input meanwhile
  *     (time of day runs x8). waitPhase: after the dwell, keep waiting (resting) until state.phase matches.
  */
-import { COVER, CELL_METERS, DAY_SECONDS, RESONANCE_SECONDS, dayPhase } from '../world/codes.js';
+import { COVER, CELL_METERS, DAY_SECONDS, RESONANCE_SECONDS, dayPhase, phaseCentres, startTimeOf } from '../world/codes.js';
 import { createPlayer, stepPlayer } from './player.js';
 import { centre, TRIGGER_RADIUS, History, APPROACH_WINDOW, FAST_WINDOW } from './pois.js';
 
@@ -51,7 +51,7 @@ function mapsFor(world) {
   }
   m = {
     n, pass, pen,
-    g: new Float32Array(n * n), parent: new Int32Array(n * n), seen: new Int32Array(n * n), gen: 0,
+    g: new Float32Array(n * n), parent: new Int32Array(n * n), seen: new Int32Array(n * n), closed: new Int32Array(n * n), gen: 0,
   };
   cache.set(world, m);
   return m;
@@ -151,7 +151,7 @@ export function findPath(world, from, to, opts = {}) {
   const blockGate = gateIdx >= 0 && gateIdx !== tIdx && gateIdx !== sIdx;
   const ok = (cx, cy) => cellPass(m, cx, cy) && !(blockGate && cy * n + cx === gateIdx);
   const gen = ++m.gen;
-  const { g, parent, seen } = m;
+  const { g, parent, seen, closed } = m;   // generation-stamped: no per-search clearing (384² sheets)
   const H = world.height;
   const heap = new Heap();
   const hf = (cx, cy) => {
@@ -160,12 +160,11 @@ export function findPath(world, from, to, opts = {}) {
   };
   seen[sIdx] = gen; g[sIdx] = 0; parent[sIdx] = -1;
   heap.push(hf(s[0], s[1]), sIdx);
-  const closed = new Set();
   let found = false;
   while (heap.size) {
     const cur = heap.pop();
-    if (closed.has(cur)) continue;
-    closed.add(cur);
+    if (closed[cur] === gen) continue;
+    closed[cur] = gen;
     if (cur === tIdx) { found = true; break; }
     const cx = cur % n, cy = (cur / n) | 0;
     const gc = g[cur];
@@ -175,7 +174,7 @@ export function findPath(world, from, to, opts = {}) {
       if (!ok(nx, ny)) continue;
       if (nb[0] !== 0 && nb[1] !== 0 && (!ok(cx + nb[0], cy) || !ok(cx, cy + nb[1]))) continue; // no corner cutting
       const ni = ny * n + nx;
-      if (closed.has(ni)) continue;
+      if (closed[ni] === gen) continue;
       const d = nb[2];
       const slope = Math.abs(H[ni] - H[cur]) / (d * CELL_METERS);
       const cost = d * (1 + slope * 4) * coverCost(world.cover[ni]) + m.pen[ni];
@@ -415,10 +414,13 @@ function findClimbStart(world, target, N, mode) {
   return bestAlt;
 }
 
-const PHASE_CENTRE = { dawn: 0.125, day: 0.375, dusk: 0.625, night: 0.875 };
 const mod1 = (v) => ((v % 1) + 1) % 1;
-const PLAN_SPEED = 6.0;      // cells/s used to estimate travel time (mostly running)
-const WINDOW_LIMIT = 80;     // s: all chain artefacts must fire within RESONANCE_SECONDS (90) of each other
+export const PLAN_SPEED = 6.0;  // cells/s used to estimate travel time (mostly running)
+/**
+ * s: the held thread renews every sounding chain resonance whenever a chain artefact wakes, so only each
+ * leg (one chain fire to the next, including rests and dwells) has to fit inside RESONANCE_SECONDS (90).
+ */
+export const LEG_LIMIT = 80;
 
 function permutations(arr) {
   if (arr.length <= 1) return [arr.slice()];
@@ -432,11 +434,16 @@ function permutations(arr) {
 /**
  * Waypoints that complete the level: fire each gate-chain POI with an approach that satisfies its
  * condition (preceded by any `requires` POI), then walk to the gate. The visiting order is the chain
- * order unless another order (respecting `requires`) fits the 90 s resonance window better; each
- * candidate order is scored from estimated travel times. Time-of-day conditions insert a rest beforehand.
+ * order unless another order (respecting `requires`) keeps every leg inside LEG_LIMIT better (the held
+ * thread: each chain fire renews the others, so legs, not the whole chain, must fit the 90 s resonance);
+ * each candidate order is scored from estimated travel times. Time-of-day conditions insert a rest
+ * beforehand; phases follow the level's season (seasonOf / phaseCentres), so long nights are respected.
  *
  * Waypoints carry `poiId` / `note` for diagnostics. The returned array has `.warnings` (strings),
- * `.order` (poi ids in visiting order) and `.estimate` ({window, end} seconds).
+ * `.order` (poi ids in visiting order), `.estimate` ({leg, window, end} seconds: the longest leg between
+ * chain fires, first-to-last chain fire, and the time the last artefact fires) and `.legs`
+ * ([{ from, to, type, dist, time }]: spawn → each visited artefact → gate; dist = A* path cells,
+ * time = estimated seconds including rests, approach runs and dwells).
  */
 export function planChainRoute(world, level, opts = {}) {
   level = level || world.level || {};
@@ -444,7 +451,10 @@ export function planChainRoute(world, level, opts = {}) {
   const chain = (world.gate && world.gate.chain) || [];
   const pois = world.pois || [];
   const spawn = centre(world.spawn);
-  const startTod = level.startTime ?? 0.05;
+  const startTod = startTimeOf(level);
+  const centres = phaseCentres(level);
+  const phaseAt = (tod) => dayPhase(tod, level);
+  const chainSet = new Set(chain);
 
   const pickFor = new Map();
   const pick = (type) => {
@@ -517,17 +527,18 @@ export function planChainRoute(world, level, opts = {}) {
   /** Build waypoints for an order and estimate when each type fires. */
   const build = (order) => {
     let cur = spawn, tod = startTod, clock = 0;
-    const wps = [], fired = new Map();
+    const wps = [], fired = new Map(), legInfo = [];
     for (const type of order) {
       const { cond, legs } = legsFor(type);
-      let T = 0, from = cur;
-      for (const l of legs) { T += plen(from, l) / PLAN_SPEED; from = l; }
+      let T = 0, D = 0, from = cur;
+      for (const l of legs) { const L = plen(from, l); D += L; T += L / PLAN_SPEED; from = l; }
       const main = legs[legs.length - 1];
+      const clock0 = clock;
       if (cond.time) {
         const arr = tod + T / DAY_SECONDS;
         const margin = ((cond.dwell || 0) + 10) / DAY_SECONDS;
-        if (!(dayPhase(arr) === cond.time && dayPhase(arr + margin) === cond.time)) {
-          const restTod = mod1(PHASE_CENTRE[cond.time] - arr);
+        if (!(phaseAt(arr) === cond.time && phaseAt(arr + margin) === cond.time)) {
+          const restTod = mod1(centres[cond.time] - arr);
           const secs = (restTod * DAY_SECONDS) / REST_MULT + 0.5;
           wps.push({ x: cur.x, y: cur.y, rest: true, dwell: secs, radius: 99, note: `rest for ${cond.time}` });
           tod = mod1(tod + restTod);
@@ -538,9 +549,10 @@ export function planChainRoute(world, level, opts = {}) {
       tod = mod1(tod + (T + (main.dwell || 0)) / DAY_SECONDS);
       clock += T + (main.dwell || 0);
       fired.set(type, clock);
+      legInfo.push({ from: legInfo.length ? legInfo[legInfo.length - 1].to : 'spawn', to: main.poiId, type, dist: D, time: clock - clock0 });
       cur = main;
     }
-    return { wps, fired, end: clock, cur };
+    return { wps, fired, end: clock, cur, order, legInfo };
   };
 
   // choose the visiting order
@@ -551,10 +563,23 @@ export function planChainRoute(world, level, opts = {}) {
     let lo = Infinity, hi = -Infinity;
     for (const t of chain) { const c = b.fired.get(t); if (c === undefined) continue; lo = Math.min(lo, c); hi = Math.max(hi, c); }
     const window = Number.isFinite(lo) ? hi - lo : 0;
-    // `requires` must be fresh when the dependant fires
-    let stale = 0;
-    for (const t of types) { const r = required(t); if (r && b.fired.has(r)) stale = Math.max(stale, b.fired.get(t) - b.fired.get(r) - 80); }
-    return { window, cost: Math.max(0, window - WINDOW_LIMIT) * 1000 + Math.max(0, stale) * 1000 + b.end };
+    // replay the held thread: `last` = when each type's resonance was last (re)started
+    const last = new Map();
+    let leg = 0, stale = 0;
+    for (const t of b.order) {
+      const c = b.fired.get(t);
+      const r = required(t);
+      if (r && last.has(r)) stale = Math.max(stale, c - last.get(r) - LEG_LIMIT);  // `requires` must still sound
+      if (chainSet.has(t)) {
+        for (const [u, lt] of last) {
+          if (!chainSet.has(u)) continue;
+          leg = Math.max(leg, c - lt);
+          if (c - lt < RESONANCE_SECONDS) last.set(u, c);
+        }
+      }
+      last.set(t, c);
+    }
+    return { window, leg, cost: Math.max(0, leg - LEG_LIMIT) * 1000 + Math.max(0, stale) * 1000 + b.end };
   };
   let bestOrder = base, best = build(base), bestScore = score(best);
   if (types.length > 1 && types.length <= 6 && opts.reorder !== false) {
@@ -565,14 +590,19 @@ export function planChainRoute(world, level, opts = {}) {
       if (sc.cost < bestScore.cost - 2) { best = b; bestOrder = order; bestScore = sc; }
     }
   }
-  if (bestScore.window > WINDOW_LIMIT + 5) warnings.push(`estimated chain window ${bestScore.window.toFixed(0)} s exceeds the ${RESONANCE_SECONDS} s resonance`);
+  if (bestScore.leg > LEG_LIMIT + 5) warnings.push(`estimated chain leg ${bestScore.leg.toFixed(0)} s exceeds the ${RESONANCE_SECONDS} s resonance`);
 
   const wps = best.wps.slice();
+  const legs = best.legInfo.slice();
   if (world.gate) {
-    wps.push({ x: Math.floor(world.gate.x) + 0.5, y: Math.floor(world.gate.y) + 0.5, mode: 'run', radius: 1.2, poiId: 'gate', note: 'gate' });
+    const g = { x: Math.floor(world.gate.x) + 0.5, y: Math.floor(world.gate.y) + 0.5 };
+    const D = plen(best.cur, g);
+    legs.push({ from: legs.length ? legs[legs.length - 1].to : 'spawn', to: 'gate', type: 'gate', dist: D, time: D / PLAN_SPEED });
+    wps.push({ ...g, mode: 'run', radius: 1.2, poiId: 'gate', note: 'gate' });
   }
   wps.warnings = warnings;
   wps.order = bestOrder.map((t) => pick(t).id);
-  wps.estimate = { window: bestScore.window, end: best.end };
+  wps.estimate = { leg: bestScore.leg, window: bestScore.window, end: best.end };
+  wps.legs = legs;
   return wps;
 }

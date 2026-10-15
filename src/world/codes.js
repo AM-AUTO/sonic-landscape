@@ -21,9 +21,9 @@ export const POI_TYPES = Object.freeze(['trig', 'cairn', 'lochan', 'waterfall', 
 /** Artefact names, keyed by POI type. Display text lives in src/text.js. */
 export { ARTEFACT_NAMES } from '../text.js';
 
-export const MAP_SIZE = 256;        // cells per side
-export const CELL_METERS = 40;      // 256 * 40 m = 10.24 km
-export const CELL_PX = 4;           // baked map pixels per cell (map canvas = 1024 px)
+export const MAP_SIZE = 384;        // cells per side
+export const CELL_METERS = 40;      // 384 * 40 m = 15.36 km
+export const CELL_PX = 4;           // baked map pixels per cell (map canvas = 1536 px)
 export const GRID_CELLS = 25;       // 1 km grid = 25 cells
 export const SCREEN_W = 384;        // internal framebuffer
 export const SCREEN_H = 216;
@@ -52,6 +52,12 @@ export function seasonOf(s) {
   const out = Object.freeze({ dawn: dawn / sum, day: day / sum, dusk: dusk / sum, night: night / sum });
   seasonCache.set(s, out);
   return out;
+}
+/** Start timeOfDay for a level: level.season.startTime, else level.startTime, else 0.05 (early dawn). */
+export function startTimeOf(level) {
+  const st = level && level.season && level.season.startTime;
+  if (Number.isFinite(st)) return st;
+  return level && Number.isFinite(level.startTime) ? level.startTime : 0.05;
 }
 /** Phase boundaries [endDawn, endDay, endDusk] in timeOfDay units. */
 export function phaseBounds(s) {

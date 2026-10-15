@@ -15,6 +15,7 @@ export default {
   gridOrigin: [10, 18],
   subtitle: 'II. The Firwid',
   seed: 2207,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 10,
   elevation: { min: 220, max: 1180 },
 

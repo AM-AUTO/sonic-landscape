@@ -16,6 +16,7 @@ export default {
   gridOrigin: [86, 52],
   subtitle: 'V. The Reid Giants',
   seed: 5505,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,
   elevation: { min: 0, max: 1055 },
 

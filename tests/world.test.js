@@ -85,7 +85,8 @@ test('noise: deterministic and bounded', () => {
 for (const lv of LEVELS) {
   test(`${lv.id}: structure, determinism, no NaN, height range`, () => {
     const w = world(lv);
-    assert.equal(w.size, 256);
+    assert.equal(w.size, S);
+    assert.equal(w.scale, lv.authoredSize ? S / lv.authoredSize : 1, 'authored-size scale');
     assert.equal(w.cellMeters, 40);
     assert.equal(w.height.length, S * S);
     assert.equal(w.cover.length, S * S);
@@ -188,17 +189,18 @@ for (const lv of LEVELS) {
     assert.deepEqual(g.chain, lv.gate.chain);
     const types = new Set(w.pois.map((p) => p.type));
     for (const t of g.chain) assert.ok(types.has(t), `chain type ${t} present`);
-    // the gate is far from the start: the player crosses the map
-    assert.ok(Math.hypot(g.x - w.spawn.x, g.y - w.spawn.y) >= 100, 'gate is far from spawn');
+    // the gate is far from the start: the player crosses the map (distances in authored cells × scale)
+    const k = w.scale || 1;
+    assert.ok(Math.hypot(g.x - w.spawn.x, g.y - w.spawn.y) >= 100 * k, 'gate is far from spawn');
     // chain legs
     let prev = w.spawn;
     for (const t of g.chain) {
       const p = w.pois.find((q) => q.type === t);
       const straight = Math.hypot(p.x - prev.x, p.y - prev.y);
-      assert.ok(straight >= 25 && straight <= 135, `${lv.id} leg to ${t}: ${straight.toFixed(0)} cells`);
+      assert.ok(straight >= 25 * k && straight <= 135 * k, `${lv.id} leg to ${t}: ${straight.toFixed(0)} cells`);
       const { dist } = reachable(w, prev);
       const walk = dist[p.y * S + p.x];
-      assert.ok(walk >= 0 && walk <= straight * 2.4 + 20, `${lv.id} walk to ${t}: ${walk} (straight ${straight.toFixed(0)})`);
+      assert.ok(walk >= 0 && walk <= straight * 2.4 + 20 * k, `${lv.id} walk to ${t}: ${walk} (straight ${straight.toFixed(0)})`);
       prev = p;
     }
   });
@@ -228,11 +230,11 @@ for (const lv of LEVELS) {
     const mid = (w.heightAt(10.5, 20) - (w.height[20 * S + 10] + w.height[20 * S + 11]) / 2);
     assert.ok(Math.abs(mid) < 1e-3, 'bilinear');
     assert.equal(w.heightAt(-5, -5), w.height[0]);
-    assert.equal(w.heightAt(999, 999), w.height[S * S - 1]);
+    assert.equal(w.heightAt(S + 999, S + 999), w.height[S * S - 1]);
     assert.equal(w.coverAt(-1, 3), COVER.CRAG);
-    assert.equal(w.coverAt(3, 300), COVER.CRAG);
+    assert.equal(w.coverAt(3, S + 44), COVER.CRAG);
     assert.equal(w.passable(-1, 3), false);
-    assert.equal(w.passable(256, 3), false);
+    assert.equal(w.passable(S, 3), false);
     assert.equal(w.coverAt(10.9, 20.9), w.cover[20 * S + 10]);
     // gradient points uphill: nudging along +grad increases height
     let checked = 0;

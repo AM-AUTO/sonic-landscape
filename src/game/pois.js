@@ -13,6 +13,9 @@
  *   climb        : upward INDEX-contour crossings since the last downward index crossing (tracked by sim)
  *   time         : state.phase === condition.time
  *   requires     : a resonance of that POI type is active
+ * The held thread: a full fire of a gate-chain type renews every other chain-type resonance still sounding
+ * (the poi event carries `renewed: [poiId]`). Non-chain artefacts never renew the thread.
+ * Time conditions compare against the phase the sim passes in, which follows the level's season.
  * Arrival conditions (approach, speed, climb) are sampled once, on entering the radius.
  * Live conditions (dwell, time, requires) are re-evaluated every step while inside, so a POI that
  * fired partially can still fire full once e.g. the dwell is satisfied. A partial fires at most once
@@ -147,12 +150,30 @@ export class PoiSystem {
     return out;
   }
 
+  /** Gate-chain types of this world (the held thread). */
+  chainTypes() { return (this.world.gate && this.world.gate.chain) || []; }
+
+  /**
+   * Add (or refresh) a resonance. The held thread: when the artefact is of a gate-chain type, every other
+   * chain-type resonance still sounding is renewed too (t0 = now, strength 1), so only each leg of the
+   * chain has to fit inside RESONANCE_SECONDS. Non-chain artefacts renew only themselves.
+   * Returns the poiIds that were renewed by the thread (not counting this one).
+   */
   _addResonance(poi, t, events) {
     const before = this.resonatingTypes();
     let e = this.resonance.find((r) => r.poiId === poi.id);
     if (e) { e.t0 = t; e.strength = 1; } else { e = { poiId: poi.id, type: poi.type, t0: t, strength: 1 }; this.resonance.push(e); }
+    const renewed = [];
+    const chain = this.chainTypes();
+    if (chain.includes(poi.type)) {
+      for (const r of this.resonance) {
+        if (r === e || !chain.includes(r.type)) continue;
+        r.t0 = t; r.strength = 1; renewed.push(r.poiId);
+      }
+    }
     const after = this.resonatingTypes();
     if (after.length >= 2 && after.length > before.length) events.push({ type: 'chain', types: after });
+    return renewed;
   }
 
   _fire(i, full, quality, missing, t, events) {
@@ -167,7 +188,7 @@ export class PoiSystem {
     }
     if (this.hooks.onFire) this.hooks.onFire(poi, full, ev);
     events.push(ev);
-    if (full) this._addResonance(poi, t, events);
+    if (full) ev.renewed = this._addResonance(poi, t, events);
     if (this.hooks.afterFire) this.hooks.afterFire(poi, full, ev, events);
   }
 

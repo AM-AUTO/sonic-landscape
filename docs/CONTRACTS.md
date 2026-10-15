@@ -8,7 +8,7 @@ that doesn't touch the DOM or Web Audio must run in Node 22 (tests use
 `Math.random()` in world generation; audio "chance" uses an `Rng` seeded per
 session.
 
-Coordinates: **cells**. The map is `MAP_SIZE`×`MAP_SIZE` (256²) cells, each
+Coordinates: **cells**. The map is `MAP_SIZE`×`MAP_SIZE` (384²) cells, each
 `CELL_METERS` (40 m). x grows east, y grows south (screen convention). North is up.
 Heights in **meters**. Speeds in **cells/second**. Slope is dimensionless
 (rise/run, both meters).
@@ -26,7 +26,9 @@ export function buildWorld(levelDef) -> World
 ```js
 {
   level: LevelDef,
-  size: 256, cellMeters: 40,
+  size: 384, cellMeters: 40,
+  scale: 1,                             // MAP_SIZE / levelDef.authoredSize (1.5 for old 256-authored levels), else 1
+  zones: [{ id, name, x, y, r }],       // levelDef.zones in world cells (scaled like everything else), [] if none
   height: Float32Array(size*size),      // meters, index y*size+x
   cover:  Uint8Array(size*size),        // COVER codes
   stream: Uint8Array(size*size),        // 1 where a burn/river flows (also cover SHALLOW where wide)
@@ -78,6 +80,14 @@ Invariants (tested):
   gate: { x, y, chain: ['lochan','cairn'], name: 'Bealach ...' },
   fieldNotes: [ 'cryptic hint string', ... ],
   palette: { tint: '#...', paper: '#...' },   // optional per-level tint
+  // optional:
+  authoredSize: 256,             // coordinates (sculpt, spawn, pois, gate, labels, paths, zones) are on a 256 sheet:
+                                 // buildWorld sculpts at that size, upsamples the heightfield to MAP_SIZE and scales
+                                 // every coordinate (slope / flow thresholds rescaled to match). Omit for native levels.
+  designVersion: 2,              // built to docs/LEVELS.md: tests/level-design.test.js enforces the explorability rules
+  zones: [{ id, name, x, y, r }],// sonic zones (cells)
+  season: { night, dawn, dusk, startTime?, snowline? },  // day-cycle shares (codes.js seasonOf); snowline overrides cover.snowline
+  startTime: 0.05,               // start timeOfDay when season.startTime is absent
 }
 ```
 
@@ -156,7 +166,8 @@ export class Game {
     contourIndex,            // floor(elevation / contourInterval)
   },
   timeOfDay,                 // [0,1), advances 1/DAY_SECONDS per s (×8 while resting)
-  phase,                     // dayPhase(timeOfDay)
+  phase,                     // dayPhase(timeOfDay, season): season-aware (quarters without a level season)
+  season,                    // seasonOf(level): normalised { dawn, day, dusk, night } shares
   events: Event[],           // emitted during the LAST step only (cleared each step)
   proximity: [{ poi, dist }],// up to 3 nearest POIs, dist in cells, sorted
   resonance: [{ poiId, type, t0, strength }], // active full artefacts; strength 1→0 over RESONANCE_SECONDS
@@ -173,7 +184,9 @@ export class Game {
 { type:'contour', dir:+1|-1, index, major:bool, elevation, speed }   // major = index contour (every 5th)
 { type:'grid', axis:'x'|'y', line, gx, gy, major:bool }                // gx,gy = new 1km square; major = line%5==0
 { type:'cover', from, to }
-{ type:'poi', poi, full:bool, quality, missing:[conditionKeys] }
+{ type:'poi', poi, full:bool, quality, missing:[conditionKeys], renewed?:[poiIds] }
+                                         // renewed (full only): the held thread. A full fire of a gate-chain type renews
+                                         // (t0 = now) every other chain-type resonance still sounding; non-chain never renews
 { type:'resonance-end', poiId, type }
 { type:'chain', types:[...] }            // two+ distinct artefacts now resonating together (concord)
 { type:'gate-open' }  { type:'gate-close' }

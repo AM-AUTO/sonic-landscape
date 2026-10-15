@@ -25,6 +25,7 @@ import {
 import { createStage, applyProfile } from './stage.js';
 import { channelTarget, applyChannelMods, fxTargets, clamp, lerp, ovr } from './macros.js';
 import { Artefacts } from './artefacts.js';
+import { dayPhase } from '../world/codes.js';
 
 const GRID_CELLS = 25;
 const TAU = Math.PI * 2;
@@ -297,7 +298,8 @@ export class Score {
     const driftRaw = clamp(((p.still || 0) - 4) / 3, 0, 1) * (this.art.activeCount ? 0.35 : 1);   // an artefact sounding holds the pulse
     C.d = smooth(C.d, smoothstep(driftRaw), dt, 2.5, 0.6);
     this.heading = p.heading ?? 0;
-    this.phase = state.phase || 'day';
+    // the sim's phase is season-aware (long midwinter nights); derive it the same way if a caller only gives timeOfDay
+    this.phase = state.phase || (Number.isFinite(state.timeOfDay) ? dayPhase(state.timeOfDay, state.season || state.level) : 'day');
     const night = this.phase === 'night' ? 1 : this.phase === 'dusk' ? 0.45 : 0;
     const dawn = this.phase === 'dawn' ? 1 : 0;
     C.n = smooth(C.n, night, dt, 12); C.w = smooth(C.w, dawn, dt, 12);

@@ -4,7 +4,7 @@
  * Params (levelDef.cover), all optional:
  *   treeline, woodDensity (0..1), woodSlope, woodMin     — woodland band
  *   bogFlatness (max slope), bogMax (max height), bogAmount (0..1)
- *   snowline (null = none), snowSlope
+ *   snowline (null = none; level.season.snowline overrides it), snowSlope
  *   rockline (default treeline+260), rockAmount
  *   cragSlope (slope above which ground is CRAG), cragJitter, cragMinH, cragMaxH
  *   screeSlope, screeBand (cells below crags), screeMinH
@@ -14,8 +14,11 @@
 import { COVER, MAP_SIZE as S, CELL_METERS } from './codes.js';
 import { WATER_SHALLOW, WATER_DEEP } from './hydro.js';
 
-/** Slope magnitude (rise/run) per cell via central differences. */
-export function computeSlope(h) {
+/**
+ * Slope magnitude (rise/run) per cell via central differences. `k` multiplies it: an upsampled level
+ * (authoredSize) passes its scale so cover and placement see the slopes it was authored with.
+ */
+export function computeSlope(h, k = 1) {
   const slope = new Float32Array(S * S);
   for (let y = 0; y < S; y++) {
     const ym = y > 0 ? y - 1 : 0, yp = y < S - 1 ? y + 1 : y;
@@ -23,13 +26,13 @@ export function computeSlope(h) {
       const xm = x > 0 ? x - 1 : 0, xp = x < S - 1 ? x + 1 : x;
       const gx = (h[y * S + xp] - h[y * S + xm]) / ((xp - xm) * CELL_METERS);
       const gy = (h[yp * S + x] - h[ym * S + x]) / ((yp - ym) * CELL_METERS);
-      slope[y * S + x] = Math.sqrt(gx * gx + gy * gy);
+      slope[y * S + x] = k * Math.sqrt(gx * gx + gy * gy);
     }
   }
   return slope;
 }
 
-export function assignCover({ h, slope, water, acc, noise, params }) {
+export function assignCover({ h, slope, water, acc, noise, params, season = null }) {
   const N = S * S;
   const P = params || {};
   const treeline = P.treeline ?? 450;
@@ -39,7 +42,8 @@ export function assignCover({ h, slope, water, acc, noise, params }) {
   const bogFlat = P.bogFlatness ?? 0.04;
   const bogMax = P.bogMax ?? treeline;
   const bogAmount = P.bogAmount ?? 0.55;
-  const snowline = P.snowline ?? null;
+  // a level's season can set the snow line (level.season.snowline overrides cover.snowline)
+  const snowline = season && Number.isFinite(season.snowline) ? season.snowline : P.snowline ?? null;
   const snowSlope = P.snowSlope ?? 0.95;
   const rockline = P.rockline ?? treeline + 260;
   const rockAmount = P.rockAmount ?? 0.5;

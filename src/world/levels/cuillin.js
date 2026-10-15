@@ -16,6 +16,7 @@ export default {
   gridOrigin: [40, 18],
   subtitle: 'VI. The Black Rig',
   seed: 6606,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,
   elevation: { min: 0, max: 992 },
 
@@ -82,7 +83,7 @@ export default {
 
   spawn: { x: 150, y: 6 },
   pois: [
-    { id: 'gillean-crag', type: 'crag', name: 'Pinnacle Ridge', x: 146, y: 56, condition: { speed: 'fast' }, hint: 'Gabbro, rouch eneuch tae grip a buit. It dirls for a walker at a rin.' },
+    { id: 'gillean-crag', type: 'crag', name: 'Pinnacle Ridge', x: 155, y: 65, condition: { speed: 'fast' }, hint: 'Gabbro, rouch eneuch tae grip a buit. It dirls for a walker at a rin.' },
     { id: 'trig-bruach', type: 'trig', name: 'Bruach na Frìthe', x: 104, y: 102, condition: { climb: 3 }, hint: 'A trig pillar on the rig. Three contours up, speeled clean.' },
     { id: 'lochan-ghrunnda', type: 'lochan', name: 'Lochan Coire a\' Ghrunnda', x: 100, y: 186, condition: { requires: 'trig', speed: 'slow' }, hint: 'Wauken the pillar first. Syne come canny tae the heich lochan.' },
     { id: 'stone-coruisk', type: 'stone', name: 'Clach Choruisg', x: 162, y: 200, condition: { dwell: 4 }, hint: 'Aside Coruisk the compass needle stravaigs. Staun still a while.' },

@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { COVER, MAP_SIZE, CELL_METERS, GRID_CELLS, DAY_SECONDS, RESONANCE_SECONDS } from '../src/world/codes.js';
+import { COVER, MAP_SIZE, CELL_METERS, GRID_CELLS, DAY_SECONDS, RESONANCE_SECONDS, seasonOf, dayPhase } from '../src/world/codes.js';
 import { Rng } from '../src/core/rng.js';
 import { Game } from '../src/game/sim.js';
 import { createPlayer, stepPlayer, COVER_PHYS } from '../src/game/player.js';
 import { evaluateCondition, PoiSystem, History } from '../src/game/pois.js';
 import { serialize, deserialize, createProgress } from '../src/game/progression.js';
-import { findPath, Autopilot, pathLength } from '../src/game/autopilot.js';
+import { findPath, Autopilot, pathLength, planChainRoute, LEG_LIMIT } from '../src/game/autopilot.js';
+import { computeSlope, assignCover } from '../src/world/landcover.js';
+import { createNoise } from '../src/core/noise.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -1149,4 +1151,177 @@ test('trail: first point is the spawn, points >= 1.5 cells apart, capped at 4000
   // a reload gives a fresh trail
   g.loadLevel(0);
   assert.equal(g.state.trail.length, 1);
+});
+
+// ------------------------------------------------------------------ the held thread (docs/LEVELS.md §2)
+
+const threadWorld = (chain, extra = []) => ({
+  pois: [
+    { id: 'a', type: 'cairn', name: 'A', x: 60, y: 128, condition: {} },
+    { id: 'b', type: 'trig', name: 'B', x: 100, y: 128, condition: {} },
+    { id: 'c', type: 'lochan', name: 'C', x: 140, y: 128, condition: {} },
+    { id: 's', type: 'stone', name: 'S', x: 60, y: 168, condition: {} },
+    ...extra,
+  ],
+  gate: { x: 300, y: 128, chain, name: 'Gate', side: 'E' },
+  spawn: { x: 60, y: 128 },
+});
+
+test('held thread: a chain artefact renews every sounding chain resonance; the poi event lists them', () => {
+  const g = mkGame(threadWorld(['cairn', 'trig', 'lochan']));
+  const evs = [];
+  run(g, IDLE, 0.1, evs);                                   // cairn wakes at t≈0
+  run(g, IDLE, 60, evs);
+  near(g.state.resonance.find((r) => r.poiId === 'a').strength, 1 - 60 / RESONANCE_SECONDS, 0.02, 'cairn decayed');
+  follow(g, [{ x: 100.5, y: 128.5 }], 30, evs);            // trig wakes: the cairn is renewed with it
+  const trigEv = poiEvents(evs).find((e) => e.poi.id === 'b');
+  assert.deepEqual(trigEv.renewed, ['a']);
+  const ra = g.state.resonance.find((r) => r.poiId === 'a'), rb = g.state.resonance.find((r) => r.poiId === 'b');
+  assert.equal(ra.t0, rb.t0, 'renewed at the same instant');
+  assert.ok(ra.strength > 0.97, 'cairn strength back to ~1: ' + ra.strength);
+  assert.equal(g.state.gateOpen, false);
+  // second leg of 70 s: the whole chain now spans > 90 s, yet the cairn still sounds when the lochan wakes
+  run(g, IDLE, 70, evs);
+  follow(g, [{ x: 140.5, y: 128.5 }], 30, evs);
+  assert.ok(g.state.t > RESONANCE_SECONDS + 30, 'chain spans more than one resonance: t=' + g.state.t.toFixed(1));
+  assert.equal(g.state.gateOpen, true, 'all chain types ring together: the gate opens');
+  assert.deepEqual(poiEvents(evs).find((e) => e.poi.id === 'c').renewed.sort(), ['a', 'b']);
+});
+
+test('held thread: non-chain artefacts do not renew it; an expired link is not revived', () => {
+  const g = mkGame(threadWorld(['cairn', 'trig']));
+  const evs = [];
+  run(g, IDLE, 0.1, evs);                                   // cairn (chain)
+  run(g, IDLE, 50, evs);
+  follow(g, [{ x: 60.5, y: 168.5 }], 30, evs);              // stone: not in the chain
+  const stEv = poiEvents(evs).find((e) => e.poi.id === 's');
+  assert.deepEqual(stEv.renewed, []);
+  const ra = g.state.resonance.find((r) => r.poiId === 'a');
+  assert.ok(ra.strength < 0.45, 'cairn keeps decaying: ' + ra.strength);
+  // let the cairn lapse, then the trig: nothing to renew, the gate stays shut
+  run(g, IDLE, RESONANCE_SECONDS, evs);
+  assert.equal(g.state.resonance.some((r) => r.poiId === 'a'), false);
+  follow(g, [{ x: 100.5, y: 128.5 }], 30, evs);
+  assert.deepEqual(poiEvents(evs).find((e) => e.poi.id === 'b').renewed, []);
+  assert.equal(g.state.gateOpen, false);
+  // a stone fired while a chain type sounds does not extend it either
+  const g2 = mkGame(threadWorld(['cairn', 'trig']));
+  run(g2, IDLE, 0.1);
+  const t0 = g2.state.resonance[0].t0;
+  follow(g2, [{ x: 60.5, y: 168.5 }], 30);
+  assert.equal(g2.state.resonance.find((r) => r.poiId === 'a').t0, t0);
+});
+
+test('planner: per-leg limit lets a chain longer than one resonance through; legs are reported', () => {
+  // three dwell links ~45 s apart each: the whole chain spans > 90 s, every leg fits LEG_LIMIT
+  const pois = [
+    { id: 'a', type: 'cairn', name: 'A', x: 60, y: 128, condition: { dwell: 38 } },
+    { id: 'b', type: 'trig', name: 'B', x: 100, y: 128, condition: { dwell: 38 } },
+    { id: 'c', type: 'stone', name: 'C', x: 140, y: 128, condition: { dwell: 38 } },
+  ];
+  const g = mkGame({ pois, gate: { x: 200, y: 128, chain: ['cairn', 'trig', 'stone'], name: 'Gate', side: 'E' }, spawn: { x: 20, y: 128 } });
+  const route = planChainRoute(g.world, g.level);
+  assert.deepEqual(route.warnings, []);
+  assert.deepEqual(route.order, ['a', 'b', 'c']);
+  assert.ok(route.estimate.leg <= LEG_LIMIT, 'leg ' + route.estimate.leg);
+  assert.ok(route.estimate.window > RESONANCE_SECONDS - 10, 'window ' + route.estimate.window);
+  assert.deepEqual(route.legs.map((l) => l.to), ['a', 'b', 'c', 'gate']);
+  for (const l of route.legs) assert.ok(l.dist > 30 && l.time > 0, JSON.stringify(l));
+  const evs = [];
+  follow(g, route, 240, evs);
+  assert.equal(g.state.levelComplete, true, 'completed via the held thread');
+  const fires = poiEvents(evs).filter((e) => e.full).map((e) => e.poi.id);
+  assert.deepEqual(fires, ['a', 'b', 'c']);
+});
+
+// ------------------------------------------------------------------ seasons (docs/LEVELS.md, codes.js helpers)
+
+const LONG_NIGHT = { night: 0.7, dawn: 0.08, dusk: 0.08 };
+
+test('season: phase boundaries follow the level season; state.season is exposed; no season = quarters', () => {
+  const g = mkGame({}, { season: { ...LONG_NIGHT } });
+  assert.deepEqual(g.state.season, seasonOf(g.level));
+  near(g.state.season.night, 0.7, 1e-9);
+  near(g.state.season.day, 0.14, 1e-9);
+  const at = (game, tod) => { game.state.timeOfDay = tod; game.step(IDLE, 1e-6); return game.state.phase; };
+  // bounds: dawn [0, .08), day [.08, .22), dusk [.22, .30), night [.30, 1)
+  assert.equal(at(g, 0.05), 'dawn');
+  assert.equal(at(g, 0.079), 'dawn');
+  assert.equal(at(g, 0.081), 'day');
+  assert.equal(at(g, 0.219), 'day');
+  assert.equal(at(g, 0.221), 'dusk');
+  assert.equal(at(g, 0.299), 'dusk');
+  assert.equal(at(g, 0.301), 'night');
+  assert.equal(at(g, 0.6), 'night');
+  assert.equal(at(g, 0.999), 'night');
+  // the same clock with no season: quarters, exactly as before
+  const q = mkGame({});
+  assert.deepEqual(q.state.season, { dawn: 0.25, day: 0.25, dusk: 0.25, night: 0.25 });
+  assert.equal(at(q, 0.24), 'dawn');
+  assert.equal(at(q, 0.3), 'day');
+  assert.equal(at(q, 0.6), 'dusk');
+  assert.equal(at(q, 0.8), 'night');
+  near(q.state.timeOfDay, 0.8, 1e-6);
+});
+
+test('season: start time from season.startTime, then level.startTime, then 0.05', () => {
+  near(mkGame({}, { season: { ...LONG_NIGHT, startTime: 0.4 }, startTime: 0.6 }).state.timeOfDay, 0.4, 1e-9);
+  const g = mkGame({}, { season: { ...LONG_NIGHT, startTime: 0.4 } });
+  assert.equal(g.state.phase, 'night');
+  near(mkGame({}, { season: { ...LONG_NIGHT }, startTime: 0.6 }).state.timeOfDay, 0.6, 1e-9);
+  near(mkGame({}, { season: { ...LONG_NIGHT } }).state.timeOfDay, 0.05, 1e-9);
+});
+
+test('season: a time condition uses the season phase (0.15 is day under a long night, dawn in quarters)', () => {
+  const pois = [{ id: 't', type: 'lochan', name: 'T', x: 100, y: 128, condition: { time: 'dawn' } }];
+  const lng = mkGame({ pois, spawn: { x: 90, y: 128 } }, { season: { ...LONG_NIGHT }, startTime: 0.15 });
+  const e1 = [];
+  run(lng, { x: 1, y: 0, run: false, rest: false }, 2.5, e1);
+  assert.equal(poiEvents(e1)[0].full, false);
+  assert.deepEqual(poiEvents(e1)[0].missing, ['time']);
+  const qrt = mkGame({ pois, spawn: { x: 90, y: 128 } }, { startTime: 0.15 });
+  const e2 = [];
+  run(qrt, { x: 1, y: 0, run: false, rest: false }, 2.5, e2);
+  assert.equal(poiEvents(e2)[0].full, true);
+});
+
+test('season: autopilot rests through a 0.7 night to wake a dawn artefact, then opens the gate', () => {
+  const pois = [{ id: 'd', type: 'lochan', name: 'Dawn', x: 120, y: 128, condition: { time: 'dawn' } }];
+  const g = mkGame({ pois, gate: { x: 220, y: 128, chain: ['lochan'], name: 'Gate', side: 'E' }, spawn: { x: 60, y: 128 } },
+    { season: { ...LONG_NIGHT, startTime: 0.31 } });       // the night has just begun
+  assert.equal(g.state.phase, 'night');
+  const route = planChainRoute(g.world, g.level);
+  assert.deepEqual(route.warnings, []);
+  assert.ok(route.some((w) => w.rest && /dawn/.test(w.note || '')), 'a rest for dawn is planned');
+  const evs = [];
+  const ap = new Autopilot(g.world, route);
+  let firedPhase = null;
+  for (let t = 0; t < 200 && !g.state.levelComplete; t += 1 / 60) {
+    g.step(ap.input(g.state), 1 / 60);
+    for (const e of g.state.events) { evs.push(e); if (e.type === 'poi' && e.full) firedPhase = g.state.phase; }
+  }
+  assert.equal(firedPhase, 'dawn');
+  assert.equal(g.state.levelComplete, true);
+  assert.equal(g.state.day, 2, 'the night wrapped into the next day');
+  // resting the whole night (0.69 of a day at ×8) took well under a minute of play
+  assert.ok(g.state.t < 90, 't=' + g.state.t.toFixed(1));
+  assert.equal(dayPhase(0.31, g.level), 'night');
+});
+
+test('season: level.season.snowline overrides cover.snowline in land cover', () => {
+  const S = MAP_SIZE, N = S * S;
+  const h = new Float32Array(N);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) h[y * S + x] = 200 + x * 2;   // 200..966 m, gentle (0.05)
+  const slope = computeSlope(h);
+  const water = new Uint8Array(N), acc = new Float32Array(N);
+  const noise = createNoise(7);
+  const snow = (params, season) => assignCover({ h: h.slice(), slope, water, acc, noise, params, season }).reduce((n, c) => n + (c === COVER.SNOW), 0);
+  const base = { treeline: 0, woodDensity: 0, bogAmount: 0, rockline: 5000 };
+  assert.equal(snow({ ...base, snowline: null }, null), 0);
+  assert.equal(snow({ ...base, snowline: null }, { night: 0.6 }), 0, 'a season without a snowline changes nothing');
+  const high = snow({ ...base, snowline: 850 }, null);
+  const low = snow({ ...base, snowline: 850 }, { night: 0.6, snowline: 450 });
+  const only = snow({ ...base, snowline: null }, { snowline: 450 });
+  assert.ok(high > 0 && low > high * 2, `override lowers the snow line: ${high} -> ${low}`);
+  assert.equal(only, low, 'season snowline alone is enough');
 });

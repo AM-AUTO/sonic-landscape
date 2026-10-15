@@ -15,6 +15,7 @@ export default {
   gridOrigin: [10, 51],
   subtitle: 'III. The Glen o Greetin',
   seed: 3303,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,
   elevation: { min: 10, max: 1150 },
 

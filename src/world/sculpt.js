@@ -9,7 +9,7 @@
  * per-point parameter (floor height for carveGlen, crest height for ridge) that
  * is interpolated along the line. Lines are smoothed with Catmull-Rom splines.
  */
-import { MAP_SIZE as S } from './codes.js';
+import { MAP_SIZE } from './codes.js';
 import { Rng } from '../core/rng.js';
 import { createNoise } from '../core/noise.js';
 
@@ -61,7 +61,12 @@ function wiggle(points, amp, noise, wavelength = 22, salt = 0) {
   return out;
 }
 
-export function createSculptKit(levelDef) {
+/**
+ * `size` is the side of the sheet the level is sculpted on: MAP_SIZE for natively authored levels, or the
+ * level's `authoredSize` (e.g. 256) when buildWorld upsamples an older level onto the bigger sheet.
+ */
+export function createSculptKit(levelDef, size = MAP_SIZE) {
+  const S = size;
   const seed = levelDef.seed | 0;
   const noise = createNoise(seed);
   const rng = new Rng(seed ^ 0x9e3779b9);
@@ -314,7 +319,7 @@ export function createSculptKit(levelDef) {
     loch(opts) { return makeBody(opts); },
 
     /** Scatter many small water bodies (peaty lochans). Returns count placed. */
-    lochans({ count = 20, area = { x0: 0, y0: 0, x1: S - 1, y1: S - 1 }, rmin = 2, rmax = 6, avoid = [], depth = 1.4, spacing = 2, prefer = 'flat', tries = 8, aspect = 1.9, shallow = 2 }) {
+    lochans({ count = 20, area = { x0: 0, y0: 0, x1: size - 1, y1: size - 1 }, rmin = 2, rmax = 6, avoid = [], depth = 1.4, spacing = 2, prefer = 'flat', tries = 8, aspect = 1.9, shallow = 2 }) {
       let placed = 0;
       const mine = [];
       for (let n = 0; n < count; n++) {

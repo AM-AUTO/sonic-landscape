@@ -17,6 +17,7 @@ export default {
   gridOrigin: [96, 98],
   subtitle: 'IV. The Heich Grund',
   seed: 4404,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,
   elevation: { min: 600, max: 1309 },
 

@@ -21,7 +21,7 @@ export function resolveWater(h, bodyMask, bodies) {
   const water = new Uint8Array(N);
   if (!bodies.length) return { water, bodyOf: bodyMask };
   // Distance from shore (4-neighbour BFS inside water)
-  const dist = new Uint8Array(N).fill(255);
+  const dist = new Uint16Array(N).fill(65535);
   const q = new Int32Array(N);
   let qh = 0, qt = 0;
   for (let i = 0; i < N; i++) {

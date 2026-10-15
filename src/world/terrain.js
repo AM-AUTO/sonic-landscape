@@ -13,10 +13,34 @@ import { computeSlope, assignCover } from './landcover.js';
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const N = S * S;
 
+/**
+ * Levels authored on an older, smaller sheet declare `authoredSize` (e.g. 256). They are sculpted at that
+ * size, then the heightfield is upsampled onto the MAP_SIZE sheet and every authored coordinate (spawn,
+ * POIs, gate, paths, labels, zones) is scaled by k = MAP_SIZE / authoredSize. Slope (for cover and placement)
+ * and flow thresholds are rescaled so the land reads as it was authored. Native levels omit the field.
+ */
+export function levelScale(levelDef) {
+  const a = levelDef && levelDef.authoredSize;
+  return a && a !== S ? S / a : 1;
+}
+
 export function buildWorld(levelDef) {
-  const { T, state } = createSculptKit(levelDef);
+  const k = levelScale(levelDef);
+  const A = k === 1 ? S : levelDef.authoredSize;
+  const { T, state } = createSculptKit(levelDef, A);
   levelDef.sculpt(T);
-  const { h, bodyMask, bodies, paths: pathDefs, labels: labelDefs, noise } = state;
+  let { h, bodyMask } = state;
+  const { bodies, noise } = state;
+  let pathDefs = state.paths, labelDefs = state.labels;
+  const sc = (p) => ({ ...p, x: p.x * k, y: p.y * k });
+  let spawnDef = levelDef.spawn, poiDefs = levelDef.pois, gateDef = levelDef.gate, zones = levelDef.zones || [];
+  if (k !== 1) {
+    ({ h, bodyMask } = upsample(h, bodyMask, bodies, A));
+    pathDefs = pathDefs.map((p) => ({ ...p, points: p.points.map((q) => [q[0] * k, q[1] * k]) }));
+    labelDefs = labelDefs.map(sc);
+    spawnDef = sc(spawnDef); poiDefs = poiDefs.map(sc); gateDef = sc(gateDef);
+    zones = zones.map((z) => ({ ...sc(z), r: z.r * k }));
+  }
 
   // keep inside the declared envelope (+4 m margin for water beds)
   const lo = levelDef.elevation.min - 4, hi = levelDef.elevation.max + 4;
@@ -26,12 +50,18 @@ export function buildWorld(levelDef) {
     h[i] = v < lo ? lo : v > hi ? hi : v;
   }
 
-  const P = levelDef.cover || {};
+  let P = levelDef.cover || {};
+  if (k !== 1) {
+    // flow accumulation counts cells (k² more per authored cell); drops and slopes spread over k× more cells
+    const adj = P.adjust;
+    P = { ...P, streamThreshold: (P.streamThreshold ?? 900) * k * k, riverThreshold: (P.riverThreshold ?? 2400) * k * k, fallDrop: (P.fallDrop ?? 24) / k };
+    if (adj) P.adjust = (x, y, hh, sl, c) => adj(x / k, y / k, hh, sl, c);
+  }
   const { water, bodyOf } = resolveWater(h, bodyMask, bodies);
   const { flowTo, acc } = computeFlow(h, water, bodyOf, bodies, noise);
   let stream = buildStreams(acc, water, P.streamThreshold ?? 900);
-  const slope = computeSlope(h);
-  const cover = assignCover({ h, slope, water, acc, noise, params: P });
+  const slope = computeSlope(h, k);
+  const cover = assignCover({ h, slope, water, acc, noise, params: P, season: levelDef.season });
 
   // ---- paths ---------------------------------------------------------
   const pathCells = [];
@@ -156,19 +186,19 @@ export function buildWorld(levelDef) {
   const lowCut = rawMin + 0.72 * (rawMax - rawMin);
 
   // spawn first so nothing sits on top of it
-  let spawnIdx = search(Math.round(levelDef.spawn.x), Math.round(levelDef.spawn.y), 30, (x, y, i) => cover[i] === COVER.PATH);
-  if (spawnIdx < 0) spawnIdx = search(Math.round(levelDef.spawn.x), Math.round(levelDef.spawn.y), 40, (x, y, i) => isLand(i) && slope[i] < 0.3);
+  let spawnIdx = search(Math.round(spawnDef.x), Math.round(spawnDef.y), 30, (x, y, i) => cover[i] === COVER.PATH);
+  if (spawnIdx < 0) spawnIdx = search(Math.round(spawnDef.x), Math.round(spawnDef.y), 40, (x, y, i) => isLand(i) && slope[i] < 0.3);
   const spawn = { x: spawnIdx % S, y: (spawnIdx / S) | 0 };
   placed.push(spawn);
 
   const pois = [];
-  for (const def of levelDef.pois) {
+  for (const def of poiDefs) {
     const tx = clamp(Math.round(def.x), 0, S - 1), ty = clamp(Math.round(def.y), 0, S - 1);
     let idx = -1;
     const base = (x, y, i, sep) => isLand(i) && slope[i] < 0.8 && sepOk(x, y, sep);
     const tryAll = (mk, scoreFn) => {
       for (const [R, sep] of [[14, 9], [28, 9], [45, 6], [70, 4]]) {
-        idx = search(tx, ty, R, mk(sep), scoreFn);
+        idx = search(tx, ty, Math.round(R * k), mk(sep), scoreFn);
         if (idx >= 0) return true;
       }
       return false;
@@ -179,10 +209,10 @@ export function buildWorld(levelDef) {
         break;
       case 'waterfall': {
         let fall = null, bd = 1e9;
-        for (const f of falls) { const d = Math.hypot(f.x - tx, f.y - ty); if (d < bd && d < 12) { bd = d; fall = f; } }
+        for (const f of falls) { const d = Math.hypot(f.x - tx, f.y - ty); if (d < bd && d < 12 * k) { bd = d; fall = f; } }
         if (!fall) {
           // force one: the steepest-dropping stream cell near the requested spot
-          const fi = search(tx, ty, 38, (x, y, i) => acc[i] >= 90 && cover[i] !== COVER.CRAG && !water[i] && flowTo[i] >= 0, (x, y, i, dd) => Math.min(dropAt(h, flowTo, i), 70) - 2.5 * dd);
+          const fi = search(tx, ty, Math.round(38 * k), (x, y, i) => acc[i] >= 90 * k * k && cover[i] !== COVER.CRAG && !water[i] && flowTo[i] >= 0, (x, y, i, dd) => Math.min(dropAt(h, flowTo, i), 70) - 2.5 * dd);
           if (fi >= 0) { fall = { x: fi % S, y: (fi / S) | 0, drop: dropAt(h, flowTo, fi) }; falls.push(fall); burnify(fi); }
         }
         if (fall) {
@@ -197,7 +227,7 @@ export function buildWorld(levelDef) {
       case 'summit':
       case 'trig':
         for (const [R, sep] of [[12, 8], [20, 7], [32, 6]]) {
-          idx = search(tx, ty, R,
+          idx = search(tx, ty, Math.round(R * k),
             (x, y, i) => isLand(i) && slope[i] < 0.75 && hmax5[i] - h[i] <= 6 && sepOk(x, y, sep),
             (x, y, i, dd) => h[i] - 0.55 * dd);
           if (idx >= 0) break;
@@ -231,7 +261,7 @@ export function buildWorld(levelDef) {
   }
 
   // ---- gate (on the map edge) ---------------------------------------
-  const gd = levelDef.gate;
+  const gd = gateDef;
   const dW = gd.x, dE = S - 1 - gd.x, dN = gd.y, dS = S - 1 - gd.y;
   const dm = Math.min(dW, dE, dN, dS);
   const side = gd.side || (dm === dN ? 'N' : dm === dS ? 'S' : dm === dW ? 'W' : 'E');
@@ -264,11 +294,11 @@ export function buildWorld(levelDef) {
   // ---- World object ----------------------------------------------------
   const world = {
     level: levelDef,
-    size: S, cellMeters: CELL_METERS,
+    size: S, cellMeters: CELL_METERS, scale: k,
     height: h, cover, stream,
     contourInterval: levelDef.contourInterval,
     minH, maxH,
-    pois, gate, spawn,
+    pois, gate, spawn, zones,
     features: { waterfalls, spotHeights, labels, paths: featPaths },
     stats: { repairs },
     heightAt(x, y) {
@@ -301,6 +331,37 @@ export function buildWorld(levelDef) {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Upsample an A×A sculpt (heights bilinear, body mask nearest) onto the S×S sheet. Land cells that borrow
+ * height from a water bed are lifted to that body's rim so no dry pits ring the shores.
+ */
+function upsample(hA, maskA, bodies, A) {
+  const k = S / A;
+  const h = new Float32Array(N), mask = new Uint16Array(N);
+  for (let y = 0; y < S; y++) {
+    const v = Math.min(A - 1, Math.max(0, (y + 0.5) / k - 0.5));
+    const y0 = v | 0, y1 = Math.min(A - 1, y0 + 1), fy = v - y0;
+    const ny = Math.min(A - 1, Math.floor((y + 0.5) / k));
+    for (let x = 0; x < S; x++) {
+      const u = Math.min(A - 1, Math.max(0, (x + 0.5) / k - 0.5));
+      const x0 = u | 0, x1 = Math.min(A - 1, x0 + 1), fx = u - x0;
+      const a = hA[y0 * A + x0], b = hA[y0 * A + x1], c = hA[y1 * A + x0], d = hA[y1 * A + x1];
+      const i = y * S + x;
+      let hv = (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
+      const id = maskA[ny * A + Math.min(A - 1, Math.floor((x + 0.5) / k))];
+      mask[i] = id;
+      if (!id) {
+        for (const j of [y0 * A + x0, y0 * A + x1, y1 * A + x0, y1 * A + x1]) {
+          const bj = maskA[j];
+          if (bj && hv < bodies[bj - 1].level + 0.4) hv = bodies[bj - 1].level + 0.4;
+        }
+      }
+      h[i] = hv;
+    }
+  }
+  return { h, bodyMask: mask };
+}
 
 /** Chaikin corner cutting (end points kept) so authored kinks become smooth bends. */
 function chaikin(pts, iters) {

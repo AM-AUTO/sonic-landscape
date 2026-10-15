@@ -14,6 +14,7 @@ export default {
   gridOrigin: [10, 12],
   subtitle: 'VII. Knowe an Lochan',
   seed: 7707,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 10,
   elevation: { min: 0, max: 850 },
 

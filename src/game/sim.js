@@ -2,7 +2,7 @@
  * Game simulation. Pure JS, no DOM. Fixed-step: call step(input, 1/60).
  * See docs/CONTRACTS.md section 2 for GameState / Event shapes; deviations are noted inline.
  */
-import { GRID_CELLS, DAY_SECONDS, RESONANCE_SECONDS, dayPhase } from '../world/codes.js';
+import { GRID_CELLS, DAY_SECONDS, RESONANCE_SECONDS, dayPhase, seasonOf, startTimeOf } from '../world/codes.js';
 import { createPlayer, stepPlayer } from './player.js';
 import { PoiSystem, centre, conditionKeys } from './pois.js';
 import {
@@ -20,7 +20,7 @@ try {
 } catch (e) { defaultBuildError = e; }
 
 export const REST_TIME_MULT = 8;
-export const START_TIME = 0.05;
+export const START_TIME = 0.05;      // default start (codes.js startTimeOf: season.startTime ?? level.startTime ?? this)
 export const TRAIL_SPACING = 1.5;    // cells between trail points
 export const TRAIL_CAP = 4000;
 export const BOTHY_NEAR_RADIUS = 14;
@@ -168,13 +168,15 @@ export class Game {
     this._stepN = 0;
     this._gx = Math.floor(p.x / GRID_CELLS);
     this._gy = Math.floor(p.y / GRID_CELLS);
-    const tod = level.startTime ?? START_TIME;
+    const tod = startTimeOf(level);
+    const season = seasonOf(level);   // normalised { dawn, day, dusk, night } shares (quarters without a season)
 
     this.state = {
       t: 0, dt: 0,
       levelIndex: index, level, world,
       player: p,
-      timeOfDay: tod, phase: dayPhase(tod),
+      timeOfDay: tod, phase: dayPhase(tod, season),
+      season,                               // read-only: the renderer / score may use it (phaseBounds(season) etc.)
       day: 1,                               // +1 each time timeOfDay wraps past 1 (a full day cycle walked)
       events: [],
       proximity: [],
@@ -255,7 +257,7 @@ export class Game {
     const prevTod = s.timeOfDay;
     s.timeOfDay = mod(s.timeOfDay + (dt / DAY_SECONDS) * (p.resting ? REST_TIME_MULT : 1), 1);
     if (s.timeOfDay < prevTod) s.day++;
-    s.phase = dayPhase(s.timeOfDay);
+    s.phase = dayPhase(s.timeOfDay, s.season);
 
     // --- contour crossings. index = line number (height = index * interval).
     // up i -> i+1 crosses line i+1; down i -> i-1 crosses line i. major when line % 5 === 0.

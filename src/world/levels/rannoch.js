@@ -13,6 +13,7 @@ export default {
   gridOrigin: [32, 51],
   subtitle: 'I. The Muir',
   seed: 1101,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 10,
   elevation: { min: 290, max: 640 },
 

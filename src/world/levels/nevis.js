@@ -15,6 +15,7 @@ export default {
   gridOrigin: [10, 66],
   subtitle: 'VIII. Hamecomin',
   seed: 8808,
+  authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,
   elevation: { min: 20, max: 1345 },
 
