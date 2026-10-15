@@ -9,19 +9,17 @@
  * Query params (for testing): ?level=N jumps into track N (0-based, unlocks it),
  * ?autopilot=1 walks the gate chain automatically, ?mute=1 skips audio,
  * ?fresh=1 ignores saved progress, ?speed=N runs the simulation N× faster.
- * Story panels (the filmstrip intro, a track's first entry, track and album complete) are off under
- * ?autopilot=1, ?mute=1 and ?nostory=1, and forced on by ?story=1.
+ * There are no between-track story screens (parked, see docs/PARKED.md); ?nostory=1 is accepted and ignored.
  */
 import { LEVELS } from './world/levels/index.js';
 import { RESONANCE_SECONDS } from './world/codes.js';
-import { ARTEFACT_NAMES, TYPE_LABEL, INTRO, PAUSE, BANNER, STORY, fmt } from './text.js';
+import { ARTEFACT_NAMES, TYPE_LABEL, INTRO, PAUSE, BANNER, fmt } from './text.js';
 import { Game } from './game/sim.js';
 import { serialize, deserialize, revealNote } from './game/progression.js';
 import { Autopilot, planChainRoute } from './game/autopilot.js';
 import { createInput } from './game/input.js';
 import { createRenderer } from './render/renderer.js';
 import { setProfileFromWorld, warmProfile, hasProfile } from './render/panels.js';
-import { StoryQueue, loadFlags, markSeen, hasSeen, flagKey, storiesEnabled, introItems, trackItems, completeItems, albumItems } from './story.js';
 
 const STEP = 1 / 60;
 const SPEED = Math.max(1, Math.min(16, parseFloat(new URLSearchParams(location.search).get('speed')) || 1)); // test time-scale
@@ -90,30 +88,9 @@ const ui = {
   scroll: 0,
   next: null,
   fragmentCount: 0,
-  story: null,
 };
 
-// ---------------------------------------------------------------- stories
-// startStory([{ panel: { kind, levelIndex, seed? }, caption }], onDone) puts the filmstrip on screen; ENTER/tap completes the
-// typed caption, then advances; ESC skips the rest. onDone runs when the queue ends (finished or skipped).
-const storiesOn = storiesEnabled(params);
-const flagStore = (() => { try { return window.localStorage; } catch { return null; } })();
-const flags = loadFlags(flagStore);
-let story = null;
-function startStory(items, onDone) {
-  if (!items || !items.length) { if (onDone) onDone(); return null; }
-  for (const it of items) if (it.panel && it.panel.levelIndex != null && !hasProfile(it.panel.levelIndex)) warmProfile(it.panel.levelIndex);
-  story = new StoryQueue(items, () => { story = null; ui.story = null; if (onDone) onDone(); });
-  ui.story = story.view();
-  ui.screen = 'story';
-  return story;
-}
-/** Show a once-only story if stories are on and its flag is unset; run `then` afterwards (at once when there is nothing to show). */
-function storyOnce(key, items, then) {
-  if (!storiesOn || hasSeen(flags, key)) { then(); return; }
-  markSeen(flags, key, flagStore);
-  startStory(items, then);
-}
+// ---------------------------------------------------------------- skylines
 // the tracklist and title want every track's real skyline: build them quietly, one at a time, while those screens idle
 const WARM_ORDER = [3, 0, 1, 2, 4, 5, 6, 7];
 let warmClock = 0;
@@ -149,11 +126,11 @@ function unlockedIndex(i) {
   return game.progress.unlocked.includes(id);
 }
 
-/** Enter a track. Its first visit opens with a story panel (once per track, unless stories are off). */
+// Parked: between-track story beats (intro, track entry, track/album complete). See docs/PARKED.md.
+/** Enter a track. */
 function enterLevel(index) {
-  const lv = LEVELS[index];
-  if (!lv) return;
-  storyOnce(flagKey.track(lv.id), trackItems(index, STORY.track[lv.id] || lv.name), () => startLevel(index));
+  if (!LEVELS[index]) return;
+  startLevel(index);
 }
 
 function startLevel(index) {
@@ -242,12 +219,7 @@ function handleEvents(events) {
         ui.next = LEVELS[idx + 1] ? { name: LEVELS[idx + 1].name, subtitle: LEVELS[idx + 1].subtitle } : null;
         ui.fragmentCount = game.progress.fragments.length;
         // let the cadence ring before the card appears
-        setTimeout(() => {
-          if (ui.screen !== 'play') return;
-          const n = game.progress.fragments.length;
-          if (storiesOn) startStory(completeItems(idx, fmt(STORY.complete, { n })), () => { ui.screen = 'complete'; });
-          else ui.screen = 'complete';
-        }, 2500);
+        setTimeout(() => { if (ui.screen === 'play') ui.screen = 'complete'; }, 2500);
         break;
       }
       default: break;
@@ -260,16 +232,7 @@ function handleActions(actions) {
   for (const a of actions) {
     switch (ui.screen) {
       case 'title':
-        if (a === 'confirm') {
-          const toTracks = () => { ui.screen = 'select'; ui.selected = Math.max(0, lastUnlocked()); };
-          storyOnce(flagKey.intro, introItems(STORY.intro), toTracks);
-        }
-        break;
-      case 'story':
-        if (!story) { ui.screen = 'select'; break; }
-        if (a === 'confirm') story.press();
-        else if (a === 'back' || a === 'pause') story.skip();
-        if (story) ui.story = story.view();
+        if (a === 'confirm') { ui.screen = 'select'; ui.selected = Math.max(0, lastUnlocked()); }
         break;
       case 'select':
         if (a === 'up') ui.selected = (ui.selected + LEVELS.length - 1) % LEVELS.length;
@@ -306,7 +269,6 @@ function handleActions(actions) {
         if (a === 'confirm') {
           const nxt = game.levelIndex + 1;
           if (nxt < LEVELS.length) enterLevel(nxt);
-          else if (storiesOn) startStory(albumItems(STORY.album), () => { ui.screen = 'select'; ui.selected = game.levelIndex; });
           else { ui.screen = 'select'; ui.selected = game.levelIndex; }
         } else if (a === 'back' || a === 'pause') { ui.screen = 'select'; ui.selected = game.levelIndex; }
         break;
@@ -358,13 +320,12 @@ function frame(now) {
     if (steps >= maxSteps) accumulator = 0;
   }
 
-  if (story) { story.update(dtReal * 1000); if (story) ui.story = story.view(); }
-  if (ui.screen === 'title' || ui.screen === 'select' || ui.screen === 'story') idleWarm(dtReal);
+  if (ui.screen === 'title' || ui.screen === 'select') idleWarm(dtReal);
 
   if (ui.messageT > 0) ui.messageT = Math.max(0, ui.messageT - dtReal);
   if (ui.messageT <= 0 && messageQueue.length && ui.screen === 'play') show(messageQueue.shift());
 
-  if (audio && game.state && ui.screen !== 'title' && ui.screen !== 'select' && !(ui.screen === 'story' && !game.world)) {
+  if (audio && game.state && ui.screen !== 'title' && ui.screen !== 'select') {
     const evs = pendingEvents;
     pendingEvents = [];
     try { audio.update(Object.assign({}, game.state, { events: evs })); }
@@ -378,7 +339,7 @@ function frame(now) {
   ui.touchVisible = touchSeen;
   ui.unlocked = game.progress.unlocked;
   ui.completed = game.progress.completed;
-  renderer.draw(ui.screen === 'title' || ui.screen === 'select' || ui.screen === 'story' ? null : game.state, ui);
+  renderer.draw(ui.screen === 'title' || ui.screen === 'select' ? null : game.state, ui);
 }
 
 // ---------------------------------------------------------------- boot
@@ -395,5 +356,5 @@ document.addEventListener('visibilitychange', () => {
   else audioCtx.resume().catch(() => {});
 });
 
-window.__contours = { game, get audio() { return audio; }, get audioReady() { return audioStarting; }, renderer, ui, enterLevel, startAudio, startStory, flags, get story() { return story; } };
+window.__contours = { game, get audio() { return audio; }, get audioReady() { return audioStarting; }, renderer, ui, enterLevel, startAudio };
 requestAnimationFrame(frame);

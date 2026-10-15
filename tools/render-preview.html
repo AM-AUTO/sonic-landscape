@@ -156,7 +156,7 @@ window.P = {
     window.world = world;
     return { name: world.level.name, minH: world.minH, maxH: world.maxH, levels: real ? real.LEVELS.length : 0 };
   },
-  /** build every track's real skyline for the story panels and tracklist thumbnails */
+  /** build every track's real skyline for the tracklist thumbnails and the cover */
   async warmProfiles() { const m = await import('/src/render/panels.js'); for (let i = 0; i < 8; i++) m.warmProfile(i); return true; },
   async levelDefs() {
     const r = await loadReal();

@@ -116,7 +116,8 @@ export const NOTES = Object.freeze({
   heading: 'FIELD NOTES',
   count: '{n} FUND',
   empty: 'Yer pooch is toom. Walkers leave notes in the bothies.',
-  footer: 'ESC STEEK',
+  page: '{n}/{N}',
+  footer: '\u2191\u2193 PAIGE   ESC STEEK',
 });
 
 export const COMPLETE = Object.freeze({
@@ -127,37 +128,6 @@ export const COMPLETE = Object.freeze({
   nextHeading: 'NEIST TRACK',
   lastTrack: "AUCHT GLENS WALKIT. THE ALBUM'S DUNE.",
   prompt: 'PRESS ENTER',
-});
-
-// ------------------------------------------------------------------ story panels (filmstrip captions)
-/**
- * The illustrated captions: the first-launch intro, each track's opening line, the track-complete
- * and album-complete lines. Shown in grey capitals under a painted panel (src/render/panels.js),
- * typed out a letter at a time. Track captions are keyed by level id. {n} is the skelfs gaithert.
- */
-export const STORY = Object.freeze({
-  intro: Object.freeze([
-    'THE HIELANDS ARE AN AULD SANG, AN THE SANG WAS SCATTERED ACROSS AUCHT GLENS.',
-    'A WANDERER WI NAE NAME GANGS FAE GLEN TAE GLEN, GAITHERIN THE SKELFS.',
-    'EVERY BEALACH IS LOCKIT. THE LAND WILL OPEN IT FOR THEM THAT HARK.',
-  ]),
-  track: Object.freeze({
-    rannoch: 'RANNOCH MUIR. A THOOSAND LOCHANS, AN NAE ROAD BUT THE AULD TRACK.',
-    affric: 'GLEN AFFRIC. THE LAST O THE AULD FIRWID, AN THE BURN RINNIN THROUGH IT.',
-    coe: 'GLEN COE. THE WALLS ARE HEICH, AN THE GLEN REMEMBERS.',
-    cairngorm: 'THE HEICH GRUND. SNAW LIES IN THE CORRIES TILL AUGUST.',
-    torridon: 'TORRIDON. REID SANDSTANE, A THOOSAND MILLION YEAR AULD.',
-    cuillin: "THE CUILLIN. BLACK GABBRO, AN THE COMPASS DISNA TRUST IT.",
-    assynt: 'ASSYNT. A LAND O KNOWES AN LOCHANS, AN SUILVEN STAUNIN ALANE.',
-    nevis: "BEN NEVIS. A'THING YE'VE HEARD IS ON THIS HILL. WALK IT HAME.",
-  }),
-  complete: 'THE BEALACH UNSTEEKS. {n}/8 SKELFS GAITHERT.',
-  album: 'AUCHT GLENS WALKIT. THE SANG IS WHOLE AGAIN.',
-  dayLabel: 'DAY',
-  skip: 'ENTER GANG ON   ESC SKIP',
-  more: 'ENTER MAIR',
-  notesFooter: '\u2191\u2193 PAIGE   ESC STEEK',
-  page: '{n}/{N}',
 });
 
 // ------------------------------------------------------------------ HUD and sheet map
@@ -218,7 +188,7 @@ export const BANNER = Object.freeze({
 /** Grouped view of everything above, for tests and tools/export-text.mjs. */
 export const TEXT = Object.freeze({
   title: TITLE, select: SELECT, pause: PAUSE, notes: NOTES, complete: COMPLETE,
-  hud: HUD, map: MAP, intro: INTRO, story: STORY, banner: BANNER, hint: HINT, condTag: CONDITION_TAG,
+  hud: HUD, map: MAP, intro: INTRO, banner: BANNER, hint: HINT, condTag: CONDITION_TAG,
   phase: PHASE_WORD, typeLabel: TYPE_LABEL, shortLabel: SHORT_LABEL, artefact: ARTEFACT_NAMES,
   typeRole: TYPE_ROLE, typeNoun: TYPE_NOUN,
 });

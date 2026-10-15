@@ -299,15 +299,18 @@ Renderer = {
 }
 ```
 
-`ui.screen` also takes `'story'` (filmstrip panel + typed caption) and `'notes'` (field notes as bothy story panels).
+The between-track story beats (the `'story'` screen, `src/story.js`, the bothy / stone / dawn panels) are parked: see docs/PARKED.md.
 
-**Story contract** (`src/story.js`, `src/render/panels.js`, `Screens.story`):
+**Notes screen** (`Screens.notes`, geometry in `LAYOUT.notes` in `src/render/screens.js`): a plain dark page. Solid ink ground,
+`NOTES.heading` top left and `NOTES.count` top right, one note per page set whole (no typewriter) in a centred 300 px column in
+snow (the empty state, `NOTES.empty`, in fog), `NOTES.page` with ↑/↓ marks bottom left in paleblue, `NOTES.footer` bottom right in rock.
+Greys and blue only. `ui.notes` = the notes found, `ui.scroll` = the page.
+
+**Panels** (`src/render/panels.js`):
 ```js
-ui.story = { panel:{kind:'ridge'|'cross'|'bothy'|'gate', levelIndex, seed?}, caption, typed, count, index, total, complete, t }
-// main.js: startStory([{panel, caption}], onDone)   ENTER/tap: complete the reveal, then advance; ESC: skip the queue
-// flags: localStorage 'contours.flags.v1' = { intro:1, 'track.<id>':1 }; stories are off under ?autopilot, ?mute, ?nostory (?story=1 forces them)
-// panels: painted in code into palette rasters (Uint32Array), cached; per-frame animation on a copy. Ridge panels sample the track's heightfield.
-// levels: palette.accent = a PAL colour name (the track's signature hue: HUD scroll, masthead, story tint). state.day = days walked, from 1.
+// kinds: 'ridge' (tracklist thumbnails) and 'title' (the start screen). Painted in code into palette rasters (Uint32Array), cached;
+// per-frame animation on a copy. Ridge panels sample the track's heightfield.
+// levels: palette.accent = a PAL colour name (the track's signature hue: tracklist, pause and complete cards). state.day = days walked, from 1.
 ```
 ```js
 // src/render/font.js  — drawText(ctx, text, x, y, color, {align, scale}) with an embedded 5×7 bitmap font (ASCII + accented Gaelic vowels à è ì ò ù)

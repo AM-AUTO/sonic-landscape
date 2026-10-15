@@ -12,8 +12,6 @@ import { fileURLToPath } from 'node:url';
 
 import { ARTEFACT_NAMES, BANNER, fmt } from '../src/text.js';
 import { LEVELS } from '../src/world/levels/index.js';
-import { STORY, NOTES, fmt as fmtText } from '../src/text.js';
-import { introItems, trackItems, completeItems, albumItems } from '../src/story.js';
 import { describeCondition } from '../src/game/describe.js';
 import { TITLE_VARIANTS } from '../src/render/title/index.js';
 
@@ -40,7 +38,7 @@ const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; };
 const SCALE = +opt('scale', 3);
 const FX_ONLY = args.includes('--fx-only');
-const PROOF = args.includes('--proof');   // just the art proof: cover, three story panels, the slim HUD (rannoch day and dusk)
+const PROOF = args.includes('--proof');   // just the art proof: cover, the plain field-notes page, the slim HUD (rannoch day and dusk)
 const PROOF_TITLE = args.includes('--proof-title');   // the five start-screen variants only
 const NO_FX = args.includes('--no-fx');
 const OUT = path.resolve(root, opt('out', 'out'));
@@ -80,12 +78,10 @@ if (PROOF_TITLE) {
 
 if (PROOF) {
   await page.evaluate(() => window.P.warmProfiles());
-  const storyUi = (panel, caption, frac = 1, time = 7) => { const len = [...caption].length; return { screen: 'story', time, story: { panel, caption, typed: Math.round(len * frac), count: len, index: 0, total: 1, complete: frac >= 1, t: time } }; };
   save('proof-title', await frame({ state: null, ui: { screen: 'title', time: 3.0 }, warm: 1 }));
   save('proof-title-b', await frame({ state: null, ui: { screen: 'title', time: 7.4 }, warm: 1 }));
-  save('proof-story-rannoch', await frame({ state: null, ui: storyUi({ kind: 'ridge', levelIndex: 0 }, STORY.track.rannoch, 1, 9), warm: 1 }));
-  save('proof-story-coe', await frame({ state: null, ui: storyUi({ kind: 'ridge', levelIndex: 2 }, STORY.track.coe, 1, 9), warm: 1 }));
-  save('proof-story-bothy', await frame({ state: null, ui: storyUi({ kind: 'bothy', levelIndex: 0 }, LEVELS[0].fieldNotes[0], 0.7, 4), warm: 1 }));
+  save('proof-notes', await frame({ state: null, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes, scroll: 1 } }));
+  save('proof-notes-empty', await frame({ state: null, ui: { screen: 'notes', time: 3, notes: [] } }));
   await page.evaluate((w) => window.P.setWorld(w), 'real:0');
   await page.evaluate(() => window.P.useWorldInRenderer());
   const poiTypes = await page.evaluate(() => window.P.world().pois.map((p) => p.type));
@@ -123,21 +119,12 @@ save('select-locked', await frame({ state: null, ui: { screen: 'select', levels:
 
 }
 
-// ---- gothic frames: the title night scene, the filmstrip story panels, the tracklist, notes, pause, card
+// ---- the title night scene, the empty notes page, the tracklist
 if (!FX_ONLY) {
   await page.evaluate(() => window.P.warmProfiles());
-  const storyUi = (item, frac = 1, time = 6, index = 0, total = 1) => {
-    const len = [...item.caption].length;
-    return { screen: 'story', time, story: { panel: item.panel, caption: item.caption, typed: Math.round(len * frac), count: len, index, total, complete: frac >= 1, t: time } };
-  };
   save('title-night', await frame({ state: null, ui: { screen: 'title', time: 11.3 }, warm: 1 }));
   save('title-night-b', await frame({ state: null, ui: { screen: 'title', time: 5.2 }, warm: 1 }));
-  for (const [i, it] of introItems(STORY.intro).entries()) save(`story-intro-${i + 1}`, await frame({ state: null, ui: storyUi(it, i === 0 ? 0.55 : 1, 6 + i, i, 3), warm: 1 }));
-  for (const kind of ['ridge', 'bothy', 'stone', 'dawn']) save(`story-panel-${kind}`, await frame({ state: null, ui: storyUi({ panel: { kind, levelIndex: 2 }, caption: STORY.track.coe }, 1, 7.4), warm: 1 }));
-  for (const i of [0, 1, 2, 3, 4, 5, 6, 7]) save(`story-track-${LEVELS[i].id}`, await frame({ state: null, ui: storyUi(trackItems(i, STORY.track[LEVELS[i].id])[0], 1, 8.1), warm: 1 }));
-  save('story-track-typing', await frame({ state: null, ui: storyUi(trackItems(4, STORY.track.torridon)[0], 0.4, 1.2), warm: 1 }));
-  save('story-complete', await frame({ state: null, ui: storyUi(completeItems(3, fmtText(STORY.complete, { n: 4 }))[0], 1, 9.6), warm: 1 }));
-  save('story-album', await frame({ state: null, ui: storyUi(albumItems(STORY.album)[0], 1, 9), warm: 1 }));
+  save('notes-empty', await frame({ state: null, ui: { screen: 'notes', time: 3, notes: [] } }));
   levelDefs = await page.evaluate(() => window.P.levelDefs());
   for (const [sel, name, un, dn] of [[0, 'a', ['rannoch'], []], [3, 'b', ['rannoch', 'affric', 'coe', 'cairngorm'], ['rannoch', 'affric', 'coe']], [5, 'c', ['rannoch', 'affric', 'coe', 'cairngorm'], ['rannoch']], [7, 'd', LEVELS.map((l) => l.id), LEVELS.map((l) => l.id)]]) {
     save(`gothic-select-${name}`, await frame({ state: null, ui: { screen: 'select', levels: levelDefs, selected: sel, time: 3.4, unlocked: un, completed: dn }, warm: 1 }));

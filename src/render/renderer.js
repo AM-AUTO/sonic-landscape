@@ -3,7 +3,7 @@
  *
  * createRenderer(canvas) -> Renderer
  *   setWorld(world)            bake the OS-style sheet (+ minimap / sheet overview)
- *   draw(state, ui)            ui.screen: 'title'|'select'|'story'|'play'|'pause'|'map'|'notes'|'complete'
+ *   draw(state, ui)            ui.screen: 'title'|'select'|'play'|'pause'|'map'|'notes'|'complete'
  *   flashContour(index, t[, dir])  highlight contour line `index` (see below)
  *   ripple(x, y, t, color)     expanding ring from cell (x,y); brightens contour pixels it crosses
  *   pulse(type)                artefact fired: bloom of its icon + ring around the player
@@ -453,8 +453,7 @@ export function createRenderer(canvas) {
         Screens.pause(env);
         break;
       case 'map': Screens.map(env); break;
-      case 'notes': Screens.notes(env); break;                  // field notes are story panels on their own black film
-      case 'story': Screens.story(env); break;
+      case 'notes': Screens.notes(env); break;                  // field notes: a plain dark page, one note at a time
       case 'complete':
         if (state && renderWorldLayer(state, ui, dt, 0.8)) { drawHud(ctx, state, { ...ui, message: null }, R); } else rect(ctx, 0, 0, SW, SH, PAL.night);
         Screens.complete(env);

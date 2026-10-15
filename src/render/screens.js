@@ -2,7 +2,7 @@
  * Full-screen scenes: title, select (track list), pause, map, notes, complete.
  * Each takes an env { R, ctx, state, ui, t, since, SW, SH } from the renderer.
  */
-import { PAL, PAL_U32 as U, BAYER4, BAYER8 } from './palette.js';
+import { PAL } from './palette.js';
 import { drawText, measureText, wrapText } from './font.js';
 import { rect, frame, hline, vline, pline, panel, px, ditherRect, clamp, ruler, pcircle } from './draw.js';
 import { typeLabel, typeShort, glyphFor } from './glyphs.js';
@@ -10,11 +10,8 @@ import { iconSprite, gateSprite, padlockSprite, symbolSprite, walkerSprite, blit
 import { ARTEFACT_NAMES, POI_TYPES, CELL_PX } from '../world/codes.js';
 import { gridRef, bearingDeg } from './hud.js';
 import { gatePlacement } from './mapbake.js';
-import { hash2f } from '../core/rng.js';
-import { ROMAN, TITLE, SELECT, PAUSE, NOTES, COMPLETE, MAP, STORY, fmt } from '../text.js';
-import { PANEL, TITLE_SCENE, THUMB, drawPanel, TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT } from './panels.js';
-import { revealCount } from '../story.js';
-import { LEVELS } from '../world/levels/index.js';
+import { ROMAN, TITLE, SELECT, PAUSE, NOTES, COMPLETE, MAP, fmt } from '../text.js';
+import { TITLE_SCENE, THUMB, drawPanel, TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT } from './panels.js';
 
 /** Geometry the tests measure text against (kept in step with the draw code below). */
 export const LAYOUT = Object.freeze({
@@ -23,7 +20,8 @@ export const LAYOUT = Object.freeze({
   map: Object.freeze({ rx: 234, rw: 144, ix0: 240, iw: 132, labelX: 16, nameX: 80 }),
   pause: Object.freeze({ w: 150, itemX: 26 }),
   complete: Object.freeze({ w: 262 }),
-  story: Object.freeze({ capX: 42, capW: 300, capY: 176, capLines: 3, spacing: 1, bandY: 168 }),
+  // field notes: one note per page, set whole in a centred column between the header and footer rules
+  notes: Object.freeze({ colX: 42, colW: 300, lineH: 12, top: 24, bottom: 194, maxLines: 8, headY: 8, footY: 204 }),
 });
 
 const CHECK = [[0, 2], [1, 3], [2, 2], [3, 1], [4, 0]];
@@ -35,38 +33,14 @@ function ticksBorder(ctx, SW, SH) {
 }
 
 
-// ------------------------------------------------------------------ the gothic frame: accent, gold sprockets, fades
+// ------------------------------------------------------------------ track accents
 /** The palette name of a track's signature hue (magenta when none). */
 function accentNameOf(lv) { const a = lv && lv.palette && lv.palette.accent; return a && PAL[a] ? a : 'magenta'; }
-function accentOfIndex(i) { return PAL[accentNameOf(LEVELS[clamp(i | 0, 0, LEVELS.length - 1)])]; }
 function accentOfLevel(lv) { return PAL[accentNameOf(lv)]; }
 /** ink or snow text, whichever reads on a fill of this colour */
 function onFill(hex) {
   const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5 ? PAL.ink : PAL.snow;
-}
-
-const fadePats = [];
-/** Ordered-dither fade to black over a rect: k = 0 clear .. 1 black (cached 8x8 patterns, so one fillRect). */
-function fadeBlack(ctx, x, y, w, h, k) {
-  if (k <= 0) return;
-  if (k >= 1) { rect(ctx, x, y, w, h, PAL.ink); return; }
-  const lvl = Math.max(1, Math.min(63, Math.round(k * 64)));
-  let pat = fadePats[lvl];
-  if (!pat) {
-    const c = document.createElement('canvas');
-    c.width = 8; c.height = 8;
-    const g = c.getContext('2d');
-    g.fillStyle = PAL.ink;
-    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) if (BAYER8[(j << 3) | i] < lvl) g.fillRect(i, j, 1, 1);
-    pat = ctx.createPattern(c, 'repeat');
-    fadePats[lvl] = pat;
-  }
-  ctx.save();
-  ctx.fillStyle = pat;
-  ctx.translate(x, y);
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
 }
 
 function blink(t, rate = 1.6, duty = 0.62) { return ((t * rate) % 1) < duty; }
@@ -455,81 +429,33 @@ function mapScreen(env) {
   drawText(ctx, 'N', nx, ny - 8, PAL.ink, { font: 'small', align: 'center' });
 }
 
-// ============================================================ story frame + notes
-/** Caption lines (whole text wrapped first, so words never jump) and how many characters of each are showing. */
-export function captionLines(caption) {
-  const L = LAYOUT.story;
-  return wrapText(String(caption).toUpperCase(), L.capW, { spacing: L.spacing });
-}
-export function revealLines(lines, typed) {
-  let left = typed;
-  return lines.map((l) => { const n = [...l].length; const shown = [...l].slice(0, Math.max(0, left)).join(''); left -= n + 1; return shown; });
-}
+// =================================================================== notes
+/** A field note as it is set on the notes page: the whole text wrapped to the column (the tests measure this). */
+export function noteLines(text) { return wrapText(String(text), LAYOUT.notes.colW); }
 
-/** A full-bleed painting with the caption set in a dithered dark band along its foot, typed out letter by letter. */
-function filmFrame(env, spec, caption, typed, since, o = {}) {
-  const { ctx, t, SW, SH } = env;
-  const acc = accentOfIndex(spec.levelIndex);
-  const L = LAYOUT.story;
-  drawPanel(ctx, spec, 0, 0, SW, SH, t);
-  // the band: the painting shows through a dither of ink, a fine line in the track's hue along its top
-  fadeBlack(ctx, 0, L.bandY - 6, SW, 3, 0.25);
-  fadeBlack(ctx, 0, L.bandY - 3, SW, 3, 0.5);
-  fadeBlack(ctx, 0, L.bandY, SW, SH - L.bandY, 0.82);
-  ctx.fillStyle = acc;
-  for (let x = 0; x < SW; x += 2) ctx.fillRect(x, L.bandY, 1, 1);
-  // caption
-  const lines = captionLines(caption);
-  const shown = revealLines(lines, typed);
-  const total = lines.reduce((n, l) => n + [...l].length + 1, 0) - 1;
-  shown.slice(0, L.capLines).forEach((l, i) => {
-    if (l) drawText(ctx, l, L.capX, L.capY + i * 10, PAL.paper2, { spacing: L.spacing, shadow: PAL.ink });
-  });
-  const done = typed >= total;
-  let li = 0, rem = typed;
-  while (li < lines.length - 1 && rem > [...lines[li]].length) { rem -= [...lines[li]].length + 1; li++; }
-  const lastW = measureText(shown[li] || '', { spacing: L.spacing });
-  if (!done && Math.floor(t * 8) % 2 === 0) rect(ctx, L.capX + lastW + (shown[li] ? 2 : 0), L.capY + li * 10, 5, 7, PAL.rock);
-  if (done && o.more !== false && blink(t, 1.6, 0.6)) {
-    const mx = L.capX + L.capW + 6, my = L.capY + 2;
-    for (let k = 0; k < 4; k++) rect(ctx, mx + k, my + k, 7 - 2 * k, 1, acc);
-  }
-  fadeBlack(ctx, 0, 0, SW, SH, 1 - clamp(since / 0.6, 0, 1));
-  return { acc, done, lines };
-}
-
-function story(env) {
-  const { ctx, ui, SW, SH } = env;
-  const st = ui.story;
-  if (!st) { rect(ctx, 0, 0, SW, SH, PAL.ink); return; }
-  const acc = filmFrame(env, st.panel, st.caption, st.typed, st.t).acc;
-  if (st.total > 1) for (let i = 0; i < st.total; i++) rect(ctx, 8 + i * 7, 208, 4, 2, i === st.index ? acc : PAL.dusk);
-  drawText(ctx, STORY.skip, SW - 8, 208, PAL.rock, { font: 'small', align: 'right', spacing: 1 });
-}
-
-let notePage = { page: -1, t0: 0 };
+/** Field notes: a plain dark page. Heading and count at the top, one note set whole in the middle, page marks and keys at the foot. */
 function notes(env) {
-  const { ctx, ui, t, SW, SH, state } = env;
+  const { ctx, ui, SW, SH } = env;
+  const L = LAYOUT.notes;
   const list = ui.notes || [];
-  const lv = (state && ((state.world && state.world.level) || state.level)) || null;
-  const li = lv && lv.index != null ? lv.index : (state && state.levelIndex) || 0;
-  const spec = { kind: 'bothy', levelIndex: li };
   const page = clamp(ui.scroll | 0, 0, Math.max(0, list.length - 1));
-  if (notePage.page !== page || t < notePage.t0) notePage = { page, t0: t };
-  const text = list.length ? String(list[page]) : NOTES.empty;
-  const since = t - notePage.t0;
-  const typed = revealCount([...text].length, since * 1000);
-  const acc = accentOfIndex(li);
-  filmFrame(env, spec, text, typed, since, { more: false });
-  // heading and count above the picture, page marks below
-  drawText(ctx, NOTES.heading, 8, 6, PAL.paper2, { font: 'small', spacing: 2, halo: PAL.ink });
-  drawText(ctx, fmt(NOTES.count, { n: list.length }), SW - 8, 6, PAL.rock, { font: 'small', spacing: 1, align: 'right', halo: PAL.ink });
+  rect(ctx, 0, 0, SW, SH, PAL.ink);
+  drawText(ctx, NOTES.heading, 8, L.headY, PAL.fog, { font: 'small', spacing: 2 });
+  drawText(ctx, fmt(NOTES.count, { n: list.length }), SW - 8, L.headY, PAL.rock, { font: 'small', spacing: 1, align: 'right' });
+  hline(ctx, 8, L.top - 6, SW - 16, PAL.char);
+  hline(ctx, 8, L.bottom + 4, SW - 16, PAL.char);
+  // the note, centred as a block in the space between the rules
+  const lines = noteLines(list.length ? list[page] : NOTES.empty).slice(0, L.maxLines);
+  const blockH = (lines.length - 1) * L.lineH + 7;
+  const y0 = Math.round(L.top + (L.bottom - L.top - blockH) / 2);
+  const col = list.length ? PAL.snow : PAL.fog;
+  lines.forEach((l, i) => drawText(ctx, l, L.colX, y0 + i * L.lineH, col));
   if (list.length > 1) {
-    drawText(ctx, fmt(STORY.page, { n: page + 1, N: list.length }), 8, 208, acc, { font: 'small', spacing: 1 });
-    if (page > 0) drawText(ctx, '↑', 34, 206, acc, {});
-    if (page < list.length - 1) drawText(ctx, '↓', 42, 206, acc, {});
+    const w = drawText(ctx, fmt(NOTES.page, { n: page + 1, N: list.length }), 8, L.footY, PAL.paleblue, { font: 'small', spacing: 1 });
+    if (page > 0) drawText(ctx, '↑', 8 + w + 6, L.footY - 1, PAL.paleblue, {});
+    if (page < list.length - 1) drawText(ctx, '↓', 8 + w + 14, L.footY - 1, PAL.paleblue, {});
   }
-  drawText(ctx, STORY.notesFooter, SW - 8, 208, PAL.rock, { font: 'small', align: 'right', spacing: 1 });
+  drawText(ctx, NOTES.footer, SW - 8, L.footY, PAL.rock, { font: 'small', align: 'right', spacing: 1 });
 }
 
 // ================================================================= complete
@@ -593,4 +519,4 @@ function complete(env) {
   if (blink(t, 1.3, 0.65)) drawText(ctx, COMPLETE.prompt, SW / 2, y + h - 9, PAL.ink, { font: 'small', align: 'center', spacing: 2 });
 }
 
-export const Screens = { title, select, pause, map: mapScreen, notes, complete, story };
+export const Screens = { title, select, pause, map: mapScreen, notes, complete };

@@ -6,13 +6,9 @@
  *     autopilot walk the gate chain, and assert that the level completes, no console errors,
  *     no NaN in player state, artefacts fired, and the frame budget holds. Screenshots
  *     are taken along the way.
- *  2. Menu flow with audio on: title → tracklist → play, walk with the keyboard, check the
+ *  2. Menu flow with audio on: title → tracklist → play (no screens in between), walk with the keyboard, check the
  *     AudioContext is running and the master analyser carries signal.
- *
- *  3. Story flow (the real fresh start): title -> intro (3 filmstrip panels, ENTER completes the typed caption, ENTER again
- *     advances) -> tracklist -> track I's opening panel -> play; the seen-flags persist (reload skips the intro) and ESC skips.
- *
- * Stories are skipped under ?autopilot=1, ?mute=1 and ?nostory=1 (so stages 1 and the perf run are unaffected); stage 2 uses ?nostory=1.
+ *  3. Real-time performance with live audio (full run, or --perf).
  *
  * Usage: node tools/verify-play.mjs [--level id|index] [--speed 6] [--out out/play] [--no-audio] [--menu-only] [--perf]
  */
@@ -114,14 +110,19 @@ if (doAudio && only == null) {
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(`${base}/index.html?fresh=1&nostory=1`);
+  const screen = () => page.evaluate(() => window.__contours.ui.screen);
+  const screens = [];
+  await page.goto(`${base}/index.html?fresh=1`);
   await page.waitForTimeout(800);
+  screens.push(await screen());
   await page.screenshot({ path: path.join(outDir, 'menu-title.png') });
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
+  screens.push(await screen());
   await page.screenshot({ path: path.join(outDir, 'menu-select.png') });
   await page.keyboard.press('Enter');
   await page.waitForTimeout(1500);
+  screens.push(await screen());
   // walk around with the keyboard
   const walk = async (key, ms) => { await page.keyboard.down(key); await page.waitForTimeout(ms); await page.keyboard.up(key); };
   await walk('ArrowUp', 2500); await walk('ArrowRight', 2500);
@@ -145,78 +146,12 @@ if (doAudio && only == null) {
   });
   await page.screenshot({ path: path.join(outDir, 'menu-play.png') });
   audioCheck.errors = errors.slice(0, 5);
+  audioCheck.screens = screens;
+  if (screens.join('>') !== 'title>select>play') audioCheck.ok = false;
   if (!audioCheck.ok || errors.length) failed = true;
   await page.close();
 }
 
-
-// --- story flow: the real fresh start through the intro, with default settings (stories on)
-let storyCheck = null;
-if (only == null) {
-  const ctxt = await browser.newContext({ viewport: { width: 1152, height: 648 } });   // empty localStorage: a first launch
-  const page = await ctxt.newPage();
-  const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  page.on('pageerror', (e) => errors.push(String(e)));
-  const screen = () => page.evaluate(() => window.__contours.ui.screen);
-  const story = () => page.evaluate(() => { const s = window.__contours.ui.story; return s ? { i: s.index, n: s.total, typed: s.typed, count: s.count, kind: s.panel.kind } : null; });
-  const log = [];
-  const check = (name, ok, extra) => { log.push({ name, ok: !!ok, extra }); if (!ok) failed = true; };
-  await page.goto(`${base}/index.html?mute=1&story=1`);          // ?story=1 forces stories on although mute=1 would switch them off
-  await page.waitForFunction(() => window.__contours && window.__contours.ui, null, { timeout: 15000 });
-  await page.waitForTimeout(600);
-  check('starts at the title', (await screen()) === 'title');
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(400);
-  check('title -> intro story', (await screen()) === 'story');
-  for (let i = 0; i < 3; i++) {
-    await page.waitForTimeout(700);
-    const a = await story();
-    check(`intro panel ${i + 1}: typewriter running`, a && a.i === i && a.n === 3 && a.typed < a.count, a);
-    await page.screenshot({ path: path.join(outDir, `story-intro-${i + 1}-typing.png`) });
-    await page.keyboard.press('Enter');                               // first press: finish the caption
-    await page.waitForTimeout(250);
-    const b = await story();
-    check(`intro panel ${i + 1}: first ENTER completes the reveal`, b && b.i === i && b.typed === b.count, b);
-    await page.screenshot({ path: path.join(outDir, `story-intro-${i + 1}.png`) });
-    await page.keyboard.press('Enter');                               // second press: advance / finish
-    await page.waitForTimeout(250);
-  }
-  check('intro ends at the tracklist', (await screen()) === 'select');
-  const f1 = await page.evaluate(() => JSON.parse(localStorage.getItem('contours.flags.v1') || '{}'));
-  check('intro flag persisted', f1.intro === 1, f1);
-  await page.screenshot({ path: path.join(outDir, 'story-select.png') });
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(500);
-  check('first entry shows the track panel', (await screen()) === 'story' && (await story())?.kind === 'ridge');
-  await page.waitForTimeout(600);
-  await page.screenshot({ path: path.join(outDir, 'story-track-1.png') });
-  await page.keyboard.press('Enter'); await page.waitForTimeout(250);
-  await page.keyboard.press('Enter'); await page.waitForTimeout(1200);
-  check('then the track plays', (await screen()) === 'play');
-  await page.screenshot({ path: path.join(outDir, 'story-play.png') });
-  const f2 = await page.evaluate(() => JSON.parse(localStorage.getItem('contours.flags.v1') || '{}'));
-  check('track flag persisted', f2['track.rannoch'] === 1, f2);
-  // a second launch in the same browser profile: no intro, straight to the tracklist, and the visited track goes straight in
-  await page.goto(`${base}/index.html?mute=1&story=1`);
-  await page.waitForTimeout(700);
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(400);
-  check('second launch skips the intro', (await screen()) === 'select');
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(1500);
-  check('a seen track enters at once', (await screen()) === 'play');
-  // ESC skips: a fresh track story from the console, then Escape
-  await page.evaluate(() => window.__contours.startStory([{ panel: { kind: 'bothy', levelIndex: 0 }, caption: 'ONE' }, { panel: { kind: 'cross', levelIndex: 0 }, caption: 'TWO' }], () => { window.__contours.ui.screen = 'play'; }));
-  await page.waitForTimeout(400);
-  check('story takes the screen', (await screen()) === 'story');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
-  check('ESC skips the whole queue', (await screen()) === 'play');
-  check('no console errors', errors.length === 0, errors.slice(0, 3));
-  storyCheck = log;
-  await ctxt.close();
-}
 
 // --- real-time performance with live audio: autopilot at normal speed, time every audio.update + frame
 let perf = null;
@@ -272,8 +207,7 @@ srv.close();
 
 console.table(results.map((r) => ({ ...r, errors: r.errors.join(' | ').slice(0, 80) })));
 if (audioCheck) console.log('audio/menu flow:', JSON.stringify(audioCheck));
-if (storyCheck) { console.log('story flow:'); console.table(storyCheck.map((c) => ({ check: c.name, ok: c.ok ? 'ok' : 'FAIL', detail: c.ok ? '' : JSON.stringify(c.extra) }))); }
 if (perf) console.log('realtime perf:', JSON.stringify(perf));
-fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({ results, audioCheck, storyCheck, perf }, null, 2));
+fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({ results, audioCheck, perf }, null, 2));
 console.log(failed ? 'VERIFY-PLAY: FAIL' : 'VERIFY-PLAY: PASS');
 process.exit(failed ? 1 : 0);

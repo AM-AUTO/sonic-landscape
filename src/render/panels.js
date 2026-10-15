@@ -1,10 +1,10 @@
 /**
- * Painted scenes: full-bleed night-and-ember paintings made in code, no image assets.
+ * Painted scenes made in code, no image assets: the tracklist thumbnails (ridge) and the start screen (title).
  *
- * The art is impressionistic: big fields of colour, ordered-dither gradients, few objects. The sky
+ * The ridge art is impressionistic: big fields of colour, ordered-dither gradients, few objects. The sky
  * bleeds blood / rust / ember into heather and peat-black; hills are stacked dithered bands traced by
- * fine contour lines; lochans mirror the red sky; one small motif (a stag, a lit window, a lone figure,
- * a symbol stone) gives each scene its scale.
+ * fine contour lines; lochans mirror the red sky; one small motif (a stag, a lone figure, ravens, a cairn)
+ * gives each scene its scale.
  *
  * Every painter writes palette colours (never blended: ordered dither only) into a Uint32Array
  * raster, so the same code runs in Node (tests hash the pixels) and in the browser (the raster is
@@ -12,13 +12,12 @@
  * saying which depth each pixel belongs to; per frame a copy of the base gets the cheap animation on
  * top (drifting mist that respects the depth order, a flickering lamp, ravens, glints on the water).
  *
- *   spec = { kind: 'ridge'|'bothy'|'stone'|'dawn'|'title', levelIndex, seed?, motif?, locked? }
+ *   spec = { kind: 'ridge'|'title', levelIndex, seed?, motif?, locked? }
  *
- *   ridge   a track's own place: skyline from its real heightfield, a colour mood and ONE motif
- *   bothy   a vast red-black moor, one small lit window and a thread of smoke (field notes)
- *   stone   a Pictish symbol stone at dawn, warm glow (track complete)
- *   dawn    a wide dawn over the whole set of ridges (album complete)
+ *   ridge   a track's own place: skyline from its real heightfield, a colour mood and ONE motif (tracklist thumbnails)
  *   title   the start screen, five greyscale-plus-ember variants (spec.variant 'castlerigg'|'shelter'|'mentol'|'dolmen'|'menhir'), see title/index.js
+ *
+ * The bothy, symbol-stone and dawn painters (between-track story panels) are parked: see docs/PARKED.md.
  */
 import { PAL, PAL_NAMES, PAL_U32 as C } from './palette.js';
 import { hash2f } from '../core/rng.js';
@@ -30,7 +29,7 @@ import * as SP from './sprites.js';
 import { LEVELS } from '../world/levels/index.js';
 import { createSculptKit } from '../world/sculpt.js';
 
-/** Full-bleed: the painting is the whole 384x216 screen (the caption band is drawn over its foot). */
+/** Full-bleed: the default panel size is the whole 384x216 screen. */
 export const PANEL = Object.freeze({ x: 0, y: 0, w: 384, h: 216 });
 /** The title cover is full-bleed too. */
 export const TITLE_SCENE = Object.freeze({ w: 384, h: 216 });
@@ -497,169 +496,6 @@ function desaturate(r) {
   }
 }
 
-// ======================================================================================== BOTHY
-function paintBothy(r, spec, S) {
-  const W = r.w, H = r.h, sc = H / 216;
-  const seed = 9000 + (spec.levelIndex | 0) * 19 + (spec.seed | 0);
-  S.seed = seed; S.sc = sc;
-  const horizon = Math.round(H * 0.7);
-  // a vast sky: black overhead bleeding to a low bruise of blood and heather at the horizon
-  paintSky(r, W, H, horizon, [C.ink, C.ink, C.blood, C.heather, C.rust], 1.35);
-  paintStreaks(r, W, horizon, seed + 3, 0.8);
-  S.stars = [];
-  for (let i = 0; i < Math.round(W * H * 0.0006); i++) S.stars.push({ x: Math.floor(hash2f(i, 1, seed + 40) * W), y: Math.floor(Math.pow(hash2f(i, 2, seed + 40), 1.5) * horizon * 0.55), ph: hash2f(i, 3, seed + 40) * 6.28 });
-  S.stars = S.stars.filter((s) => r.get(s.x, s.y) === C.ink);
-  // far hills, barely there: a darker swell on the horizon
-  for (let x = 0; x < W; x++) {
-    const h0 = Math.round(horizon - 4 * sc - 7 * sc * vnoise(x * 0.012, 2, seed) - 3 * sc * vnoise(x * 0.04, 7, seed));
-    for (let y = h0; y < H; y++) r.px(x, y, bay(x, y) < clamp((y - h0) / (14 * sc), 0, 1) * 0.7 + 0.1 ? C.blood : C.heather, 1);
-  }
-  // the moor: black peat, its far edge lit faintly red, heather and dun grass flecking
-  for (let y = horizon - 2; y < H; y++) {
-    const t = (y - horizon) / (H - horizon);
-    for (let x = 0; x < W; x++) {
-      const warm = bay(x, y) < Math.max(0, 0.42 - t * 1.1);
-      let c = warm ? C.blood : (bay(x + 2, y + 1) < 0.05 * (1 - t) ? C.heather : C.ink);
-      const k = hash2f(x, y, seed + 70);
-      if (k < 0.006 * (1 - t * 0.5)) c = k < 0.002 ? C.contourIdx : k < 0.004 ? C.rust : C.heather;
-      r.px(x, y, c, 2);
-    }
-  }
-  // the bothy: a black box with a pitched roof, small against the immensity
-  const bx = Math.round(W * 0.64), by = Math.round(horizon + 5 * sc);
-  const bw = Math.max(6, Math.round(28 * sc)), bh = Math.max(3, Math.round(11 * sc));
-  r.rect(bx, by - bh, bw, bh, C.ink, 3);
-  for (let k = 0; k < Math.round(6 * sc); k++) r.rect(bx - 1 + k, by - bh - 1 - k, bw + 2 - 2 * k, 1, C.ink, 3);
-  r.rect(bx + bw - Math.max(2, Math.round(3 * sc)), by - bh - Math.round(6 * sc), Math.max(2, Math.round(2 * sc)), Math.round(5 * sc), C.ink, 3);
-  // the faint path to the door, a pale thread through the heather
-  for (let y = by; y < H; y++) {
-    const t = (y - by) / (H - by);
-    const x = Math.round(bx + bw * 0.4 - t * W * 0.22 + Math.sin(t * 5) * 6 * sc * t);
-    for (let k = -Math.round(t * 2 + 0.5); k <= Math.round(t * 2 + 0.5); k++) if (bay(x + k, y) < 0.16) r.px(x + k, y, C.heather, 2);
-  }
-  S.window = { x: bx + Math.round(bw * 0.3), y: by - bh + Math.max(1, Math.round(2.5 * sc)), w: Math.max(2, Math.round(5 * sc)), h: Math.max(2, Math.round(4 * sc)) };
-  S.chimney = { x: bx + bw - Math.max(1, Math.round(2 * sc)), y: by - bh - Math.round(7 * sc) };
-  S.bands = [mistBand(W, Math.round(H * 0.1), seed + 1, { y: Math.round(horizon - H * 0.03), layerMax: 1, speed: 3, dens: 0.8, phase: 5 }), mistBand(W, Math.round(H * 0.12), seed + 2, { y: Math.round(H * 0.88), layerMax: 3, speed: 6, dens: 0.45, phase: 9 })];
-  if (spec.locked) desaturate(r);
-}
-function animBothy(r, spec, S, t) {
-  const W = r.w, H = r.h, sc = S.sc || 1;
-  for (const s of S.stars) { const k = Math.sin(t * 1.5 + s.ph); if (k < 0.75) r.px(s.x, s.y, k > 0.2 ? C.paper2 : C.rock); }
-  for (const b of S.bands) drawMistBand(r, b, t);
-  // the window: the one warm thing in the whole dark, flickering
-  const w = S.window, f = vnoise(t * 6, 0.5, S.seed + 40), hot = f > 0.55;
-  const cx = w.x + (w.w >> 1), cy = w.y + (w.h >> 1);
-  const rad = Math.round(44 * sc * (0.85 + f * 0.3));
-  for (let y = -rad; y <= rad; y++) for (let x = -Math.round(rad * 1.4); x <= Math.round(rad * 1.4); x++) {
-    const d = Math.hypot(x / 1.4, y);
-    if (d > rad || d < 1) continue;
-    const X = cx + x, Y = cy + y;
-    if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
-    const k = Math.pow(1 - d / rad, 1.8) * 1.1;
-    if (bay(X, Y) < k) { const i = Y * W + X; if (r.lay[i] !== 3) r.d[i] = d < rad * 0.35 ? lift(lift(lift(r.d[i]))) : d < rad * 0.65 ? lift(lift(r.d[i])) : lift(r.d[i]); }
-  }
-  r.rect(w.x, w.y, w.w, w.h, hot ? C.flame : C.lamp);
-  if (hot) r.px(w.x, w.y, C.paper);
-  // the thread of smoke: a wavering line of dots climbing, bending with the wind, fading to the sky
-  const n = Math.round(46 * sc);
-  for (let i = 0; i < n; i++) {
-    const a = i / n;
-    const xi = Math.round(S.chimney.x + Math.sin(a * 5 + t * 0.9) * (1 + a * 6) * sc + a * a * 28 * sc);
-    const yi = Math.round(S.chimney.y - a * 58 * sc);
-    if (yi < 0) continue;
-    if (bay(xi, yi) < 0.98 - a * 0.8) { r.px(xi, yi, a < 0.6 ? C.rock : C.heather); r.px(xi + 1, yi, a < 0.6 ? C.rock : C.heather); }
-    if (a < 0.6 && bay(xi + 2, yi) < 0.5) r.px(xi + 2, yi, C.heather);
-  }
-}
-
-// ======================================================================================== STONE
-function paintStone(r, spec, S) {
-  const W = r.w, H = r.h, sc = H / 216;
-  const li = spec.levelIndex | 0;
-  const seed = 11000 + li * 29 + (spec.seed | 0);
-  S.seed = seed; S.sc = sc;
-  const horizon = Math.round(H * 0.7);
-  paintSky(r, W, H, horizon, [C.night, C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame], 1.05);
-  paintStreaks(r, W, horizon, seed + 3, 1);
-  paintSun(r, Math.round(W * 0.5), Math.round(H * 0.66), Math.round(18 * sc), 4.6);
-  const prof = profileOf(li);
-  const t1 = ridgeTops(W, prof.bands[0], prof.size, { span: 0.8, off: 6, base: H * 0.68, amp: H * 0.16, gamma: prof.gamma, smooth: true });
-  ridgeLayer(r, 1, W, H, t1, { upper: C.heather, lower: C.blood, fade: H * 0.12, rim: C.rust, contours: 3, cstep: 4 * sc });
-  const t2 = ridgeTops(W, prof.bands[1], prof.size, { span: 0.8, off: 30, base: H * 0.78, amp: H * 0.12, gamma: prof.gamma });
-  ridgeLayer(r, 2, W, H, t2, { upper: C.blood, lower: C.ink, fade: H * 0.14, rim: C.heather });
-  const top = Math.round(H * 0.84);
-  for (let y = top; y < H; y++) for (let x = 0; x < W; x++) {
-    const t = (y - top) / (H - top), k = hash2f(x, y, seed + 70);
-    r.px(x, y, bay(x, y) < 0.35 * (1 - t) ? C.rust : k < 0.05 ? C.contour : k < 0.1 ? C.contourIdx : (bay(x + 1, y) < 0.3 ? C.blood : C.ink), 3);
-  }
-  // the symbol stone: a tall tapering slab, lit warm on its sunward face, the crescent and V-rod incised
-  const sh = Math.round(H * 0.5), sw0 = Math.round(W * 0.085), baseY = Math.round(H * 0.86), cx = Math.round(W * 0.5);
-  for (let y = 0; y < sh; y++) {
-    const t = y / sh;
-    const half = Math.round(sw0 * (0.62 + 0.38 * t) + 2 * Math.sin(t * 5 + seed));
-    const left = cx - half, right = cx + half;
-    const topCap = y < sh * 0.1 ? Math.round((1 - y / (sh * 0.1)) * half * 0.6) : 0;
-    for (let x = left + topCap; x <= right - topCap; x++) {
-      const nx = (x - left) / (2 * half), k = hash2f(x, y, seed + 5);
-      let c = nx < 0.2 ? (bay(x, y) < 0.6 ? C.ember : C.rust) : nx < 0.5 ? (k < 0.35 ? C.heather : C.blood) : (k < 0.3 ? C.blood : C.ink);
-      if (x === left + topCap) c = C.lamp;
-      if (x === right - topCap) c = C.ink;
-      r.px(x, baseY - sh + y, c, 4);
-    }
-  }
-  const sx = cx, sy = baseY - sh + Math.round(sh * 0.36), R = Math.round(sw0 * 0.62);
-  S.symbol = [];
-  for (let a = 0.9; a < 2 * Math.PI - 0.9; a += 0.025) { S.symbol.push([Math.round(sx + Math.cos(a) * R), Math.round(sy + Math.sin(a) * R)]); S.symbol.push([Math.round(sx + Math.cos(a) * (R - 3 * sc)) + Math.round(R * 0.3), Math.round(sy + Math.sin(a) * (R - 3 * sc))]); }
-  const addLine = (a, b) => { const n = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); for (let i = 0; i <= n; i++) S.symbol.push([Math.round(a[0] + ((b[0] - a[0]) * i) / n), Math.round(a[1] + ((b[1] - a[1]) * i) / n)]); };
-  addLine([sx - R, sy + R * 1.3], [sx, sy + R * 2.2]); addLine([sx, sy + R * 2.2], [sx + R, sy + R * 1.3]);
-  addLine([sx - R * 1.1, sy + R * 1.9], [sx + R * 1.1, sy + R * 1.0]); addLine([sx, sy - R * 0.3], [sx, sy + R * 3.4]);
-  for (const [x, y] of S.symbol) r.px(x, y, C.ink, 4);
-  S.bands = [mistBand(W, Math.round(H * 0.09), seed + 1, { y: Math.round(H * 0.74), layerMax: 2, speed: 3, dens: 0.75, phase: 5 }), mistBand(W, Math.round(H * 0.1), seed + 2, { y: Math.round(H * 0.9), layerMax: 3, speed: 6, dens: 0.5, phase: 9 })];
-  S.cx = cx; S.sy = sy; S.baseY = baseY;
-}
-function animStone(r, spec, S, t) {
-  const W = r.w, H = r.h;
-  for (const b of S.bands) drawMistBand(r, b, t);
-  const pulse = 0.5 + 0.5 * Math.sin(t * 1.3);
-  for (const [x, y] of S.symbol) r.px(x, y, pulse > 0.5 ? C.flame : C.ember, 4);
-  const rad = Math.round(H * 0.3);
-  for (let y = -rad; y <= rad; y++) for (let x = -rad; x <= rad; x++) {
-    const d = Math.hypot(x * 0.7, y);
-    if (d > rad) continue;
-    const X = S.cx + x, Y = S.sy + y;
-    if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
-    const i = Y * W + X;
-    if (r.lay[i] === 4) continue;
-    if (bay(X, Y) < Math.pow(1 - d / rad, 2.2) * (0.35 + pulse * 0.15)) r.d[i] = lift(r.d[i]);
-  }
-  for (let i = 0; i < 16; i++) {
-    const a = (t * 0.07 + i / 16) % 1;
-    r.px(Math.round(S.cx + Math.sin(i * 2.7 + t * 0.6) * H * 0.2), Math.round(S.baseY - a * H * 0.5), a < 0.6 ? C.flame : C.rust);
-  }
-}
-
-// ======================================================================================== DAWN
-function paintDawn(r, spec, S) {
-  const W = r.w, H = r.h, sc = H / 216;
-  const seed = 13000 + (spec.seed | 0);
-  S.seed = seed; S.sc = sc;
-  const horizon = Math.round(H * 0.66);
-  paintSky(r, W, H, horizon, [C.blood, C.heather, C.rust, C.ember, C.lamp, C.flame, C.paper], 1.0);
-  paintStreaks(r, W, horizon, seed + 3, 1.1);
-  paintSun(r, Math.round(W * 0.5), Math.round(H * 0.64), Math.round(22 * sc), 4.8);
-  // eight ridges, one for each glen, from the palest to the blackest
-  const ups = [C.rust, C.heather, C.heather, C.blood, C.blood, C.ink, C.ink, C.ink];
-  const lows = [C.heather, C.blood, C.blood, C.ink, C.ink, C.ink, C.ink, C.ink];
-  const rims = [C.ember, C.rust, C.rust, C.heather, C.heather, C.blood, C.blood, C.blood];
-  for (let i = 0; i < 8; i++) {
-    const prof = profileOf(i);
-    const t = ridgeTops(W, prof.bands[i % 3], prof.size, { span: 0.8, off: (i * 13) % 50, base: H * (0.6 + i * 0.045), amp: H * (0.2 + 0.03 * i), gamma: prof.gamma, smooth: i < 3 });
-    ridgeLayer(r, Math.min(i + 1, 7), W, H, t, { upper: ups[i], lower: lows[i], fade: H * 0.1, rim: rims[i], contours: i < 4 ? 2 : 0, cstep: 5 * sc });
-  }
-  S.bands = [0.62, 0.72, 0.82, 0.92].map((y, i) => mistBand(W, Math.round(H * 0.08), seed + i + 1, { y: Math.round(H * y), layerMax: 7, speed: 3 + i * 2, dens: 0.7 - i * 0.08, phase: 11 * (i + 1) }));
-}
-function animDawn(r, spec, S, t) { for (const b of S.bands) drawMistBand(r, b, t); }
-
 // ======================================================================================== TITLE
 // The start screen is one of five full-bleed greyscale paintings with a single ember accent (src/render/title/*.js); spec.variant picks one.
 // A variant that wants a track's own heightfield lists it in its `levels` export (TITLE_LEVELS); none do by default.
@@ -668,7 +504,7 @@ function animTitle(r, spec, S, t) { animTitleArt(r, spec, S, t); }
 
 // ======================================================================================== registry
 const PAINTERS = {
-  ridge: [paintRidge, animScene], bothy: [paintBothy, animBothy], stone: [paintStone, animStone], dawn: [paintDawn, animDawn], title: [paintTitle, animTitle],
+  ridge: [paintRidge, animScene], title: [paintTitle, animTitle],
 };
 export const PANEL_KINDS = Object.freeze(Object.keys(PAINTERS));
 export { TITLE_VARIANTS, TITLE_DEFAULT, TITLE_LAYOUT, TITLE_LEVELS, Raster, paintStandingStone };

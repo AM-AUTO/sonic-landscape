@@ -265,12 +265,11 @@ test('fit: pause menu', () => {
 });
 
 test('fit: field notes screen', () => {
-  const w = SW - 60, maxW = w - 48 - 10;
-  assert.ok(wrapText(NOTES.empty, maxW, { italic: true }).length <= 4, 'empty state');
-  assert.ok(30 + measureText(NOTES.heading, { spacing: 2 }) + measureText(fmt(NOTES.count, { n: 99 }), { ...small, spacing: 1 }) + 16 < w, 'heading and count');
-  assert.ok(measureText(NOTES.footer, { ...small, spacing: 1 }) < w);
-  // the longest field note, as wrapped on the page, must stay a few lines (it scrolls, but should not sprawl)
-  for (const lv of LEVELS) for (const n of lv.fieldNotes) assert.ok(wrapText(n, maxW, { italic: true }).length <= 3, `${lv.id}: ${n}`);
+  const maxW = LAYOUT.notes.colW;           // the plain notes page (full layout checks in panels.test.js)
+  assert.ok(wrapText(NOTES.empty, maxW).length <= 4, 'empty state');
+  assert.ok(measureText(NOTES.footer, { ...small, spacing: 1 }) < SW / 2);
+  // the longest field note, as wrapped on the page, must stay a few lines (one note per page, but it should not sprawl)
+  for (const lv of LEVELS) for (const n of lv.fieldNotes) assert.ok(wrapText(n, maxW).length <= 3, `${lv.id}: ${n}`);
 });
 
 test('fit: track complete card', () => {
