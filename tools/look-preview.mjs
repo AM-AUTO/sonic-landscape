@@ -219,9 +219,10 @@ function demoWorld(key) {
   const w = buildWorld(def);
   const ms = performance.now() - t0;
   // temporary overrides, on a copy of the level object only
-  const level = { ...w.level, id: key, season: D.season };   // the new id: its WEATHER entry (fx.js) applies
+  const level = { ...w.level, id: key, season: def.season || D.season };   // the new id: its WEATHER entry (fx.js) applies
   w.level = level;
-  level.look = D.look(w);
+  // a level that carries its own look is shown as built; the demo dressing is only for levels without one
+  level.look = def.look ? def.look : D.look(w);
   worldCache.set(key, w);
   console.log(`[${key}] ${D.title}: buildWorld ${Math.round(ms)} ms, look`, JSON.stringify({ paper: level.look.paper, light: level.look.light, signature: level.look.signature }));
   return w;

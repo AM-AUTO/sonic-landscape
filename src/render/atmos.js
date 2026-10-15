@@ -206,7 +206,7 @@ function phaseInfo(tod, season) {
   return { p, a, b, c };
 }
 /** Is any bank effect present at this time of day? (cheap early-out) */
-export function bankDensity(A, camX, camY, clock, tod, season) {
+export function bankDensity(A, camX, camY, clock, tod, season, px = SW / 2, py = SH / 2) {
   const E = A.effects;
   if (!A.alt) { A.bankOn = false; return false; }
   const { p, a, b, c } = phaseInfo(tod, season);
@@ -230,11 +230,14 @@ export function bankDensity(A, camX, camY, clock, tod, season) {
     else cap = base;
     if (cap > 1.15) cap = -1;
   }
-  let inv = 0, invTop = 0.3;
+  let inv = 0, invTop = 0.3, invU = 0;
   if (E.has('inversion')) {
     const ip = A.params.inversion || {};
     invTop = ip.top != null ? ip.top : 0.3;
-    inv = p < a ? 1 : p < b ? 1 - smooth(a, a + (b - a) * 0.4, p) : p > c ? smooth(c + (1 - c) * 0.85, 1, p) * 0.6 : 0;
+    // forms at the end of the night; through the dawn it thins, lifts off the glen floor and breaks up; gone by mid-morning
+    if (p < a) { invU = 0.1 + 0.5 * (p / a); inv = 1 - 0.5 * invU; }
+    else if (p < b) { invU = 0.6 + 0.4 * smooth(a, a + (b - a) * 0.45, p); inv = clamp((1 - invU) * 1.75, 0, 1); }
+    else if (p > c) { invU = 0; inv = smooth(c + (1 - c) * 0.85, 1, p) * 0.6; }
   }
   let thaw = 0;
   if (E.has('thawMist') && A.thaw) thaw = p < a ? 0.6 + 0.4 * smooth(0, a * 0.5, p) : p < b ? 1 - smooth(a, a + (b - a) * 0.35, p) : 0;
@@ -266,7 +269,9 @@ export function bankDensity(A, camX, camY, clock, tod, season) {
       if (inv > 0.01) {
         const n = texAt(tb, ((wx + t * 2) * 0.5) | 0, ((wy) * 0.6) | 0) / 255;
         const top = invTop + (n - 0.5) * 0.05;
-        const v = (1 - smooth(top - 0.03, top + 0.012, al)) * inv * (0.86 + 0.3 * n);
+        const lift = invTop * 0.85 * smooth(0.45, 1, invU);                // late in the dawn the base rises: the floor clears first
+        const brk = clamp((n + 0.6 - invU * 0.75) * 2.4, 0, 1);              // and the sheet breaks into rafts
+        const v = (1 - smooth(top - 0.03, top + 0.012, al)) * smooth(lift - 0.02, lift + 0.035, al) * inv * brk * (0.86 + 0.3 * n);
         if (v > d) d = v;
       }
       if (thaw > 0.01) {
@@ -279,13 +284,104 @@ export function bankDensity(A, camX, camY, clock, tod, season) {
       if (q) any = true;
     }
   }
+  // seen from inside (the walker's own spot is in the bank) it is a veil: thin round the walker, solid only far off
+  A.veil = false;
+  if (any) {
+    const wg = clamp((py >> 1) | 0, 0, GH - 1) * GW + clamp((px >> 1) | 0, 0, GW - 1);
+    if (bank[wg] > 64) {
+      A.veil = true;
+      for (let gy = 0; gy < GH; gy++) {
+        const dy = gy * 2 + 1 - py;
+        for (let gx = 0; gx < GW; gx++) {
+          const k = gy * GW + gx, d = bank[k];
+          if (!d) continue;
+          const dx = gx * 2 + 1 - px, r = Math.sqrt(dx * dx + dy * dy);
+          bank[k] = (d * (0.3 + 0.7 * smooth(60, 200, r))) | 0;
+        }
+      }
+    }
+  }
   A.bankOn = any;
   return any;
+}
+
+// ------------------------------------------------------------------------------------------ text protection
+// Banks and the white-out never chop a label: before the tint (prepare) the map's line inks are grouped into
+// connected runs; small groups are text and symbols, decided whole (drawn, or knocked out cleanly); long ones
+// (paths, burns, walls) always show through.
+const PROT = new Uint8Array(PAL_COUNT);
+[I.ink, I.magenta, I.waterInk].forEach((i) => { PROT[i] = 1; });
+const PROT_TEXT_LVL0 = new Uint8Array(PAL_COUNT);                  // brown label text (glen names, contour values) off the contours
+[I.contourIdx, I.contour, I.char].forEach((i) => { PROT_TEXT_LVL0[i] = 1; });
+export function buildProtect(A, fb, camX, camY, lvl, MW) {
+  if (!A.pgid) { A.pgid = new Int32Array(SW * SH); A.par = new Int32Array(SW * SH); A.runs = new Int32Array(SW * SH * 3); }
+  const gid = A.pgid, par = A.par, runs = A.runs;
+  gid.fill(-1);
+  let nr = 0, prevStart = 0, prevEnd = 0;
+  const find = (r) => { while (par[r] !== r) { par[r] = par[par[r]]; r = par[r]; } return r; };
+  for (let y = 0; y < SH; y++) {
+    const rowStart = nr, mrow = lvl ? (y + camY) * MW + camX : 0;
+    let x = 0;
+    while (x < SW) {
+      const i = y * SW + x, pi = paletteIndexOf(fb[i]);
+      const on = pi !== 255 && (PROT[pi] || (PROT_TEXT_LVL0[pi] && lvl && lvl[mrow + x] === 0));
+      if (!on) { x++; continue; }
+      // a run of protected pixels, bridging gaps of up to 4 px (letters of one word, spaced capitals)
+      let x1 = x, gap = 0, k = x + 1;
+      for (; k < SW && gap <= 4; k++) {
+        const pk = paletteIndexOf(fb[y * SW + k]);
+        if (pk !== 255 && (PROT[pk] || (PROT_TEXT_LVL0[pk] && lvl && lvl[mrow + k] === 0))) { x1 = k; gap = 0; } else gap++;
+      }
+      const r = nr++;
+      runs[r * 3] = x; runs[r * 3 + 1] = x1; runs[r * 3 + 2] = y;
+      par[r] = r;
+      for (let q = prevStart; q < prevEnd; q++) {
+        if (runs[q * 3 + 1] >= x - 1 && runs[q * 3] <= x1 + 1) { const a = find(q), b = find(r); if (a !== b) par[b] = a; }
+      }
+      x = x1 + 1;
+    }
+    prevStart = rowStart; prevEnd = nr;
+  }
+  // group boxes
+  if (!A.gbox || A.gbox.length < nr * 4) A.gbox = new Int16Array(Math.max(nr, 64) * 4 * 2);
+  const box = A.gbox;
+  for (let r = 0; r < nr; r++) { box[r * 4] = 32767; box[r * 4 + 1] = 32767; box[r * 4 + 2] = -1; box[r * 4 + 3] = -1; }
+  for (let r = 0; r < nr; r++) {
+    const g = find(r), x0 = runs[r * 3], x1 = runs[r * 3 + 1], y = runs[r * 3 + 2];
+    if (x0 < box[g * 4]) box[g * 4] = x0; if (y < box[g * 4 + 1]) box[g * 4 + 1] = y;
+    if (x1 > box[g * 4 + 2]) box[g * 4 + 2] = x1; if (y > box[g * 4 + 3]) box[g * 4 + 3] = y;
+    for (let xx = x0; xx <= x1; xx++) {
+      const i = y * SW + xx, pi = paletteIndexOf(fb[i]);
+      if (pi !== 255 && (PROT[pi] || (PROT_TEXT_LVL0[pi] && lvl && lvl[(y + camY) * MW + camX + xx] === 0))) gid[i] = g;
+    }
+  }
+  A.nGroups = nr;
+  A.protOn = true;
+}
+/** 0: a line (always shows); 1: text / symbol, decided whole */
+export function protGroupText(A, g) { return groupKind(A, g) === 1; }
+function groupKind(A, g) {
+  const b = A.gbox, w = b[g * 4 + 2] - b[g * 4] + 1, h = b[g * 4 + 3] - b[g * 4 + 1] + 1;
+  return w <= 150 && h <= 14 ? 1 : 0;
+}
+
+/** is protected group g under a dense enough bank to be knocked out? (cached per frame in A.ghide) */
+function groupHidden(A, g, bank) {
+  if (!A.ghide || A.ghide.length < A.nGroups) A.ghide = new Int8Array(Math.max(A.nGroups, 64) * 2);
+  if (A.ghideFrame !== A.protFrame) { A.ghide.fill(-1); A.ghideFrame = A.protFrame; }
+  let v = A.ghide[g];
+  if (v < 0) {
+    const b = A.gbox, cx = (b[g * 4] + b[g * 4 + 2]) >> 1, cy = (b[g * 4 + 1] + b[g * 4 + 3]) >> 1;
+    v = bank[clamp(cy >> 1, 0, GH - 1) * GW + clamp(cx >> 1, 0, GW - 1)] >= 185 ? 1 : 0;
+    A.ghide[g] = v;
+  }
+  return v;
 }
 
 /** paint the banks into the framebuffer (after the night pass): day / twilight / night colours */
 export function paintBanks(A, fb, camX, camY, night, twilight, lvl, MW) {
   if (!A.bankOn) return;
+  A.protFrame = (A.protFrame | 0) + 1;
   const lit = twilight > 0 || (night > 0.1 && night < 0.6);
   const bank = A.bank;
   // greys, whites and blues only: white cloud by day (grey-edged on the white prints), steel-blue cloud at night;
@@ -304,9 +400,20 @@ export function paintBanks(A, fb, camX, camY, night, twilight, lvl, MW) {
       if (d <= th && d < 205) continue;                                 // a dense bank is solid: no map speckle left in it
       const i = y * SW + x;
       const pi = paletteIndexOf(fb[i]);
-      if (pi === 255 || SKIP_INK[pi]) continue;
+      if (pi === 255) continue;
+      const g = A.protOn ? A.pgid[i] : (SKIP_INK[pi] ? -2 : -1);
+      if (g === -2) continue;
+      if (g >= 0) {
+        if (groupKind(A, g) === 0) continue;                           // paths, burns, walls: always show through
+        if (groupHidden(A, g, bank) === 0) continue;                   // a label is drawn whole ...
+        fb[i] = night > 0.7 ? ntCore : night > 0.6 ? U.blue : dayCore;  // ... or knocked out whole
+        continue;
+      }
       const core = d > 150 && (d - 150) * 2.4 > (BAYER8[bRow2 | ((wx + 3) & 7)] << 2);
-      if (!core && lvl && lvl[mrow + x] !== 0 && d < 200) continue;   // thin haze leaves the contours alone
+      if (lvl && lvl[mrow + x] !== 0) {
+        if (!core && d < 200) continue;                                 // thin haze leaves the contours alone
+        if (A.veil && ((wx + wy) & 1) === 0) continue;                 // seen from inside: every other contour pixel survives
+      }
       let c;
       if (night > 0.7) c = core ? ntCore : ntThin;
       else if (night > 0.6) c = core ? U.blue : U.steel;
@@ -493,6 +600,12 @@ export function paintWhiteout(A, fb, camX, camY, clock, night, px, py) {
       if (d <= r0) continue;
       const f = smooth(r0, r1, d) * max;
       const wx = x + camX;
+      const g = A.protOn ? A.pgid[y * SW + x] : -1;
+      if (g >= 0 && groupKind(A, g) === 1) {                            // labels and symbols: whole, by their centre
+        const b = A.gbox, gx = ((b[g * 4] + b[g * 4 + 2]) >> 1) - px, gy = ((b[g * 4 + 1] + b[g * 4 + 3]) >> 1) - py;
+        if (smooth(r0, r1, Math.sqrt(gx * gx + gy * gy)) * max > 0.5) fb[y * SW + x] = U.snow;
+        continue;
+      }
       const th = (BAYER8[bRow | (wx & 7)] + 0.5) / 64;
       if (th >= f) { if (f > 0.78) fb[y * SW + x] = U.frost; continue; }   // deep in the white: no map left, a faint grain
       fb[y * SW + x] = (f < 0.55 && (BAYER8[bRow2 | ((wx + 5) & 7)] + 0.5) / 64 < 0.5) ? U.frost : U.snow;

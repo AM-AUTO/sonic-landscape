@@ -26,7 +26,7 @@ import { mulberry32, hash2 } from '../core/rng.js';
 import { COVER, CELL_PX, SCREEN_W, SCREEN_H, seasonOf } from '../world/codes.js';
 import { lookOf, ATMOSPHERES } from './look.js';
 import {
-  createAtmos, atmosSetSheet, atmosUpdate, firstSnowAmount, bankDensity, paintBanks, paintGlint, paintWhirlpool, paintDeer,
+  createAtmos, atmosSetSheet, atmosUpdate, firstSnowAmount, bankDensity, buildProtect, protGroupText, paintBanks, paintGlint, paintWhirlpool, paintDeer,
   squallMask, clearingMask, paintSquallVeil, paintSpindrift, paintWhiteout, paintAurora, paintRainbow,
 } from './atmos.js';
 
@@ -534,7 +534,8 @@ function buildTables(R, t, night, lm) {
  * (0..1) how much of the dark is the red-gold twilight ramp rather than the blue night ramp
  * (chosen per pixel by dither). Palette colours only.
  */
-export function paintNightInto(fb, w, h, camX, camY, night, lm, warm = 0) {
+export function paintNightInto(fb, w, h, camX, camY, night, lm, warm = 0, prot = null) {
+  const pg = prot && prot.protOn && w === SW && h === SH ? prot.pgid : null;   // labels: one look per label, never chopped
   buildTables(BLUE, 0, night, lm); buildTables(WARM, 1, night, lm);
   const flat = lm ? -1 : 255;
   const warm64 = warm * 64;
@@ -544,17 +545,27 @@ export function paintNightInto(fb, w, h, camX, camY, night, lm, warm = 0) {
     const wyc = wy >> 1, rowBc = (wyc & 7) << 3, row4c = (wyc & 3) << 2;     // the red hours dither in 2x2 grains: broad and calm
     const row = y * w;
     for (let x = 0; x < w; x++) {
-      const l = flat >= 0 ? flat : lm[row + x];
+      let l = flat >= 0 ? flat : lm[row + x];
       const wx = x + camX;
       const useWarm = (BAYER8[rowW | (((wx >> 2) + 2) & 7)] + 0.5) < warm64 ? 1 : 0;
+      let bt, m;
+      const g = pg ? pg[row + x] : -1;
+      if (g >= 0 && protGroupText(prot, g)) {
+        // a label pixel takes the threshold of its label's centre: the whole label turns at once
+        const b = prot.gbox, cx = (b[g * 4] + b[g * 4 + 2]) >> 1, cy = (b[g * 4 + 1] + b[g * 4 + 3]) >> 1;
+        if (flat < 0) l = lm[cy * w + cx];
+        const gx = cx + camX, gy = cy + camY;
+        bt = BAYER8[((gy & 7) << 3) | (gx & 7)] + 0.5; m = 0.99;
+      } else {
+        bt = useWarm ? BAYER8[rowBc | ((wx >> 1) & 7)] + 0.5 : BAYER8[rowB | (wx & 7)] + 0.5;
+        m = useWarm ? B4[row4c | ((wx >> 1) & 3)] : B4[row4 | (wx & 3)];
+      }
       const kind = T_STAGE[useWarm][l];
       if (kind === 0) continue;
       const p = fb[row + x];
       const pi = paletteIndexOf(p);
       if (pi === 255) continue;
       const R = useWarm ? WARM : BLUE;
-      const bt = useWarm ? BAYER8[rowBc | ((wx >> 1) & 7)] + 0.5 : BAYER8[rowB | (wx & 7)] + 0.5;
-      const m = useWarm ? B4[row4c | ((wx >> 1) & 3)] : B4[row4 | (wx & 3)];
       const up = bt < T_TF[useWarm][l];
       let k = kind - 1;
       // below the first anchor's partner nothing is lit-> dither between the previous look and this one
@@ -566,7 +577,7 @@ export function paintNightInto(fb, w, h, camX, camY, night, lm, warm = 0) {
     }
   }
 }
-function paintNight(fb, camX, camY, night, lm, warm) { paintNightInto(fb, SW, SH, camX, camY, night, lm, warm); }
+function paintNight(fb, camX, camY, night, lm, warm, prot) { paintNightInto(fb, SW, SH, camX, camY, night, lm, warm, prot); }
 
 export function createFx() {
   const fx = {
@@ -729,7 +740,12 @@ export function createFx() {
     fx.night = night;
     fx.twilight = night > 0.04 ? twilightAt(timeOfDay, fx.season) : 0;
     fx.lx = lx; fx.ly = ly;
-    if (fx.atmos && fx.atmos.alt) bankDensity(fx.atmos, camX, camY, clock, timeOfDay, fx.season);
+    if (fx.atmos && fx.atmos.alt) {
+      bankDensity(fx.atmos, camX, camY, clock, timeOfDay, fx.season, lx, ly);
+      // labels are grouped on the untinted map, so a bank or the white-out takes a label whole or not at all
+      fx.atmos.protOn = false;
+      if (night > 0.04 || fx.atmos.bankOn || fx.effects.has('whiteout')) buildProtect(fx.atmos, fb, camX, camY, lvl, MW);
+    }
     tintOut.phase = tint.phase; tintOut.night = 0; tintOut.warm = tint.warm; tintOut.wash = tint.wash;   // the night dark is painted by paintGround (smooth radial pools)
     // ---- lights
     fx.lit = night > 0.2;               // light pools only matter once it is properly dark (storm gloom alone does not light the lantern)
@@ -873,7 +889,7 @@ export function createFx() {
       }
     }
     // ---- the night: a continuous radial darkness value, dithered with the 8x8 Bayer threshold
-    if (night > 0.04) paintNight(fb, camX, camY, night, lm, fx.twilight);
+    if (night > 0.04) paintNight(fb, camX, camY, night, lm, fx.twilight, fx.atmos);
     // ---- mist / shadow
     for (let k = 0; k < nList; k++) {
       const i = list[k], l = lvls[k];
