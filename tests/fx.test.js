@@ -9,7 +9,7 @@ import { PAL_U32 as U, PAL_INDEX as I, paletteIndexOf, tintAt, applyTint } from 
 import { COVER, CELL_PX, SCREEN_W as SW, SCREEN_H as SH } from '../src/world/codes.js';
 import { LEVELS } from '../src/world/levels/index.js';
 
-const IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
+const IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis', 'corryvreckan', 'cruachan', 'lyon'];
 
 /** a small synthetic world: height rises left to right, a lochan in the low left, bog patch, pines */
 function synth({ size = 128, id = 'coe', seed = 777, bothies = [{ x: 60, y: 50 }] } = {}) {
@@ -39,13 +39,19 @@ test('there is a weather entry for every level id, with sane numbers', () => {
   }
   assert.equal(weatherFor('mock-glen'), WEATHER_DEFAULT);
   for (const l of LEVELS) assert.ok(WEATHER[l.id], 'level ' + l.id + ' has weather');
-  // the brief: storms have lightning, the rest do not; snow on cairngorm/nevis; clear assynt has stars
-  for (const id of ['coe', 'cuillin']) assert.ok(WEATHER[id].lightning && WEATHER[id].rain > 0.4);
+  // the brief (docs/LEVELS.md): Coe is the storm, the only lightning of the new sheets; snow on the winter sheets;
+  // each new sheet carries its atmosphere signatures
+  assert.ok(WEATHER.coe.lightning && WEATHER.coe.rain > 0.4 && WEATHER.coe.effects.includes('storm'));
+  for (const id of ['corryvreckan', 'cruachan', 'lyon', 'rannoch', 'cairngorm', 'cuillin', 'nevis']) assert.equal(WEATHER[id].lightning, null, id);
   assert.ok(WEATHER.torridon.lightning && WEATHER.torridon.shadow >= WEATHER.coe.shadow);
-  assert.ok(WEATHER.cairngorm.snow > 0.5 && !WEATHER.cairngorm.lightning);
-  assert.ok(WEATHER.nevis.snow > 0 && WEATHER.nevis.shadow > 0.3);
+  assert.ok(WEATHER.cairngorm.snow > 0.4 && ['whiteout', 'aurora', 'spindrift'].every((e) => WEATHER.cairngorm.effects.includes(e)));
+  assert.ok(WEATHER.rannoch.snow > 0 && WEATHER.rannoch.effects.includes('squalls') && WEATHER.rannoch.effects.includes('deer'));
+  assert.ok(WEATHER.corryvreckan.effects.includes('seaFret') && WEATHER.corryvreckan.effects.includes('whirlpool') && WEATHER.corryvreckan.effects.includes('firstSnow') && WEATHER.corryvreckan.snow === 0);
+  assert.ok(WEATHER.cruachan.rainStyle === 'sleet' && WEATHER.cruachan.effects.includes('cloudCap'));
+  assert.ok(WEATHER.lyon.stars && WEATHER.lyon.effects.includes('frostGlint') && WEATHER.lyon.effects.includes('inversion'));
+  assert.ok(WEATHER.cuillin.effects.includes('clearing') && WEATHER.cuillin.rain > 0);
+  assert.ok(WEATHER.nevis.effects.includes('thawMist') && WEATHER.nevis.snow === 0);
   assert.ok(WEATHER.assynt.stars && WEATHER.assynt.rain === 0 && WEATHER.assynt.snow === 0 && !WEATHER.assynt.lightning);
-  assert.ok(WEATHER.rannoch.rain > 0 && WEATHER.rannoch.rainStyle === 'drizzle' && WEATHER.rannoch.mist > 0.4);
   assert.ok(WEATHER.affric.woods > 0 && WEATHER.affric.rain === 0);
 });
 
@@ -206,14 +212,17 @@ test('light pools: lit inside r0, dark beyond r1, monotone in between, combining
 
 test('precipitation: drizzle, heavy rain, blowing snow with diagonal streaks, high-only snow on nevis, nothing for assynt', () => {
   const o = {};
-  const riz = { ...precipitationFor(WEATHER.rannoch, 0, o) };
+  const riz = { ...precipitationFor(WEATHER.torridon, 0, o) };
   assert.ok(riz.kind === 'rain' && riz.streaks > 40 && riz.flakes === 0 && riz.dy > 0.9);
   const heavy = { ...precipitationFor(WEATHER.coe, 0, o) };
   assert.ok(heavy.streaks > riz.streaks && heavy.speed > riz.speed && heavy.len >= riz.len);
   const snow = { ...precipitationFor(WEATHER.cairngorm, 0, o) };
   assert.ok(snow.kind === 'snow' && snow.flakes > 50 && snow.streaks > 50);
   assert.ok(Math.abs(snow.dx) > 0.85 && snow.dy > 0 && snow.dy < 0.5, 'shallow diagonal like the Amiga clouds');
-  const low = precipitationFor(WEATHER.nevis, 0.1, {}), high = precipitationFor(WEATHER.nevis, 0.95, {});
+  const highSnow = { ...WEATHER_DEFAULT, snow: 0.34, snowAbove: 0.5 };
+  const low = precipitationFor(highSnow, 0.1, {}), high = precipitationFor(highSnow, 0.95, {});
+  const sleet = precipitationFor(WEATHER.cruachan, 0, {});
+  assert.ok(sleet.kind === 'sleet' && sleet.streaks > 40 && sleet.flakes > 20, 'sleet: rain with wet flakes');
   assert.equal(low.streaks + low.flakes, 0);
   assert.ok(high.streaks + high.flakes > 20, 'thin snow only high up');
   const none = precipitationFor(WEATHER.assynt, 1, {});
@@ -273,7 +282,7 @@ test('createFx: onLightning fires once per strike as the clock passes it, can be
 });
 
 test('createFx: shake is non-zero only in the 0.25 s after a strike, never beyond +-2', () => {
-  const fx = createFx(); fx.setWorld(synth({ id: 'cuillin', seed: 6606 }));
+  const fx = createFx(); fx.setWorld(synth({ id: 'coe', seed: 6606 }));
   const t0 = fx.strikeTime(1);
   const state = { player: { x: 50, y: 50, elevation: 300 } };
   let during = 0, after = 0;
@@ -310,7 +319,7 @@ function paintFrame(world, { tod, clock, cam = [60, 40], lvlFill = 0, fill = nul
   return { fb, fx };
 }
 
-test('every frame stays strictly on the 25-colour palette: all weathers, all times of day, flash frames included', () => {
+test('every frame stays strictly on the 35-colour palette: all weathers, all times of day, flash frames included', () => {
   for (const id of [...IDS, 'mock']) {
     for (const tod of [0.05, 0.375, 0.5, 0.625, 0.875]) {
       const { fb } = paintFrame(synth({ id, seed: 1000 + IDS.indexOf(id) }), { tod });
@@ -366,7 +375,7 @@ test('no darkness by day and light pools only when it is dark; the lantern pool 
 });
 
 test('bothies glow orange at night and breathe smoke from a distance; day smoke is thin', () => {
-  const world = synth({ id: 'rannoch', bothies: [{ x: 70, y: 40 }] });          // bothy a few cells from the view centre
+  const world = synth({ id: 'affric', bothies: [{ x: 70, y: 40 }] });           // bothy a few cells from the view centre (a dry level)
   const fill = [U.paper];
   const nightF = paintFrame(world, { tod: 0.875, clock: 41, fill, cam: [200, 100] });
   let lamp = 0; for (const v of nightF.fb) if (v === U.lamp) lamp++;

@@ -87,11 +87,18 @@ test('tint tables cover the whole palette and map only to palette indices', () =
     assert.ok(WARM_MAP[i] < PAL_COUNT && NIGHT_A[i] < PAL_COUNT && NIGHT_B[i] < PAL_COUNT, 'index ' + i);
     assert.ok(NIGHT_W[i] >= 0 && NIGHT_W[i] <= 1);
   }
-  // the new glow colours (and the blues) pass through the night tint untouched
-  for (const n of [...Object.keys(NEW_5), ...BLUE_RAMP.slice(0, 6)]) {
+  // the glow colours and the dark blues pass through the night tint untouched
+  for (const n of [...Object.keys(NEW_5), ...BLUE_RAMP.slice(0, 4)]) {
     const i = PAL_INDEX[n];
     assert.equal(NIGHT_A[i], i, n); assert.equal(NIGHT_B[i], i, n); assert.equal(WARM_MAP[i], i, n); assert.equal(LIGHT_GROUND[i], 0, n);
   }
+  // the season prints (level.look.paper fog / frost) are ground: they warm and darken like paper; paleblue (their shade) darkens
+  for (const n of ['fog', 'frost']) {
+    const i = PAL_INDEX[n];
+    assert.equal(LIGHT_GROUND[i], 1, n); assert.notEqual(WARM_MAP[i], i, n); assert.equal(NIGHT_A[i], PAL_INDEX.night, n);
+  }
+  assert.equal(NIGHT_A[PAL_INDEX.paleblue], PAL_INDEX.night);
+  assert.equal(LIGHT_GROUND[PAL_INDEX.paleblue], 0);
 });
 
 test('the grey and blue ramps pair step for step: same order, similar value, snow shared', () => {

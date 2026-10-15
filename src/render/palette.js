@@ -6,6 +6,8 @@
  * No DOM here: everything works on plain typed arrays so it can run in Node.
  */
 
+import { seasonOf, DEFAULT_SEASON } from '../world/codes.js';
+
 export const PAL = Object.freeze({
   paper: '#f2ead3',
   paper2: '#e6dcbc',
@@ -196,31 +198,61 @@ export function tintFor(phase, levelTint) {
 }
 
 /**
- * Where timeOfDay sits between two phase centres: { a, b, f } with f in [0,1] already held/eased
- * (each phase holds through the middle of its span and eases at the boundaries).
+ * Phase centres along the day for a season (dawn, day, dusk, night, then dawn again a day later), unwrapped so they
+ * always increase: with a long night its centre may pass 1. No season (or the default quarters) gives the legacy
+ * 0.125 / 0.375 / 0.625 / 0.875 exactly. `season` is a season object, a level carrying one, or a seasonOf() result.
  */
-export function phaseBlend(timeOfDay) {
-  const p = ((timeOfDay % 1) + 1) % 1;
-  let i0 = 3;                                     // before the first centre we are between night and dawn
-  for (let i = 0; i < 4; i++) {
-    const c = PHASE_CENTRE[ORDER[i]];
-    if (p >= c) i0 = i;
+const centreCache = new WeakMap();
+const LEGACY_CENTRES = [PHASE_CENTRE.dawn, PHASE_CENTRE.day, PHASE_CENTRE.dusk, PHASE_CENTRE.night, PHASE_CENTRE.dawn + 1];
+export function phaseCentresOf(season) {
+  if (!season || typeof season !== 'object') return LEGACY_CENTRES;
+  const hit = centreCache.get(season);
+  if (hit) return hit;
+  const q = seasonOf(season);
+  let out;
+  const d = DEFAULT_SEASON;
+  if (q === d || (q.dawn === d.dawn && q.day === d.day && q.dusk === d.dusk && q.night === d.night)) out = LEGACY_CENTRES;
+  else {
+    const a = q.dawn, b = a + q.day, c = b + q.dusk;
+    out = [a / 2, a + q.day / 2, b + q.dusk / 2, c + q.night / 2, a / 2 + 1];
+    out.spans = [q.dawn, q.day, q.dusk, q.night, q.dawn];
   }
+  centreCache.set(season, out);
+  return out;
+}
+
+/**
+ * Where timeOfDay sits between two phases: { a, b, f } with f in [0,1] already held/eased.
+ * Without a season (the quarters) each phase holds through the middle of its span and eases at the boundaries, as
+ * always. With a season each phase holds through its own span and eases across each boundary over a window a
+ * quarter of the shorter neighbour wide on either side: a long night stays night (and dark) for its whole length.
+ * `season` is a season object, a level carrying one, or a seasonOf() result.
+ */
+export function phaseBlend(timeOfDay, season) {
+  const p = ((timeOfDay % 1) + 1) % 1;
+  const cs = phaseCentresOf(season);
+  const q = p < cs[0] ? p + 1 : p;                 // before the first centre we are between night and dawn
+  let i0 = 3;
+  for (let i = 0; i < 4; i++) if (q >= cs[i] && q < cs[i + 1]) { i0 = i; break; }
   const a = ORDER[i0], b = ORDER[(i0 + 1) % 4];
-  const ca = PHASE_CENTRE[a];
-  let cb = PHASE_CENTRE[b];
-  let pp = p;
-  if (cb <= ca) cb += 1;
-  if (pp < ca) pp += 1;           // wrapped segment (night -> dawn)
-  let f = (pp - ca) / (cb - ca);
-  f = f < 0.25 ? 0 : f > 0.75 ? 1 : (f - 0.25) / 0.5;
+  const ca = cs[i0], cb = cs[i0 + 1];
+  let f;
+  if (cs === LEGACY_CENTRES) {
+    f = (q - ca) / (cb - ca);
+    f = f < 0.25 ? 0 : f > 0.75 ? 1 : (f - 0.25) / 0.5;
+  } else {
+    const sa = cs.spans[i0], sb = cs.spans[i0 + 1];
+    const edge = ca + sa / 2, hw = Math.min(sa, sb) / 4;
+    f = (q - (edge - hw)) / (2 * hw);
+    f = f < 0 ? 0 : f > 1 ? 1 : f;
+  }
   f = f * f * (3 - 2 * f);
   return { a, b, f };
 }
 
-/** Continuous tint from timeOfDay in [0,1): interpolates between phase centres. */
-export function tintAt(timeOfDay, levelTint) {
-  const { a, b, f } = phaseBlend(timeOfDay);
+/** Continuous tint from timeOfDay in [0,1): interpolates between phase centres (season optional, as phaseBlend). */
+export function tintAt(timeOfDay, levelTint, season) {
+  const { a, b, f } = phaseBlend(timeOfDay, season);
   const ta = tintFor(a, levelTint), tb = tintFor(b, levelTint);
   const colors = new Map();
   for (const w of ta.wash) colors.set(w.color, [w.density, 0]);
@@ -240,10 +272,10 @@ export function tintAt(timeOfDay, levelTint) {
 // colour groups for the tint pass ------------------------------------------
 const I = PAL_INDEX;
 const LIGHT = new Uint8Array(PAL_COUNT);      // takes the warm / wash tints (hues of water and wood stay put)
-[I.paper, I.paper2, I.snow].forEach((i) => { LIGHT[i] = 1; });
+[I.paper, I.paper2, I.snow, I.fog, I.frost].forEach((i) => { LIGHT[i] = 1; });   // fog / frost: the season prints
 // warmer neighbour
 const WARM = new Uint8Array(PAL_COUNT).map((_, i) => i);
-WARM[I.paper] = I.paper2; WARM[I.snow] = I.paper;
+WARM[I.paper] = I.paper2; WARM[I.snow] = I.paper; WARM[I.frost] = I.fog; WARM[I.fog] = I.paper2;
 // Night look: each colour becomes a 2-colour ordered dither (A, then B for a fraction W),
 // chosen so the ground goes quiet and dark while contours, symbols and text glow.
 const NIGHT_A = new Uint8Array(PAL_COUNT).map((_, i) => i);
@@ -264,6 +296,13 @@ nightMap('contour', 'contourIdx', 'contourIdx', 0);
 nightMap('contourIdx', 'contour', 'contour', 0);
 nightMap('ink', 'rock', 'rock', 0);
 nightMap('waterInk', 'waterDeep', 'waterDeep', 0);
+// the season prints and their relief tones (absent from a sheet without a look, so the legacy night is unchanged)
+nightMap('fog', 'night', 'ink', 0.30);
+nightMap('frost', 'night', 'steelD', 0.30);
+nightMap('paleblue', 'night', 'waterInk', 0.12);
+nightMap('ash', 'night', 'ink', 0.40);
+nightMap('rust', 'blood', 'night', 0.35);
+nightMap('char', 'rock', 'rock', 0);
 
 /**
  * Apply a tint description to a region of a Uint32Array framebuffer.

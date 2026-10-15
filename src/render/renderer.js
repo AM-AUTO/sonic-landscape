@@ -11,8 +11,12 @@
  *
  * Lifetimes of flashes/ripples are measured on the renderer clock (driven by
  * ui.time || state.t || wall clock), so `t` arguments are accepted but not needed.
+ *
+ * Seasons: the day tint and darkness follow state.season (when the sim provides it) or seasonOf(level).
+ * Hidden valley (look signature 'hiddenValley'): the sheet is baked with it blank; it is drawn in once the walker
+ * steps inside (or state.revealed has its key), with a ripple, and the overviews are re-baked.
  */
-import { COVER, CELL_PX, SCREEN_W, SCREEN_H, dayPhase } from '../world/codes.js';
+import { COVER, CELL_PX, SCREEN_W, SCREEN_H, dayPhase, seasonOf } from '../world/codes.js';
 import { PAL, PAL_U32 as U, applyTint, tintAt, BAYER8 } from './palette.js';
 import { LVL_OFF, bakeMap, bakeOverview, gatePlacement } from './mapbake.js';
 import { walkerSprite, lanternAnchor, iconSprite, gateSprite, blit, symbolArt, tickSprite } from './sprites.js';
@@ -66,8 +70,36 @@ export function createRenderer(canvas) {
     if (!world) return;
     R.baked = bakeMap(world);
     R.bakeMs = R.baked.bakeMs;
-    R.mini = bakeOverview(world, 48, { contourEvery: (world.contourInterval || 10) * 5 });
-    R.bigMap = bakeOverview(world, 188, { contourEvery: (world.contourInterval || 10) * 5, grid: true });
+    R.revealed = new Set();
+    R.fx.setSheet(R.baked);
+    bakeOverviews();
+  }
+  function bakeOverviews() {
+    const world = R.world, revealed = !!(R.baked && R.baked.reveal && R.revealed.has(R.baked.reveal.key));
+    R.mini = bakeOverview(world, 48, { contourEvery: (world.contourInterval || 10) * 5, revealed });
+    R.bigMap = bakeOverview(world, 188, { contourEvery: (world.contourInterval || 10) * 5, grid: true, revealed });
+  }
+
+  // ------------------------------------------------------- hidden valley
+  // A sheet with the hiddenValley signature is baked with that valley left blank (baked.reveal holds the truth).
+  // It is drawn in for good once the walker enters it (or the sim says so: state.revealed has the key).
+  function checkReveal(state) {
+    const rv = R.baked && R.baked.reveal;
+    if (!rv || R.revealed.has(rv.key)) return;
+    const p = state.player;
+    const inside = p && (p.x - rv.x) ** 2 + (p.y - rv.y) ** 2 <= (rv.r * 0.8) ** 2;
+    const told = state.revealed && (typeof state.revealed.has === 'function' ? state.revealed.has(rv.key) : Array.isArray(state.revealed) && state.revealed.includes(rv.key));
+    if (!inside && !told) return;
+    R.revealed.add(rv.key);
+    const B = R.baked, MW = B.W;
+    for (let y = 0; y < rv.h; y++) {
+      const o = (rv.y0 + y) * MW + rv.x0, k = y * rv.w;
+      B.pixels.set(rv.pixels.subarray(k, k + rv.w), o);
+      B.lvl.set(rv.lvl.subarray(k, k + rv.w), o);
+      B.lvlKind.set(rv.lvlKind.subarray(k, k + rv.w), o);
+    }
+    bakeOverviews();
+    ripple(rv.x, rv.y, 0, 'magenta');
   }
 
   // ------------------------------------------------------------ feedback fx
@@ -395,6 +427,7 @@ export function createRenderer(canvas) {
   function renderWorldLayer(state, ui, dt, dim) {
     if (state.world && state.world !== R.world) setWorld(state.world);
     if (!R.baked) { rect(ctx, 0, 0, SW, SH, PAL.night); return false; }
+    if (!dim) checkReveal(state);
     updateCamera(state, dt);
     const FX = R.fx;
     const mapPx = R.world.size * CELL_PX;
@@ -409,7 +442,9 @@ export function createRenderer(canvas) {
     const ppx = pl.x * CELL_PX - camX, ppy = pl.y * CELL_PX - camY;
     copyMapRegion(camX, camY);
     const tod = state.timeOfDay != null ? state.timeOfDay : 0.3;
-    const tint = tintAt(tod, state.world && state.world.level && state.world.level.palette && state.world.level.palette.tint);
+    const lvDef = state.world && state.world.level;
+    const season = state.season ? seasonOf(state.season) : seasonOf(lvDef);
+    const tint = tintAt(tod, lvDef && lvDef.palette && lvDef.palette.tint, season);
     if (dim) {
       applyTint(fb, SW, SH, { night: dim, warm: 0, wash: [] }, camX, camY);
     } else {
@@ -419,7 +454,7 @@ export function createRenderer(canvas) {
       const lx = Math.round(ppx) - 6 + la.x, ly = Math.round(ppy) - 11 + la.y;
       const pre = FX.prepare(fb, camX, camY, tint, tod, R.clock, lx, ly, R.baked.lvl, R.baked.W);
       applyTint(fb, SW, SH, pre.tint, camX, camY, 0, SH, pre.lightMap);
-      FX.paintGround(fb, camX, camY, R.clock);                 // mist, cloud shadow, lamp dither, stars
+      FX.paintGround(fb, camX, camY, R.clock, R.baked.lvl, R.baked.W);   // mist, banks, cloud shadow, lamp dither, glints, stars
     }
     applyFlashes(camX, camY, ppx, ppy);                         // after the tint so feedback stays bright at night
     applyRipples(camX, camY);

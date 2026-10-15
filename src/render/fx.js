@@ -8,7 +8,8 @@
  * so it can be unit-tested in Node with a seeded RNG (src/core/rng.js); nothing uses Math.random.
  *
  *   const fx = createFx();
- *   fx.setWorld(world)                 per level: seeds everything from world.level.seed / .id
+ *   fx.setWorld(world)                 per level: seeds everything from world.level.seed / .id; season, atmosphere effects
+ *   fx.setSheet(baked)                 the baked sheet, for effects that look at what lies under them (atmos.js)
  *   fx.onLightning(cb) -> unsubscribe  cb({ index, time, x }) at every strike (audio can hook here later)
  *   fx.update(state, clock, dt)        advance the schedule, fire callbacks, compute camera shake
  *   fx.shake                           {x, y} integer camera shake, pixels (+-2 for ~0.25 s)
@@ -22,7 +23,12 @@
  */
 import { PAL, PAL_U32 as U, PAL_INDEX as I, PAL_NAMES, PAL_COUNT, BAYER8, paletteIndexOf, phaseBlend, WARM_MAP, LIGHT_GROUND } from './palette.js';
 import { mulberry32, hash2 } from '../core/rng.js';
-import { COVER, CELL_PX, SCREEN_W, SCREEN_H } from '../world/codes.js';
+import { COVER, CELL_PX, SCREEN_W, SCREEN_H, seasonOf } from '../world/codes.js';
+import { lookOf, ATMOSPHERES } from './look.js';
+import {
+  createAtmos, atmosSetSheet, atmosUpdate, firstSnowAmount, bankDensity, paintBanks, paintGlint, paintWhirlpool, paintDeer,
+  squallMask, clearingMask, paintSquallVeil, paintSpindrift, paintWhiteout, paintAurora, paintRainbow,
+} from './atmos.js';
 
 const SW = SCREEN_W, SH = SCREEN_H;
 const GW = SW >> 1, GH = SH >> 1;          // coarse (2x2 px) grid for the mist/shadow density
@@ -39,44 +45,75 @@ function fract(x) { return x - Math.floor(x); }
  *   cloudline  altitude fraction (0 = lowest cell, 1 = highest) above which there is no mist
  *   woods      extra mist among pines
  *   shadow     drifting cloud shadow over the ground
- *   rain       rain intensity; rainStyle 'drizzle' (short, slow, slanted) or 'heavy'
+ *   rain       rain intensity; rainStyle 'drizzle' (short, slow, slanted), 'heavy' or 'sleet' (rain with wet flakes)
  *   snow       blowing snow (diagonal streaks + fine flakes); snowAbove: only when the walker is above
  *              this altitude fraction (soft edge)
  *   wind       [x, y] drift direction of mist, shadow, precipitation
  *   lightning  null or { min, max } seconds between strikes
  *   dark       extra darkness (storm light) added to the time-of-day darkness
  *   stars      twinkling stars in the dark
+ *   effects    atmosphere signatures (atmos.js): seaFret, whirlpool, cloudCap, inversion, thawMist, frostGlint, squalls,
+ *              deer, whiteout, aurora, spindrift, clearing, firstSnow, storm. A level's look.signature may add more.
+ *   params     per-effect parameters, e.g. { seaFret: { from: 'W' }, cloudCap: { above: 0.62, lift: true } };
+ *              look[name] overrides them.
+ * The eight sheets of docs/LEVELS.md, by id; affric / torridon / assynt stay until those levels are retired.
  */
 export const WEATHER = Object.freeze({
-  rannoch: { mist: 0.55, cloudline: 0.82, woods: 0, shadow: 0.12, rain: 0.34, rainStyle: 'drizzle', snow: 0, wind: [0.8, 0.2], lightning: null, dark: 0.02, stars: false },
+  // I  Samhain: sea fret off the west, the whirlpool, wind; the first snow when the gate opens
+  corryvreckan: { mist: 0.16, cloudline: 0.55, woods: 0, shadow: 0.22, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [1, 0.15], lightning: null, dark: 0, stars: false,
+    effects: ['seaFret', 'whirlpool', 'firstSnow'], params: { seaFret: { from: 'W' } } },
+  // II late November: rain turning to sleet; a cloud cap on the summits that lifts at dawn
+  cruachan: { mist: 0.34, cloudline: 0.7, woods: 0.25, shadow: 0.22, rain: 0.4, rainStyle: 'sleet', snow: 0, wind: [0.9, 0.25], lightning: null, dark: 0.04, stars: false,
+    effects: ['cloudCap'], params: { cloudCap: { above: 0.62, lift: true } } },
+  // III December: hard frost, still air and stars, the glen inversion at dawn
+  lyon: { mist: 0.18, cloudline: 0.45, woods: 0.1, shadow: 0, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.2, 0.05], lightning: null, dark: 0, stars: true,
+    effects: ['frostGlint', 'inversion'], params: { inversion: { top: 0.3 } } },
+  // IV midwinter: snow squalls sweep the moor; deer on the skyline
+  rannoch: { mist: 0.3, cloudline: 0.82, woods: 0, shadow: 0.12, rain: 0, rainStyle: 'drizzle', snow: 0.5, wind: [1, 0.22], lightning: null, dark: 0.02, stars: false,
+    effects: ['squalls', 'deer'] },
   affric: { mist: 0.62, cloudline: 0.72, woods: 0.35, shadow: 0.06, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.5, 0.1], lightning: null, dark: 0, stars: false },
-  coe: { mist: 0.38, cloudline: 0.78, woods: 0.1, shadow: 0.34, rain: 0.82, rainStyle: 'heavy', snow: 0, wind: [1, 0.15], lightning: { min: 8, max: 25 }, dark: 0.08, stars: false },
-  cairngorm: { mist: 0.26, cloudline: 0.6, woods: 0, shadow: 0.1, rain: 0, rainStyle: 'drizzle', snow: 0.78, wind: [1, 0.25], lightning: null, dark: 0.03, stars: false },
+  // VI the wolf-month: the storm, rain bands, lightning, a low cloud cap that does not lift
+  coe: { mist: 0.38, cloudline: 0.78, woods: 0.1, shadow: 0.34, rain: 0.82, rainStyle: 'heavy', snow: 0, wind: [1, 0.15], lightning: { min: 8, max: 25 }, dark: 0.08, stars: false,
+    effects: ['storm', 'cloudCap'], params: { cloudCap: { above: 0.74, lift: false } } },
+  // V the solstice: white-out by day, the merry dancers by night, spindrift
+  cairngorm: { mist: 0.12, cloudline: 0.6, woods: 0, shadow: 0.05, rain: 0, rainStyle: 'drizzle', snow: 0.45, wind: [1, 0.25], lightning: null, dark: 0.02, stars: true,
+    effects: ['whiteout', 'aurora', 'spindrift'] },
   torridon: { mist: 0.3, cloudline: 0.78, woods: 0.1, shadow: 0.5, rain: 0.16, rainStyle: 'drizzle', snow: 0, wind: [0.9, 0.2], lightning: { min: 14, max: 40 }, dark: 0.09, stars: false },
-  cuillin: { mist: 0.34, cloudline: 0.8, woods: 0, shadow: 0.3, rain: 0.62, rainStyle: 'heavy', snow: 0, wind: [1, 0.2], lightning: { min: 8, max: 25 }, dark: 0.07, stars: false },
+  // VII Imbolc: clearing showers moving out to sea, low raking light
+  cuillin: { mist: 0.22, cloudline: 0.8, woods: 0, shadow: 0.3, rain: 0.55, rainStyle: 'heavy', snow: 0, wind: [0.3, 1], lightning: null, dark: 0.02, stars: false,
+    effects: ['clearing'], params: { clearing: { to: 'S' } } },
   assynt: { mist: 0.1, cloudline: 0.7, woods: 0, shadow: 0, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.4, 0.1], lightning: null, dark: 0, stars: true },
-  nevis: { mist: 0.3, cloudline: 0.62, woods: 0, shadow: 0.5, rain: 0, rainStyle: 'drizzle', snow: 0.34, snowAbove: 0.5, wind: [1, 0.3], lightning: null, dark: 0.03, stars: false },
+  // VIII Bealltainn: thaw mist lifting off the glen at dawn; clear, high light
+  nevis: { mist: 0.24, cloudline: 0.55, woods: 0, shadow: 0.14, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.8, 0.2], lightning: null, dark: 0, stars: false,
+    effects: ['thawMist'] },
 });
 export const WEATHER_DEFAULT = Object.freeze({ mist: 0.2, cloudline: 0.75, woods: 0, shadow: 0.1, rain: 0, rainStyle: 'drizzle', snow: 0, wind: [0.6, 0.1], lightning: null, dark: 0, stars: false });
 
 export function weatherFor(levelId) { return WEATHER[levelId] || WEATHER_DEFAULT; }
 
+/** The atmosphere effects of a level: its weather entry's effects plus atmosphere names in look.signature. */
+export function effectsFor(level, weather = weatherFor(level && level.id)) {
+  const out = new Set(weather.effects || []);
+  for (const n of lookOf(level).signature) if (ATMOSPHERES.includes(n)) out.add(n);
+  return out;
+}
+
 /** How dark each phase is (0 = daylight, 1 = full night); blended with the same easing as the tint. */
 export const PHASE_DARK = Object.freeze({ dawn: 0.28, day: 0, dusk: 0.58, night: 1 });
-/** 0..1 darkness for a timeOfDay in [0,1). */
-export function darknessAt(timeOfDay) {
-  const { a, b, f } = phaseBlend(timeOfDay);
+/** 0..1 darkness for a timeOfDay in [0,1). `season` (or a level carrying one) optional: a long night is dark for longer. */
+export function darknessAt(timeOfDay, season) {
+  const { a, b, f } = phaseBlend(timeOfDay, season);
   return PHASE_DARK[a] + (PHASE_DARK[b] - PHASE_DARK[a]) * f;
 }
 /** How red the dark is (0..1): the red hours at dusk, paler at dawn, a faint heather cast at night, none by day. */
 export const PHASE_TWILIGHT = Object.freeze({ dawn: 1, day: 0, dusk: 1, night: 0.12 });
-export function twilightAt(timeOfDay) {
-  const { a, b, f } = phaseBlend(timeOfDay);
+export function twilightAt(timeOfDay, season) {
+  const { a, b, f } = phaseBlend(timeOfDay, season);
   return PHASE_TWILIGHT[a] + (PHASE_TWILIGHT[b] - PHASE_TWILIGHT[a]) * f;
 }
 /** Night amount (0..0.97, what the tint pass dithers) from the clock-of-day darkness plus weather. */
-export function effectiveNight(tintNight, timeOfDay, weather) {
-  const d = clamp(darknessAt(timeOfDay) + (weather ? weather.dark : 0), 0, 1);
+export function effectiveNight(tintNight, timeOfDay, weather, season) {
+  const d = clamp(darknessAt(timeOfDay, season) + (weather ? weather.dark : 0), 0, 1);
   const n = Math.max(tintNight, d * 0.97);
   return n < 0.04 ? 0 : n;                          // like the tint itself: no stray lattice dots in full day
 }
@@ -337,7 +374,13 @@ export function makeParticles(seed, n = 420) {
  */
 export function precipitationFor(weather, altFrac = 0, out = {}) {
   let streaks = 0, flakes = 0, dx = 0.22, dy = 1, speed = 200, len = 5, kind = 'rain';
-  if (weather.rain > 0) {
+  if (weather.rain > 0 && weather.rainStyle === 'sleet') {
+    // sleet: fewer, slower streaks and wet flakes among them
+    streaks = Math.round(weather.rain * 300); flakes = Math.round(weather.rain * 220);
+    speed = 140; len = 4; kind = 'sleet';
+    const w = weather.wind;
+    dx = w[0] * 0.28; dy = 1;
+  } else if (weather.rain > 0) {
     const heavy = weather.rainStyle === 'heavy';
     streaks = Math.round(weather.rain * (heavy ? 360 : 420));
     speed = heavy ? 230 : 110; len = heavy ? 7 : 4;
@@ -384,7 +427,7 @@ export function visibleBothies(bothies, px, py, maxCells, out) {
 
 // ------------------------------------------------------------------------------- the fx
 const MISTABLE = new Uint8Array(PAL_COUNT);       // light ground, water, woods and bog take mist; nothing else does
-[I.paper, I.paper2, I.snow, I.water, I.waterDeep, I.wood, I.bog].forEach((i) => { MISTABLE[i] = 1; });
+[I.paper, I.paper2, I.snow, I.water, I.waterDeep, I.wood, I.bog, I.fog, I.frost, I.paleblue].forEach((i) => { MISTABLE[i] = 1; });   // + the season prints
 const WARM_U32 = Uint32Array.from(Array.from(WARM_MAP, (wi) => U[PAL_NAMES[wi]]));   // u32 of the warmer neighbour, by palette index
 const SMOKE_SKIP = new Uint8Array(PAL_COUNT);     // never smoke over ink (symbols, labels, contours of crags) or magenta
 [I.ink, I.magenta].forEach((i) => { SMOKE_SKIP[i] = 1; });
@@ -445,6 +488,20 @@ for (const [c, A, B, W] of [['paper', 'blood', 'night', 0.14], ['paper2', 'blood
   ['woodDark', 'night', 'blood', 0.30], ['bog', 'blood', 'night', 0.25], ['rock', 'blood', 'contourIdx', 0.30],
   ['grid', 'blood', 'night', 0.30], ['contour', 'contourIdx', 'contourIdx', 0], ['contourIdx', 'contour', 'contour', 0],
   ['ink', 'rock', 'rock', 0], ['waterInk', 'rock', 'rock', 0]]) look(WARM, 3, c, A, B, W);
+// the season prints (level.look.paper), their relief tones and the signature inks: absent from a sheet without a look,
+// so the legacy night is unchanged. Ground colours sink like paper; line inks (char walls, steel contours) glow like ink.
+for (const [c, A, B, W] of [['fog', 'rock', 'dusk', 0.12], ['frost', 'paleblue', 'dusk', 0.20], ['paleblue', 'blue', 'dusk', 0.30], ['blue', 'steel', 'dusk', 0.30],
+  ['ash', 'slate', 'dusk', 0.30], ['rust', 'blood', 'rust', 0.40], ['char', 'char', 'rock', 0.5], ['ice', 'ice', 'waterDeep', 0.40], ['steel', 'steel', 'blue', 0.5]]) look(BLUE, 0, c, A, B, W);
+for (const [c, A, B, W] of [['fog', 'night', 'dusk', 0.24], ['frost', 'night', 'steelD', 0.28], ['paleblue', 'night', 'steelD', 0.22], ['blue', 'night', 'steelD', 0.30],
+  ['ash', 'night', 'char', 0.30], ['rust', 'night', 'blood', 0.30], ['char', 'rock', 'rock', 0], ['ice', 'waterDeep', 'night', 0.30], ['steel', 'blue', 'blue', 0]]) look(BLUE, 1, c, A, B, W);
+for (const [c, A, B, W] of [['fog', 'fog', 'ember', 0.10], ['frost', 'frost', 'bolt', 0.15], ['paleblue', 'paleblue', 'heather', 0.15], ['blue', 'blue', 'heather', 0.20],
+  ['ash', 'ash', 'rust', 0.15], ['rust', 'rust', 'ember', 0.20], ['ice', 'ice', 'frost', 0.20]]) look(WARM, 0, c, A, B, W);
+for (const [c, A, B, W] of [['fog', 'rust', 'ember', 0.10], ['frost', 'paleblue', 'heather', 0.25], ['paleblue', 'heather', 'paleblue', 0.30], ['blue', 'heather', 'blue', 0.30],
+  ['ash', 'rust', 'ash', 0.30], ['rust', 'rust', 'blood', 0.30], ['ice', 'paleblue', 'heather', 0.20]]) look(WARM, 1, c, A, B, W);
+for (const [c, A, B, W] of [['fog', 'heather', 'rust', 0.12], ['frost', 'heather', 'dusk', 0.30], ['paleblue', 'heather', 'blood', 0.30], ['blue', 'heather', 'blood', 0.30],
+  ['ash', 'heather', 'blood', 0.25], ['rust', 'blood', 'heather', 0.30], ['ice', 'heather', 'blood', 0.25]]) look(WARM, 2, c, A, B, W);
+for (const [c, A, B, W] of [['fog', 'blood', 'night', 0.14], ['frost', 'dusk', 'night', 0.40], ['paleblue', 'blood', 'night', 0.30], ['blue', 'blood', 'night', 0.30],
+  ['ash', 'blood', 'night', 0.30], ['rust', 'blood', 'night', 0.30], ['char', 'rock', 'rock', 0], ['ice', 'blood', 'night', 0.30], ['steel', 'blue', 'blue', 0]]) look(WARM, 3, c, A, B, W);
 const LIST32 = Uint32Array.from(Array.from({ length: PAL_COUNT }, (_, i) => U[PAL_NAMES[i]]));
 const B4 = new Float32Array(16);
 for (let i = 0; i < 16; i++) B4[i] = ([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][i] + 0.5) / 16;
@@ -514,6 +571,11 @@ export function createFx() {
     strike: null,        // { index, time, age } of the strike that is still visible, or null
     lastIndex: -1, lastClock: null,
     playerX: 0, playerY: 0,
+    season: seasonOf(null),  // the level's day division (seasonOf); state.season wins when the sim provides one
+    effects: new Set(),      // atmosphere signatures in play (atmos.js)
+    atmos: null,
+    eff: WEATHER_DEFAULT,    // the weather as drawn this frame (first snow, storm folded in)
+    lx: SW / 2, ly: SH / 2,  // the lantern / walker on screen (last prepare)
   };
   const listeners = [];
   let sched = null;
@@ -544,6 +606,7 @@ export function createFx() {
   const toneBoxes = [];                              // reused [{x0,y0,x1,y1}], nBoxes of them valid this frame
   const prepOut = { tint: null, lightMap: null };
   let altFrac = 0;
+  let effSnow = null;                                // reused weather copy while the first snow falls
 
   // ------------------------------------------------------------------ setup
   fx.setWorld = function setWorld(world) {
@@ -552,6 +615,16 @@ export function createFx() {
     fx.levelId = level.id || null;
     fx.seed = (level.seed != null ? level.seed : 1) | 0;
     fx.weather = weatherFor(fx.levelId);
+    fx.season = seasonOf(level);
+    const lk = lookOf(level);
+    fx.effects = effectsFor(level, fx.weather);
+    const params = {};
+    for (const [k, v] of Object.entries(fx.weather.params || {})) params[k] = { ...v };
+    for (const n of ATMOSPHERES) if (lk.raw[n] && typeof lk.raw[n] === 'object') params[n] = { ...(params[n] || {}), ...lk.raw[n] };
+    fx.atmos = createAtmos(world, fx.effects, params, fx.seed, lk);
+    MIST_DAY = MIST_DAY_BY_PRINT[lk.present ? lk.paper : 'paper'] || MIST_DAY_BY_PRINT.paper;
+    if (fx.effects.has('storm') && !fx.weather.lightning) fx.weather = { ...fx.weather, lightning: { min: 8, max: 25 }, rain: Math.max(fx.weather.rain, 0.7), rainStyle: 'heavy', dark: Math.max(fx.weather.dark, 0.07) };
+    fx.eff = fx.weather; effSnow = null;
     fx.lastIndex = -1; fx.lastClock = null; fx.strike = null; boltIndex = -1;
     fx.shake.x = 0; fx.shake.y = 0;
     sched = fx.weather.lightning ? new LightningSchedule(fx.seed, fx.weather.lightning) : null;
@@ -580,6 +653,9 @@ export function createFx() {
     }
   };
 
+  /** the baked sheet (renderer.setWorld): effects that need to know what lies under them read its base colours */
+  fx.setSheet = function setSheet(baked) { if (fx.atmos) atmosSetSheet(fx.atmos, baked); };
+
   fx.onLightning = function onLightning(cb) {
     listeners.push(cb);
     return () => { const i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); };
@@ -590,12 +666,21 @@ export function createFx() {
 
   // ----------------------------------------------------------------- update
   fx.update = function update(state, clock, dt) {
-    void dt;
     if (state && state.player) { fx.playerX = state.player.x; fx.playerY = state.player.y; }
     // walker altitude fraction (for the high-snow levels)
     const w = fx.world;
     altFrac = 0;
     if (w && state && state.player && w.maxH > w.minH) altFrac = clamp((state.player.elevation - w.minH) / (w.maxH - w.minH), 0, 1) || 0;
+    if (state && state.season) fx.season = seasonOf(state.season);
+    if (fx.atmos) {
+      atmosUpdate(fx.atmos, state, clock, dt);
+      const fs = firstSnowAmount(fx.atmos, clock);
+      if (fs > 0) {
+        if (!effSnow) effSnow = { ...fx.weather };
+        effSnow.snow = Math.max(fx.weather.snow, fs); effSnow.snowAbove = undefined;
+        fx.eff = effSnow;
+      } else fx.eff = fx.weather;
+    }
     fx.shake.x = 0; fx.shake.y = 0; fx.strike = null;
     if (!sched) { fx.lastClock = clock; return; }
     const idx = sched.indexAt(clock);
@@ -632,9 +717,11 @@ export function createFx() {
    */
   const tintOut = { phase: 'day', night: 0, warm: 0, wash: [] };
   fx.prepare = function prepare(fb, camX, camY, tint, timeOfDay, clock, lx, ly, lvl, MW) {
-    const night = effectiveNight(tint.night, timeOfDay, fx.weather);
+    const night = effectiveNight(tint.night, timeOfDay, fx.weather, fx.season);
     fx.night = night;
-    fx.twilight = night > 0.04 ? twilightAt(timeOfDay) : 0;
+    fx.twilight = night > 0.04 ? twilightAt(timeOfDay, fx.season) : 0;
+    fx.lx = lx; fx.ly = ly;
+    if (fx.atmos && fx.atmos.alt) bankDensity(fx.atmos, camX, camY, clock, timeOfDay, fx.season);
     tintOut.phase = tint.phase; tintOut.night = 0; tintOut.warm = tint.warm; tintOut.wash = tint.wash;   // the night dark is painted by paintGround (smooth radial pools)
     // ---- lights
     fx.lit = night > 0.2;               // light pools only matter once it is properly dark (storm gloom alone does not light the lantern)
@@ -745,10 +832,17 @@ export function createFx() {
   }
 
   // ------------------------------------------------------------ paintGround
-  const MIST_DAY = [0, U.paper2, U.rock, U.rock, U.dusk];
+  // mist by day per season print: the legacy paper haze, a white haze on the cold and grey prints
+  const MIST_DAY_BY_PRINT = {
+    paper: [0, U.paper2, U.rock, U.rock, U.dusk], paper2: [0, U.paper, U.rock, U.rock, U.dusk], fog: [0, U.frost, U.rock, U.rock, U.dusk],
+    frost: [0, U.snow, U.fog, U.paleblue, U.blue], snow: [0, U.frost, U.fog, U.paleblue, U.blue],
+  };
+  let MIST_DAY = MIST_DAY_BY_PRINT.paper;
   const MIST_TWILIGHT = [0, U.rock, U.paper2, 0, 0];          // rose-dun haze in the red hours
   const MIST_NIGHT = [0, U.dusk, U.rock, 0, 0];
-  fx.paintGround = function paintGround(fb, camX, camY, clock) {
+  let groundLvl = null, groundMW = 0;
+  fx.paintGround = function paintGround(fb, camX, camY, clock, lvl, MW) {
+    groundLvl = lvl || null; groundMW = MW || 0;
     const night = fx.night;
     const lm = fx.lit ? lightMap : null;
     // ---- lamp dither: a sparse (at most ~14%) orange speckle on light ground in the pools; map colours stay as they are
@@ -782,6 +876,13 @@ export function createFx() {
       else c = MIST_DAY[l];
       if (c) fb[i] = c;
     }
+    // ---- atmosphere on the ground: banks of cloud and fret, frost glints, the whirlpool's foam
+    const A = fx.atmos, E = fx.effects;
+    if (A) {
+      if (A.bankOn) paintBanks(A, fb, camX, camY, night, fx.twilight, groundLvl, groundMW);
+      if (E.has('whirlpool')) paintWhirlpool(A, fb, camX, camY, clock, night);
+      if (E.has('frostGlint')) paintGlint(A, fb, camX, camY, clock, night);
+    }
     // ---- stars (only in the dark, on dark ground)
     if (fx.weather.stars && night > 0.62) {
       const dk = clamp((night - 0.62) / 0.3, 0, 1);
@@ -801,14 +902,21 @@ export function createFx() {
   fx.paintAir = function paintAir(fb, camX, camY, clock, lvl, MW) {
     void lvl; void MW;
     const night = fx.night;
+    const A = fx.atmos, E = fx.effects;
+    if (A && E.has('deer')) paintDeer(A, fb, camX, camY, clock, night);
+    if (A && E.has('spindrift')) paintSpindrift(A, fb, camX, camY, clock, fx.weather.wind, night);
+    if (A && E.has('squalls')) paintSquallVeil(A, fb, camX, camY, clock, fx.weather.wind, night);
     // ---- chimney smoke
     if (bothies.length) {
       nNear = visibleBothies(bothies, fx.playerX, fx.playerY, 40, near);
       for (let k = 0; k < nNear; k++) drawSmoke(fb, bothies[near[k]], camX, camY, clock, night);
     }
     // ---- precipitation
-    const wa = fx.weather;
-    if (wa.rain > 0 || wa.snow > 0) drawPrecip(fb, clock, night);
+    const wa = fx.eff;
+    if (wa.rain > 0 || wa.snow > 0) drawPrecip(fb, clock, night, camX, camY);
+    if (A && E.has('clearing')) paintRainbow(A, fb, camX, camY, clock, night, fx.lx, fx.ly);
+    if (A && E.has('aurora')) paintAurora(A, fb, camX, camY, clock, night);
+    if (A && E.has('whiteout')) fx.whiteout = paintWhiteout(A, fb, camX, camY, clock, night, fx.lx, fx.ly);
     // ---- lightning: flash dither, then the bolt
     const st = fx.strike;
     if (st) {
@@ -867,17 +975,23 @@ export function createFx() {
   // streak = [head, tail]; flakes use both. Colours the map itself never uses (ice) keep rain readable against heather tufts.
   const RAIN_DAY = [U.waterDeep, U.ice], RAIN_NIGHT = [U.ice, U.grid];
   const SNOW_DAY = [U.grid, U.ice], SNOW_NIGHT = [U.snow, U.ice];
-  function drawPrecip(fb, clock, night) {
-    precipitationFor(fx.weather, altFrac, precip);
+  function drawPrecip(fb, clock, night, camX = 0, camY = 0) {
+    precipitationFor(fx.eff, altFrac, precip);
     const P = parts;
     const dark = night > 0.5;
-    const cols = precip.kind === 'rain' ? (dark ? RAIN_NIGHT : RAIN_DAY) : (dark ? SNOW_NIGHT : SNOW_DAY);
+    const cols = precip.kind !== 'snow' ? (dark ? RAIN_NIGHT : RAIN_DAY) : (dark ? SNOW_NIGHT : SNOW_DAY);
+    const fcols = precip.kind === 'sleet' ? (dark ? SNOW_NIGHT : SNOW_DAY) : cols;
+    // squalls and clearing showers: precipitation only inside their moving bands
+    const A = fx.atmos, wind = fx.weather.wind;
+    const mask = !A ? null : fx.effects.has('squalls') ? (x, y) => squallMask(A, x, y, camX, camY, clock, wind)
+      : fx.effects.has('clearing') ? (x, y) => clearingMask(A, x, y, camX, camY, clock) : null;
     const dx = precip.dx, dy = precip.dy;
     const lenBase = precip.len;
     for (let i = 0; i < precip.streaks; i++) {
       const sp = precip.speed * P.sp[i];
       let x = P.x0[i] + dx * sp * clock, y = P.y0[i] + dy * sp * clock;
       x = ((x % SW) + SW) % SW; y = ((y % SH) + SH) % SH;
+      if (mask && mask(x | 0, y | 0) <= P.r[i] * 0.9 + 0.05) continue;
       const len = Math.max(2, Math.round(lenBase * (0.6 + P.r[i] * 0.8)));
       const fade = len > 8;                                      // blowing-snow streaks thin out toward the tail
       for (let k = 0; k < len; k++) {
@@ -892,7 +1006,8 @@ export function createFx() {
       let x = P.x0[i] + dx * sp * clock * 1.6 + Math.sin(clock * 1.7 + P.ph[i]) * 2.5;
       let y = P.y0[i] + (dy * 0.5 + 0.35) * sp * clock;
       x = ((x % SW) + SW) % SW; y = ((y % SH) + SH) % SH;
-      put(fb, Math.round(x), Math.round(y), cols[P.r[i] < 0.6 ? 1 : 0]);
+      if (mask && mask(x | 0, y | 0) <= P.r[i] * 0.9 + 0.05) continue;
+      put(fb, Math.round(x), Math.round(y), fcols[P.r[i] < 0.6 ? 1 : 0]);
     }
   }
 

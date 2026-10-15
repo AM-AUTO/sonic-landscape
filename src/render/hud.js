@@ -6,7 +6,7 @@ import { drawText, measureText, wrapText } from './font.js';
 import { rect, frame, hline, vline, pline, panel, px, clamp, pdisc, pcircle, pcircleDotted } from './draw.js';
 import { iconSprite, iconMono, gateSprite, timeSprite, blit, artCanvas, touchIcon, arrowSprite, octantOf } from './sprites.js';
 import { typeShort } from './glyphs.js';
-import { CELL_PX, SCREEN_W, SCREEN_H, RESONANCE_SECONDS } from '../world/codes.js';
+import { CELL_PX, SCREEN_W, SCREEN_H, RESONANCE_SECONDS, phaseBounds } from '../world/codes.js';
 import { HUD, fmt } from '../text.js';
 
 export const STRIP_H = 13;
@@ -353,6 +353,13 @@ export function restingBox(n = 0) {
   return { x, y: SCREEN_H - 3 - h, w, h };
 }
 
+/** Where the resting arc hands over from sun to moon (timeOfDay at the end of the day phase); 0.5 without a season. */
+export function restingSplit(season) {
+  if (!season) return 0.5;
+  const b = phaseBounds(season)[1];
+  return b > 0.02 && b < 0.98 ? b : 0.5;
+}
+
 function drawResting(ctx, st, R) {
   const p = st.player;
   if (!p || !p.resting) return;
@@ -368,8 +375,11 @@ function drawResting(ctx, st, R) {
     const a = (i / 20) * Math.PI;
     if (i % 2 === 0) ctx.fillRect(Math.round(cx - Math.cos(a) * rx), Math.round(base - Math.sin(a) * ry), 1, 1);
   }
-  const day = tod < 0.5;
-  const f = day ? tod * 2 : (tod - 0.5) * 2;
+  // the sun rides the arc through dawn and day, the moon through dusk and night: the season sets the split
+  const season = st.season || (st.world && st.world.level) || st.level;
+  const sunEnd = restingSplit(season);
+  const day = tod < sunEnd;
+  const f = day ? tod / sunEnd : (tod - sunEnd) / (1 - sunEnd);
   const a = clamp(f, 0.03, 0.97) * Math.PI;
   const sx = Math.round(cx - Math.cos(a) * rx), sy = Math.round(base - Math.sin(a) * ry);
   ctx.drawImage(timeSprite(day ? 'day' : 'night'), sx - 4, sy - 5);

@@ -6,15 +6,22 @@
  *   .lvl     Int16Array   per pixel: contour level + LVL_OFF where a contour is drawn, else 0
  *   .lvlKind Uint8Array   1 minor line, 2 index line (0 = none)
  *   .W       sheet width in px
+ *   .look    the level's normalised look (look.js); .reveal the hidden valley's true pixels (or null), see mapsig.js
+ * A level's `look` (look.js) sets the season print, the sun (relief + cast shadows) and the signature cartography
+ * (mapsig.js); without one the sheet is exactly the legacy bake. opts: { look, revealed }.
  * Everything is written pixel-exact; there is no anti-aliasing anywhere.
  */
-import { COVER, CELL_PX, GRID_CELLS } from '../world/codes.js';
+import { COVER, CELL_PX, GRID_CELLS, CELL_METERS } from '../world/codes.js';
 import { PAL, PAL_U32 as U } from './palette.js';
 import { hash2, hash2f } from '../core/rng.js';
 import { drawText, measureText } from './font.js';
 import { artCanvas, symbolArt, MAP_SYMBOLS, TREE_ART, TUFT_ART } from './sprites.js';
+import { lookOf } from './look.js';
+import { sigFills, sigGround, sigLines, sigLabels, sigVeil, gabbroAt, hiddenAt } from './mapsig.js';
 
 export const LVL_OFF = 200;
+// label haloes and knock-outs take the sheet's own ground colour (set per bake; PAL.paper without a look)
+let HALO = PAL.paper;
 
 function makeCanvas(w, h) {
   if (typeof document !== 'undefined') {
@@ -197,6 +204,100 @@ function smoothPath(pts) {
   return out;
 }
 
+// ------------------------------------------------------------- light & relief
+/**
+ * Cast shadows of a low sun, per cell (0 lit .. 1 in shadow). Marches each cell towards the sun (lx, ly: unit
+ * vector in map cells, y south) and darkens it where the ground ahead rises above the ray at elevation tanEl.
+ */
+export function castShadows(world, lx, ly, tanEl, maxSteps = 110) {
+  const N = world.size, h = world.height;
+  const out = new Float32Array(N * N);
+  const rise = tanEl * (world.cellMeters || CELL_METERS);
+  const maxH = world.maxH;
+  const N1 = N - 1;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const h0 = h[y * N + x];
+      let s = 0, k = 1;
+      while (k <= maxSteps) {
+        const ray = h0 + rise * k;
+        if (ray > maxH) break;
+        const fx = x + lx * k, fy = y + ly * k;
+        if (fx < 0 || fy < 0 || fx > N1 || fy > N1) break;
+        const ix = fx | 0, iy = fy | 0, ax = fx - ix, ay = fy - iy;
+        const i = iy * N + ix, ix1 = ix < N1 ? 1 : 0, iy1 = iy < N1 ? N : 0;
+        const hs = (h[i] * (1 - ax) + h[i + ix1] * ax) * (1 - ay) + (h[i + iy1] * (1 - ax) + h[i + iy1 + ix1] * ax) * ay;
+        const ex = hs - ray;
+        if (ex > 0) { const v = ex / 14; if (v > s) { s = v; if (s >= 1) { s = 1; break; } } }
+        k += k < 24 ? 1 : 2;
+      }
+      out[y * N + x] = s;
+    }
+  }
+  return out;
+}
+
+/**
+ * Relief and base fills under a look: the sun from look.light (azimuth, elevation, strength) on the season print.
+ * A low sun gives hard-edged, long relief and cast shadows; a high one soft modelling. Same pixel roles as the
+ * legacy pass (paper / shade dither, wood, snow, bog, rock, crag, water) with the print's own tones.
+ */
+function reliefPass(world, look, H, cls, buf, grad, W, P, C, BY) {
+  const L = look.light;
+  const az = (L.az * Math.PI) / 180, el = (L.el * Math.PI) / 180;
+  const lx = Math.sin(az), ly = -Math.cos(az);                    // towards the sun, map axes (y south)
+  const tanEl = Math.tan(el);
+  const kEl = Math.min(2.4, Math.max(0.16, tanEl));               // 1 at 45 degrees (the legacy sensitivity)
+  const str = L.strength;
+  const hard = Math.min(1, Math.max(0, (24 - L.el) / 16));        // 0 above ~24 degrees, 1 below ~8
+  const N = world.size, N1 = N - 1;
+  const cast = L.el < 30 && str > 0 ? castShadows(world, lx, ly, tanEl) : null;
+  const span = Math.max(1, world.maxH - world.minH), invSpan = 1 / span;
+  const sh0 = 4.5 * kEl, li0 = 6 * kEl;
+  const rel = look.print.relief != null ? look.print.relief : 1;
+  for (let Y = 0; Y < W; Y++) {
+    const yu = Y > 0 ? -W : 0, yd = Y < W - 1 ? W : 0;
+    const fy = Math.min(N1, Math.max(0, Y / P - 0.5)), iy = fy | 0, ay = fy - iy, iy1 = iy < N1 ? N : 0;
+    for (let X = 0; X < W; X++) {
+      const idx = Y * W + X;
+      const gx = ((X < W - 1 ? H[idx + 1] : H[idx]) - (X > 0 ? H[idx - 1] : H[idx])) * 0.5;
+      const gy = (H[idx + yd] - H[idx + yu]) * 0.5;
+      grad[idx] = Math.sqrt(gx * gx + gy * gy);
+      const th = BY[((Y & 3) << 2) | (X & 3)];
+      const c = cls[idx];
+      if (c === COVER.SHALLOW || c === COVER.DEEP) { buf[idx] = C.water; continue; }
+      const sdir = -(gx * lx + gy * ly);                          // > 0: the slope faces the sun
+      let shade = sdir < 0 ? Math.min(1, -sdir / sh0) : 0;
+      const lit = sdir > 0 ? Math.min(1, sdir / li0) : 0;
+      if (hard > 0) {
+        const t = Math.min(1, Math.max(0, (shade - 0.1) / 0.2));
+        shade += (t * t * (3 - 2 * t) * 0.95 - shade) * hard;
+      }
+      if (cast) {
+        const fx = Math.min(N1, Math.max(0, X / P - 0.5)), ix = fx | 0, ax = fx - ix, i = iy * N + ix, ix1 = ix < N1 ? 1 : 0;
+        const cs = (cast[i] * (1 - ax) + cast[i + ix1] * ax) * (1 - ay) + (cast[i + iy1] * (1 - ax) + cast[i + iy1 + ix1] * ax) * ay;
+        if (cs * 0.92 > shade) shade = cs * 0.92;
+      }
+      shade = Math.min(1, shade * str);
+      const en = (H[idx] - world.minH) * invSpan;
+      let col;
+      switch (c) {
+        case COVER.WOOD: col = (shade > 0.5 && th < shade * 0.3) ? C.woodDark : C.wood; break;
+        case COVER.SNOW:
+          col = th < (shade - 0.72) * 0.45 ? C.snowDeep : th < (shade - 0.28) * 0.5 ? C.snowShade : C.snow; break;
+        case COVER.BOG: col = th < 0.04 + en * 0.08 + shade * 0.18 ? C.paper2 : C.paper; break;
+        case COVER.ROCK: col = ((X + Y) & 1) === 0 && th < 0.8 ? C.rock : C.paper2; break;
+        case COVER.CRAG: col = th < 0.34 ? C.rock : C.paper2; break;
+        default: {                                                // moor, path, scree
+          const d = (0.12 * en + 0.42 * shade - 0.1 * lit * str) * rel;
+          col = th < (shade - 0.62) * 0.45 * rel ? C.deep : th < d ? C.paper2 : C.paper;
+        }
+      }
+      buf[idx] = col;
+    }
+  }
+}
+
 // ----------------------------------------------------------------- the bake
 export function bakeMap(world, opts = {}) {
   const t0 = nowMs();
@@ -205,6 +306,9 @@ export function bakeMap(world, opts = {}) {
   const interval = world.contourInterval || 10;
   const seed = (world.level && world.level.seed) | 0;
   const level = world.level || {};
+  const look = opts.look || lookOf(level);
+  const sig = look.sig;
+  HALO = PAL[look.print.base];
 
   const H = upsampleCubic(world.height, N, P); mark('cubic');
   const warp = makeWarp(W, seed);
@@ -216,6 +320,11 @@ export function bakeMap(world, opts = {}) {
     waterInk: U.waterInk, wood: U.wood, woodDark: U.woodDark, ink: U.ink, magenta: U.magenta, grid: U.grid, snow: U.snow,
     rock: U.rock, bog: U.bog, night: U.night,
   };
+  if (look.present) {                                 // the season print: ground, relief tones, rock
+    const pr = look.print;
+    C.paper = U[pr.base]; C.paper2 = U[pr.shade]; C.rock = U[pr.rock];
+    C.deep = U[pr.deep]; C.snowShade = U[pr.snowShade]; C.snowDeep = U[pr.snowDeep];
+  }
   const BY = new Float32Array(16);                   // 4x4 bayer thresholds
   for (let i = 0; i < 16; i++) BY[i] = ([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][i] + 0.5) / 16;
 
@@ -229,7 +338,8 @@ export function bakeMap(world, opts = {}) {
   // ---- pass 1: base fills + relief --------------------------------------
   const grad = new Float32Array(W * W);              // metres per pixel magnitude
   const invSpan = 1 / span;
-  for (let Y = 0; Y < W; Y++) {
+  if (!look.legacyRelief) reliefPass(world, look, H, cls, buf, grad, W, P, C, BY);
+  else for (let Y = 0; Y < W; Y++) {
     const yu = Y > 0 ? -W : 0, yd = Y < W - 1 ? W : 0;
     for (let X = 0; X < W; X++) {
       const idx = Y * W + X;
@@ -291,6 +401,14 @@ export function bakeMap(world, opts = {}) {
     }
   }
 
+  // signature context: shared by every signature pass
+  const S = sig.size ? {
+    world, look, raw: look.raw, buf, cls, H, grad, W, P, seed, C, BY, warp, smoothPath, snowMask: null,
+    gridStep: GRID_CELLS * P, occ: null, free: null,
+  } : null;
+  if (S) { sigFills(S); mark('sigFills'); }
+  const pineCells = S && S.pineCells;
+
   mark('prev');
   // ---- pass 3: ground detail (trees, tufts, scree, rock) -----------------
   // conifers on a jittered 6px lattice
@@ -301,6 +419,7 @@ export function bakeMap(world, opts = {}) {
       const cx = tx + (h1 >>> 4) % 5, cy = ty + (h1 >>> 9) % 5;
       if (cx < 3 || cy < 6 || cx > W - 4 || cy > W - 2) continue;
       if (cls[cy * W + cx] !== COVER.WOOD || cls[(cy - 4) * W + cx] !== COVER.WOOD || cls[cy * W + cx - 3] !== COVER.WOOD || cls[cy * W + cx + 3] !== COVER.WOOD) continue;
+      if (pineCells && pineCells[((cy / P) | 0) * N + ((cx / P) | 0)]) continue;
       stamp(buf, W, TREE_ART, cx - 2, cy - 5, C.woodDark, (X, Y) => cls[Y * W + X] === COVER.WOOD);
     }
   }
@@ -335,9 +454,13 @@ export function bakeMap(world, opts = {}) {
       }
     }
   }
+  if (S) { sigGround(S); mark('sigGround'); }
 
   mark('prev');
   // ---- pass 4: contours --------------------------------------------------
+  const snowMask = S && S.snowMask;
+  const blueSnow = sig.has('blueContoursOnSnow');
+  const cIdxSnow = blueSnow ? U.steel : C.waterDeep, cMinSnow = blueSnow ? U.paleblue : C.grid;
   const B = new Int16Array(W * W);
   for (let i = 0; i < B.length; i++) B[i] = Math.floor(H[i] / interval);
   const lvl = new Int16Array(W * W);
@@ -358,8 +481,8 @@ export function bakeMap(world, opts = {}) {
       const c = cls[idx];
       if (isWaterCode(c)) continue;
       if (k === 1 && (c === COVER.CRAG || grad[idx] > thin)) continue;
-      const snow = c === COVER.SNOW;
-      buf[idx] = k === 2 ? (snow ? C.waterDeep : C.contourIdx) : (snow ? C.grid : C.contour);
+      const snow = c === COVER.SNOW || (snowMask !== null && snowMask !== undefined && snowMask[idx] === 1);
+      buf[idx] = k === 2 ? (snow ? cIdxSnow : C.contourIdx) : (snow ? cMinSnow : C.contour);
       lvl[idx] = level_ + LVL_OFF;
       lvlKind[idx] = k;
     }
@@ -385,6 +508,30 @@ export function bakeMap(world, opts = {}) {
       });
     }
   }
+  const gabbro = S && sig.has('gabbro');
+  if (gabbro) {
+    // heavy rock drawing: a second, longer hatch over the crags of the gabbro, in ink and char
+    for (let ty = 1; ty < W; ty += 2) {
+      for (let tx = 1; tx < W; tx += 2) {
+        const h1 = hash2(tx, ty, seed + 23);
+        if ((h1 >>> 24) % 3 === 0) continue;
+        const X = tx + (h1 % 2), Y = ty + ((h1 >>> 5) % 2);
+        if (X < 1 || Y < 1 || X >= W - 1 || Y >= W - 1) continue;
+        const idx = Y * W + X;
+        if (cls[idx] !== COVER.CRAG || !gabbroAt(S, X, Y)) continue;
+        const [gx, gy] = gAt(idx, X, Y);
+        const m = Math.hypot(gx, gy);
+        let dx = 0, dy = 1;
+        if (m > 0.05) { dx = -gx / m; dy = -gy / m; }
+        const len = 3 + ((h1 >>> 11) % 5);
+        const col = (h1 >>> 20) & 1 ? C.ink : U.char;
+        line(buf, W, X, Y, Math.round(X + dx * len), Math.round(Y + dy * len), col, (px, py) => {
+          const cc = cls[py * W + px];
+          if (cc === COVER.CRAG || cc === COVER.SCREE || cc === COVER.ROCK) buf[py * W + px] = col;
+        });
+      }
+    }
+  }
   // crag top edge: solid line where the neighbour outside the cliff is higher
   for (let Y = 1; Y < W - 1; Y++) {
     for (let X = 1; X < W - 1; X++) {
@@ -392,15 +539,19 @@ export function bakeMap(world, opts = {}) {
       if (cls[idx] !== COVER.CRAG) continue;
       const hh = H[idx];
       if ((cls[idx - 1] !== COVER.CRAG && H[idx - 1] > hh) || (cls[idx + 1] !== COVER.CRAG && H[idx + 1] > hh) ||
-          (cls[idx - W] !== COVER.CRAG && H[idx - W] > hh) || (cls[idx + W] !== COVER.CRAG && H[idx + W] > hh)) buf[idx] = C.ink;
+          (cls[idx - W] !== COVER.CRAG && H[idx - W] > hh) || (cls[idx + W] !== COVER.CRAG && H[idx + W] > hh)) {
+        buf[idx] = C.ink;
+        if (gabbro && gabbroAt(S, X, Y)) { buf[idx + 1] = C.ink; buf[idx + W] = C.ink; }   // a doubled, heavier edge
+      }
     }
   }
 
   mark('prev');
   // ---- pass 6: streams ---------------------------------------------------
-  drawStreams(world, buf, cls, W, warp, C);
+  drawStreams(world, buf, cls, W, warp, C, S ? { spate: sig.has('spate'), riverIce: sig.has('riverIce'), iceCells: S.iceCells || null } : null);
 
   mark('prev');
+  if (S) { sigLines(S); mark('sigLines'); }
   // ---- pass 7: footpaths (dashed magenta / black) -------------------------
   const wv = [0, 0];
   for (const path of (world.features && world.features.paths) || []) {
@@ -436,7 +587,7 @@ export function bakeMap(world, opts = {}) {
   }
   for (let i = 0; i < buf.length; i++) {
     // keep flash map honest where later passes (grid/border) overwrote contours
-    if (lvl[i] && buf[i] !== C.contour && buf[i] !== C.contourIdx && buf[i] !== C.grid && buf[i] !== C.waterDeep) { lvl[i] = 0; lvlKind[i] = 0; }
+    if (lvl[i] && buf[i] !== C.contour && buf[i] !== C.contourIdx && buf[i] !== C.grid && buf[i] !== C.waterDeep && buf[i] !== cIdxSnow && buf[i] !== cMinSnow) { lvl[i] = 0; lvlKind[i] = 0; }
   }
 
   mark('prev');
@@ -452,6 +603,7 @@ export function bakeMap(world, opts = {}) {
   drawGate(ctx, world, W, occ, free);
   drawPois(ctx, world, W, occ, free, cls); mark('pois');
   drawFeatureLabels(ctx, world, W, occ, free, cls); mark('labels');
+  if (S) { S.occ = occ; S.free = free; sigLabels(S, ctx); mark('sigLabels'); }
   drawSpotHeights(ctx, world, W, occ, free); mark('spots');
   drawContourLabels(ctx, world, W, lvl, lvlKind, cls, occ, free, interval, seed); mark('clabels');
   drawGridLabels(ctx, world, W, level); mark('grid');
@@ -462,6 +614,14 @@ export function bakeMap(world, opts = {}) {
   canvas.lvlKind = lvlKind;
   canvas.W = W;
   canvas.cls = cls;
+  canvas.look = look;
+  canvas.snowMask = snowMask || null;
+  canvas.reveal = null;
+  if (S && !opts.revealed) {
+    canvas.reveal = sigVeil(S, canvas.pixels, lvl, lvlKind);
+    if (canvas.reveal) ctx.putImageData(img, 0, 0);
+  }
+  HALO = PAL.paper;
   mark('text');
   canvas.bakeMs = nowMs() - t0;
   canvas.bakeProfile = prof.join(' ');
@@ -469,7 +629,7 @@ export function bakeMap(world, opts = {}) {
 }
 
 // ------------------------------------------------------------------ streams
-function drawStreams(world, buf, cls, W, warp, C) {
+function drawStreams(world, buf, cls, W, warp, C, so = null) {
   const N = world.size, P = CELL_PX;
   const st = world.stream;
   if (!st) return;
@@ -512,13 +672,30 @@ function drawStreams(world, buf, cls, W, warp, C) {
     return [X - wv[0], Y - wv[1]];
   };
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const plot = (x, y, a, horizontal) => {
+  let plot = (x, y, a, horizontal) => {
     if (x < 0 || y < 0 || x >= W || y >= W) return;
     if (isWaterCode(cls[y * W + x])) return;
     buf[y * W + x] = C.waterInk;
     if (a > 60) { if (horizontal) { if (y + 1 < W) buf[(y + 1) * W + x] = C.waterInk; } else if (x + 1 < W) buf[y * W + x + 1] = C.waterInk; }
     if (a > 200) { if (horizontal) { if (y > 0) buf[(y - 1) * W + x] = C.waterInk; } else if (x > 0) buf[y * W + x - 1] = C.waterInk; }
   };
+  if (so && (so.spate || so.riverIce)) {
+    // spate: every burn a size up (thaw); river ice: frozen margins on the rivers, the small burns broken by ice
+    const a1 = so.spate ? 14 : 60, a2 = so.spate ? 60 : 200;
+    const ink = C.waterInk, ice = so.riverIce ? U.ice : C.waterInk, edge = so.riverIce ? U.ice : so.spate ? C.waterDeep : C.waterInk;
+    const set = (x, y, col) => { if (x >= 0 && y >= 0 && x < W && y < W && !isWaterCode(cls[y * W + x]) && buf[y * W + x] !== ink) buf[y * W + x] = col; };
+    plot = (x, y, a, horizontal) => {
+      if (x < 0 || y < 0 || x >= W || y >= W) return;
+      if (isWaterCode(cls[y * W + x])) return;
+      const broken = so.riverIce && a <= a1 && ((x + y) % 5) === 0;
+      buf[y * W + x] = broken ? ice : ink;
+      if (a > a1) { if (horizontal) { if (y + 1 < W) buf[(y + 1) * W + x] = ink; } else if (x + 1 < W) buf[y * W + x + 1] = ink; }
+      if (a > a2) {
+        if (horizontal) { if (y > 0) buf[(y - 1) * W + x] = ink; set(x, y + 2, edge); set(x, y - 2, so.riverIce ? edge : C.waterInk); }
+        else { if (x > 0) buf[y * W + x - 1] = ink; set(x + 2, y, edge); set(x - 2, y, so.riverIce ? edge : C.waterInk); }
+      } else if (so.riverIce && a > a1) { if (horizontal) set(x, y - 1, ice); else set(x - 1, y, ice); }
+    };
+  }
   const curve = (p0, c, p1, a) => {
     const len = Math.hypot(c[0] - p0[0], c[1] - p0[1]) + Math.hypot(p1[0] - c[0], p1[1] - c[1]);
     const n = Math.max(2, Math.ceil(len * 1.3));
@@ -546,7 +723,7 @@ function drawStreams(world, buf, cls, W, warp, C) {
 // -------------------------------------------------------------- text/symbols
 function symHalo(ctx, type, x, y, flip = false) {
   const art = symbolArt(type);
-  const halo = artCanvas('sym-halo-' + type, art, { mono: PAL.paper });
+  const halo = artCanvas('sym-halo-' + type, art, { mono: HALO });
   for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]]) ctx.drawImage(halo, x + dx, y + dy);
   ctx.drawImage(artCanvas('sym-' + type, art), x, y);
 }
@@ -571,12 +748,12 @@ function placeLabel(ctx, text, anchor, symW, symH, color, occ, free, opts = {}) 
     const r = { x: Math.round(c.x) - 1, y: Math.round(c.y) - 1, w: tw + 2, h: th + 2 };
     if (free(r)) {
       occ.push(r);
-      drawText(ctx, text, Math.round(c.x), Math.round(c.y), color, { font, halo: PAL.paper, italic: opts.italic, spacing: opts.spacing });
+      drawText(ctx, text, Math.round(c.x), Math.round(c.y), color, { font, halo: HALO, italic: opts.italic, spacing: opts.spacing });
       return r;
     }
   }
   const c = cands[0];
-  drawText(ctx, text, Math.round(c.x), Math.round(c.y), color, { font, halo: PAL.paper, italic: opts.italic });
+  drawText(ctx, text, Math.round(c.x), Math.round(c.y), color, { font, halo: HALO, italic: opts.italic });
   return null;
 }
 
@@ -612,7 +789,7 @@ function drawGate(ctx, world, W, occ, free) {
   else { lx = gx - tw - 4; ly = gy + sh / 2 - 3; }
   lx = Math.max(6, Math.min(W - 6 - tw, lx));
   occ.push({ x: lx - 1, y: ly - 1, w: tw + 2, h: 7 });
-  drawText(ctx, name, Math.round(lx), Math.round(ly), PAL.magenta, { font: 'small', italic: true, halo: PAL.paper });
+  drawText(ctx, name, Math.round(lx), Math.round(ly), PAL.magenta, { font: 'small', italic: true, halo: HALO });
 }
 
 function drawPois(ctx, world, W, occ, free, cls) {
@@ -664,7 +841,7 @@ function drawFeatureLabels(ctx, world, W, occ, free, cls) {
     }
     x = Math.max(6, Math.min(W - 6 - tw, x)); y = Math.max(6, Math.min(W - 6 - th, y));
     occ.push({ x: x - 1, y: y - 1, w: tw + 2, h: th + 2 });
-    drawText(ctx, text, x, y, color, { font, italic, spacing, halo: PAL.paper });
+    drawText(ctx, text, x, y, color, { font, italic, spacing, halo: HALO });
   }
 }
 
@@ -678,9 +855,9 @@ function drawSpotHeights(ctx, world, W, occ, free) {
     const r = { x: cx - 2, y: cy - 4, w: tw + 6, h: 8 };
     if (!free(r)) continue;
     occ.push(r);
-    ctx.fillStyle = PAL.paper; ctx.fillRect(cx - 2, cy - 2, 4, 4);
+    ctx.fillStyle = HALO; ctx.fillRect(cx - 2, cy - 2, 4, 4);
     ctx.fillStyle = PAL.ink; ctx.fillRect(cx - 1, cy - 1, 2, 2);
-    drawText(ctx, txt, cx + 3, cy - 3, PAL.ink, { font: 'small', halo: PAL.paper });
+    drawText(ctx, txt, cx + 3, cy - 3, PAL.ink, { font: 'small', halo: HALO });
   }
 }
 
@@ -720,7 +897,7 @@ function drawContourLabels(ctx, world, W, lvl, lvlKind, cls, occ, free, interval
       placed.push({ lv, x: X, y: Y });
       occ.push(r);
       const cc = cls[Y * W + X + 7];
-      ctx.fillStyle = cc === COVER.SNOW ? PAL.snow : cc === COVER.WOOD ? PAL.wood : PAL.paper;
+      ctx.fillStyle = cc === COVER.SNOW ? PAL.snow : cc === COVER.WOOD ? PAL.wood : HALO;
       ctx.fillRect(r.x, r.y, r.w, r.h);
       drawText(ctx, txt, r.x + 2, r.y + 2, cc === COVER.SNOW ? PAL.waterInk : PAL.contourIdx, { font: 'small' });
     }
@@ -733,17 +910,17 @@ function drawGridLabels(ctx, world, W, level) {
   const two = (v) => String(((v % 100) + 100) % 100).padStart(2, '0');
   // OS style: corner letters
   const letters = level.gridLetters || '';
-  ctx.fillStyle = PAL.paper; ctx.fillRect(2, 2, 16, 11);
+  ctx.fillStyle = HALO; ctx.fillRect(2, 2, 16, 11);
   drawText(ctx, letters, 4, 4, PAL.ink, {});
   for (let g = 1; g * step < W; g++) {
     const p = g * step;
     const e = two(e0 + g), n = two(n0 - g);
     // top & bottom edges
-    drawText(ctx, e, p + 2, 3, PAL.grid, { font: 'small', halo: PAL.paper });
-    drawText(ctx, e, p + 2, W - 9, PAL.grid, { font: 'small', halo: PAL.paper });
+    drawText(ctx, e, p + 2, 3, PAL.grid, { font: 'small', halo: HALO });
+    drawText(ctx, e, p + 2, W - 9, PAL.grid, { font: 'small', halo: HALO });
     // left & right edges
-    drawText(ctx, n, 4, p - 3, PAL.grid, { font: 'small', halo: PAL.paper });
-    drawText(ctx, n, W - 4, p - 3, PAL.grid, { font: 'small', halo: PAL.paper, align: 'right' });
+    drawText(ctx, n, 4, p - 3, PAL.grid, { font: 'small', halo: HALO });
+    drawText(ctx, n, W - 4, p - 3, PAL.grid, { font: 'small', halo: HALO, align: 'right' });
   }
 }
 
@@ -772,21 +949,27 @@ export function bakeOverview(world, n, opts = {}) {
     }
   }
   const span = Math.max(1, world.maxH - world.minH);
+  const look = opts.look || lookOf(world.level);
+  const P0 = look.present ? U[look.print.base] : U.paper, P2 = look.present ? U[look.print.shade] : U.paper2;
+  const RK = look.present ? U[look.print.rock] : U.rock;
+  const REL = look.present && look.print.relief != null ? look.print.relief : 1;
   for (let Y = 0; Y < n; Y++) {
     for (let X = 0; X < n; X++) {
       const i = Y * n + X, c = cs[i];
       const en = (hs[i] - world.minH) / span;
       const th = ([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][((Y & 3) << 2) | (X & 3)] + 0.5) / 16;
-      let col = th < 0.1 + en * 0.45 ? U.paper2 : U.paper;
+      let col = th < (REL === 1 ? 0.1 + en * 0.45 : (0.1 + en * 0.45) * REL * REL) ? P2 : P0;
       if (c === COVER.SHALLOW || c === COVER.DEEP) col = U.water;
       else if (c === COVER.WOOD) col = U.wood;
       else if (c === COVER.SNOW) col = U.snow;
       else if (c === COVER.BOG && th < 0.12) col = U.waterInk;
-      else if (c === COVER.CRAG) col = th < 0.6 ? U.ink : U.rock;
-      else if (c === COVER.SCREE || c === COVER.ROCK) col = th < 0.5 ? U.rock : col;
+      else if (c === COVER.CRAG) col = th < 0.6 ? U.ink : RK;
+      else if (c === COVER.SCREE || c === COVER.ROCK) col = th < 0.5 ? RK : col;
       buf[i] = col;
     }
   }
+  const veil = !opts.revealed && look.present && look.sig.has('hiddenValley') ? new Uint8Array(n * n) : null;
+  if (veil) for (let Y = 0; Y < n; Y++) for (let X = 0; X < n; X++) if (hiddenAt(look, (X + 0.5) * s, (Y + 0.5) * s)) { veil[Y * n + X] = 1; buf[Y * n + X] = P0; }
   const bd = new Int16Array(n * n);
   for (let i = 0; i < bd.length; i++) bd[i] = Math.floor(hs[i] / interval);
   for (let Y = 0; Y < n; Y++) {
@@ -797,11 +980,11 @@ export function bakeOverview(world, n, opts = {}) {
         // skip where lines would fuse (spacing under ~3 px)
         const gx = X < n - 1 ? hs[i + 1] - hs[i] : 0, gy = Y < n - 1 ? hs[i + n] - hs[i] : 0;
         if (Math.max(Math.abs(gx), Math.abs(gy)) > interval / 2.2) { continue; }
-        if (c !== COVER.SHALLOW && c !== COVER.DEEP && c !== COVER.CRAG) buf[i] = U.contourIdx;
+        if (c !== COVER.SHALLOW && c !== COVER.DEEP && c !== COVER.CRAG && !(veil && veil[i])) buf[i] = U.contourIdx;
       }
     }
   }
-  for (let i = 0; i < buf.length; i++) if (sg[i] && cs[i] !== COVER.SHALLOW && cs[i] !== COVER.DEEP) buf[i] = U.waterInk;
+  for (let i = 0; i < buf.length; i++) if (sg[i] && cs[i] !== COVER.SHALLOW && cs[i] !== COVER.DEEP && !(veil && veil[i])) buf[i] = U.waterInk;
   if (opts.grid) {
     const stepPx = (GRID_CELLS / s);
     for (let g = 1; g * stepPx < n - 1; g++) {
