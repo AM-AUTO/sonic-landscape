@@ -119,7 +119,10 @@ for (const lv of LEVELS) {
 
   test(`${lv.id}: POIs, spawn, gate passable and mutually reachable`, () => {
     const w = world(lv);
-    assert.ok(w.pois.length >= 7 && w.pois.length <= 9, `7-9 POIs, got ${w.pois.length}`);
+    // v2 levels (docs/LEVELS.md) carry 10-14 POIs; their legs and spread are checked in level-design.test.js
+    const v2 = lv.designVersion === 2;
+    if (v2) assert.ok(w.pois.length >= 10 && w.pois.length <= 14, `10-14 POIs, got ${w.pois.length}`);
+    else assert.ok(w.pois.length >= 7 && w.pois.length <= 9, `7-9 POIs, got ${w.pois.length}`);
     assert.equal(new Set(w.pois.map((p) => p.id)).size, w.pois.length, 'unique ids');
     const pts = [w.spawn, w.gate, ...w.pois];
     for (const p of pts) {
@@ -181,6 +184,7 @@ for (const lv of LEVELS) {
   test(`${lv.id}: gate on the map edge, chain present, routes plausible`, () => {
     const w = world(lv);
     const g = w.gate;
+    const v2 = lv.designVersion === 2;
     const toEdge = { N: g.y, S: S - 1 - g.y, W: g.x, E: S - 1 - g.x };
     assert.ok(['N', 'E', 'S', 'W'].includes(g.side));
     assert.ok(toEdge[g.side] <= 3, `gate within 3 cells of side ${g.side}`);
@@ -197,7 +201,7 @@ for (const lv of LEVELS) {
     for (const t of g.chain) {
       const p = w.pois.find((q) => q.type === t);
       const straight = Math.hypot(p.x - prev.x, p.y - prev.y);
-      assert.ok(straight >= 25 * k && straight <= 135 * k, `${lv.id} leg to ${t}: ${straight.toFixed(0)} cells`);
+      if (!v2) assert.ok(straight >= 25 * k && straight <= 135 * k, `${lv.id} leg to ${t}: ${straight.toFixed(0)} cells`);
       const { dist } = reachable(w, prev);
       const walk = dist[p.y * S + p.x];
       assert.ok(walk >= 0 && walk <= straight * 2.4 + 20 * k, `${lv.id} walk to ${t}: ${walk} (straight ${straight.toFixed(0)})`);
