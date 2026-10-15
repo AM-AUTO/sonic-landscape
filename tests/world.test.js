@@ -260,7 +260,8 @@ for (const lv of LEVELS) {
     for (const c of w.cover) counts[c]++;
     const frac = (c) => counts[c] / (S * S);
     assert.ok(frac(COVER.CRAG) < 0.2, 'crag fraction');
-    assert.ok(frac(COVER.DEEP) < 0.12, 'deep water fraction');
+    // the island coast (Corryvreckan) is meant to be half sea; every other sheet stays mostly land
+    assert.ok(frac(COVER.DEEP) < (lv.id === 'corryvreckan' ? 0.55 : 0.12), 'deep water fraction');
     assert.ok(frac(COVER.PATH) > 0.002, 'paths present');
     assert.ok(counts[COVER.SHALLOW] + counts[COVER.DEEP] > 100, 'there is water');
     assert.ok(w.stream.reduce((a, b) => a + b, 0) > 150, 'streams');
