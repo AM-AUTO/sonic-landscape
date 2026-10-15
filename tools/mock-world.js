@@ -29,15 +29,15 @@ const gauss = (x, y, cx, cy, r, h) => h * Math.exp(-(((x - cx) ** 2 + (y - cy) *
 const KINDS = {
   moor: {
     id: 'rannoch', name: 'Rannoch Moor', gaelic: 'Mòinteach Raineach', gridLetters: 'NN', gridOrigin: [32, 51],
-    subtitle: 'I. The Moor', contourInterval: 10, seed: 11, base: 330, amp: 60, snowline: null,
+    subtitle: 'IV. The Moor', contourInterval: 10, seed: 11, base: 330, amp: 60, snowline: null,
   },
   glen: {
-    id: 'affric', name: 'Glen Affric', gaelic: 'Gleann Afraig', gridLetters: 'NH', gridOrigin: [18, 20],
-    subtitle: 'II. The Pinewood', contourInterval: 10, seed: 22, base: 230, amp: 520, snowline: null,
+    id: 'cruachan', name: 'Ben Cruachan', gaelic: 'Cruachan Beann', gridLetters: 'NH', gridOrigin: [18, 20],
+    subtitle: 'II. The Well', contourInterval: 10, seed: 22, base: 230, amp: 520, snowline: null,
   },
   alpine: {
     id: 'cuillin', name: 'The Cuillin', gaelic: 'A’ Chuiltheann', gridLetters: 'NG', gridOrigin: [44, 20],
-    subtitle: 'VI. The Ridge', contourInterval: 20, seed: 33, base: 120, amp: 900, snowline: 780,
+    subtitle: 'VII. The Ridge', contourInterval: 20, seed: 33, base: 120, amp: 900, snowline: 780,
   },
 };
 

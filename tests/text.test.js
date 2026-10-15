@@ -24,7 +24,7 @@ import { LAYOUT } from '../src/render/screens.js';
 
 const SW = 384;
 const MINIMAP_LEFT = 330;                 // frame of the minimap, top right; centred banners must stop short of it
-const SUBTITLES = ['I. The Muir', 'II. The Firwid', 'III. The Glen o Greetin', 'IV. The Heich Grund', 'V. The Reid Giants', 'VI. The Black Rig', 'VII. Knowe an Lochan', 'VIII. Hamecomin'];
+const SUBTITLES = ['I. The Plaid', 'II. The Well', 'III. The Stane Hoose', 'IV. The Muir', 'V. The Heich Grund', 'VI. The Glen o Greetin', 'VII. The Black Rig', 'VIII. Hamecomin'];
 const small = { font: 'small' };
 
 /** Every condition key of a POI as the plain sentences the game would show (all missing at once = worst case). */
@@ -64,7 +64,7 @@ test('coverage: eight types and eight tracks have every string', () => {
     }
     for (const t of lv.gate.chain) assert.ok(lv.pois.some((p) => p.type === t), `${lv.id}: a ${t} exists for the key`);
   });
-  assert.equal(LEVELS[5].gaelic, 'An Cuilthionn');
+  assert.equal(LEVELS.find((l) => l.id === 'cuillin').gaelic, 'An Cuilthionn');
 });
 
 test('fmt fills {slots} and leaves unknown ones alone', () => {

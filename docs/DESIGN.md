@@ -10,7 +10,7 @@ gives space. Leave the controls alone and the level keeps breathing (Eno drift).
 Move and it becomes yours.
 
 **What binds the album:**
-1. **Roots walk the circle of fifths and come home.** D → G → A → E → C → F# → E♭ → D.
+1. **Roots walk the circle of fifths and come home.** D → G → A → E → C → F# → E♭ → D in the old order. In the current album order (I–III borrowing old scores) the roots run E♭ → G → C → D → E → A → F# → D; the sonic round restores a walk home to D.
 2. **The Contour Motif.** A 5-note scale-degree cell, `[0, 2, 4, 1, 3]`, is transformed per level (inverted, retrograded, augmented, rotated) and heard in every artefact. On the final summit it plays whole.
 3. **Fragments.** Completing a level adds its transformed motif as a faint ghost voice to every later level. The album accumulates.
 4. **Shared grammar.** The same 8 artefact types and approach conditions apply in every level, so knowledge carries forward. Later levels compound conditions.
@@ -128,24 +128,26 @@ A partial artefact is a 4 s muffled, detuned glimpse: low-passed to ~600 Hz and 
 
 | # | id | Name | Root | Mode | BPM | Character |
 |---|---|---|---|---|---|---|
-| 1 | rannoch | Rannoch Moor | D | dorian | 64 | Vast and sparse. Glass bells and long lochan delays. The teaching level |
-| 2 | affric | Glen Affric | G | lydian | 72 | Bright pinewood. Pluck arpeggios, shimmering water grains |
-| 3 | coe | Glen Coe | A | phrygian | 76 | Dark and dramatic. Toms, gong, crashes, low saw drones |
-| 4 | cairngorm | Cairngorm Plateau | E | aeolian (sus) | 56 | Arctic and glacial. Frozen granular, snow hiss, slowest pulse |
-| 5 | torridon | Torridon | C | mixolydian | 68 | Monumental. Brass-like saw pads, terraced rhythm |
-| 6 | cuillin | The Cuillin | F# | octatonic / lydian ♭7 | 84 | Jagged and metallic. FM rock percussion, bitcrush glitch |
-| 7 | assynt | Assynt | E♭ | major pentatonic | 60 | Stillness. Minimal, the longest delays, isolated peaks |
+| 1 | corryvreckan | Corryvreckan | E♭ | major pentatonic | 60 | *Borrowed (old Assynt score) until the sonic round.* The teaching level |
+| 2 | cruachan | Ben Cruachan | G | lydian | 72 | *Borrowed (old Glen Affric score) until the sonic round* |
+| 3 | lyon | Glen Lyon | C | mixolydian | 68 | *Borrowed (old Torridon score) until the sonic round* |
+| 4 | rannoch | Rannoch Moor | D | dorian | 64 | Vast and sparse. Glass bells and long lochan delays |
+| 5 | cairngorm | Cairngorm Plateau | E | aeolian (sus) | 56 | Arctic and glacial. Frozen granular, snow hiss, slowest pulse |
+| 6 | coe | Glen Coe | A | phrygian | 76 | Dark and dramatic. Toms, gong, crashes, low saw drones |
+| 7 | cuillin | The Cuillin | F# | octatonic / lydian ♭7 | 84 | Jagged and metallic. FM rock percussion, bitcrush glitch |
 | 8 | nevis | Ben Nevis | D | ionian → lydian at the summit | 70 | Homecoming. Every fragment, full tutti |
+
+Levels 1–3 are placeholders: the old Assynt, Glen Affric and Torridon sheets under the new ids, until each is rebuilt to `docs/LEVELS.md`.
 
 Gate chains (the discovery spine):
 
 | Level | Chain | Note |
 |---|---|---|
-| rannoch | lochan → cairn | teaches approaching slowly and approaching from above |
-| affric | waterfall → lochan → bothy | |
-| coe | crag → stone → trig | crag needs speed, stone needs dwell, trig needs a climb |
+| corryvreckan | stone → lochan → summit | placeholder (old Assynt chain); the rebuild teaches lochan slow → cairn from above |
+| cruachan | waterfall → lochan → bothy | placeholder (old Glen Affric chain) |
+| lyon | waterfall → crag → summit → bothy | placeholder (old Torridon chain) |
+| rannoch | lochan → cairn | lochan slow, cairn from above |
 | cairngorm | lochan → summit → cairn | summit by climb, lochan at dawn |
-| torridon | waterfall → crag → summit → bothy | |
+| coe | crag → stone → trig | crag needs speed, stone needs dwell, trig needs a climb |
 | cuillin | crag → trig → lochan → stone | lochan requires the trig to be resonating |
-| assynt | stone → lochan → summit | stone at night, lochan slow, summit by climb |
 | nevis | waterfall → bothy → crag → summit | summit requires all fragments and the trig |

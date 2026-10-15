@@ -1,7 +1,7 @@
 // Renders title / select / play / map / notes / pause / complete screens to out/render-*.png (3x).
 // usage: node tools/render-preview.mjs [--worlds mock:glen,real:0,real:1] [--scale 3] [--out out] [--fx-only] [--no-fx] [--proof] [--proof-title]
 // --proof-title writes render-title-<name>.png for every start-screen variant in src/render/title/index.js (castlerigg, shelter, mentol, dolmen, menhir) at 3x, nothing else.
-// The atmosphere pass (weather on) renders real levels 0 rannoch, 2 coe, 3 cairngorm, 5 cuillin: day / dusk / night play
+// The atmosphere pass (weather on) renders real levels 3 rannoch, 4 cairngorm, 5 coe, 6 cuillin: day / dusk / night play
 // frames, a lightning (or storm) frame, a mist frame, a bothy-at-night frame and walker crops at 8x, plus the walker
 // pose sheet and the gate symbol-stone sheet. Every frame is checked against the strict 35-colour palette.
 import { createRequire } from 'node:module';
@@ -82,7 +82,7 @@ if (PROOF) {
   save('proof-title-b', await frame({ state: null, ui: { screen: 'title', time: 7.4 }, warm: 1 }));
   save('proof-notes', await frame({ state: null, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes, scroll: 1 } }));
   save('proof-notes-empty', await frame({ state: null, ui: { screen: 'notes', time: 3, notes: [] } }));
-  await page.evaluate((w) => window.P.setWorld(w), 'real:0');
+  await page.evaluate((w) => window.P.setWorld(w), 'real:3');   // rannoch
   await page.evaluate(() => window.P.useWorldInRenderer());
   const poiTypes = await page.evaluate(() => window.P.world().pois.map((p) => p.type));
   const base = { heading: 0.4, speed: 3.2, at: poiTypes.includes('cairn') ? 'cairn' : poiTypes[0], dx: 5, dy: 4, know: 'demo', chainLit: 1, trail: 'walk' };
@@ -114,8 +114,8 @@ levelDefs = await page.evaluate(() => window.P.levelDefs());
 if (!FX_ONLY) {
 save('title', await frame({ state: null, ui: { screen: 'title', time: 2.0 }, warm: 1 }));
 save('title-touch', await frame({ state: null, ui: { screen: 'title', time: 2.0 }, touch: 'idle', warm: 1 }));
-save('select', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 2, time: 1.1, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch'] }, warm: 1 }));
-save('select-locked', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 5, time: 1.4, unlocked: ['rannoch', 'affric', 'coe'], completed: ['rannoch', 'affric'] }, warm: 1 }));
+save('select', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 2, time: 1.1, unlocked: ['corryvreckan', 'cruachan', 'lyon'], completed: ['corryvreckan'] }, warm: 1 }));
+save('select-locked', await frame({ state: null, ui: { screen: 'select', levels: levelDefs || undefined, selected: 5, time: 1.4, unlocked: ['corryvreckan', 'cruachan', 'lyon'], completed: ['corryvreckan', 'cruachan'] }, warm: 1 }));
 
 }
 
@@ -126,7 +126,7 @@ if (!FX_ONLY) {
   save('title-night-b', await frame({ state: null, ui: { screen: 'title', time: 5.2 }, warm: 1 }));
   save('notes-empty', await frame({ state: null, ui: { screen: 'notes', time: 3, notes: [] } }));
   levelDefs = await page.evaluate(() => window.P.levelDefs());
-  for (const [sel, name, un, dn] of [[0, 'a', ['rannoch'], []], [3, 'b', ['rannoch', 'affric', 'coe', 'cairngorm'], ['rannoch', 'affric', 'coe']], [5, 'c', ['rannoch', 'affric', 'coe', 'cairngorm'], ['rannoch']], [7, 'd', LEVELS.map((l) => l.id), LEVELS.map((l) => l.id)]]) {
+  for (const [sel, name, un, dn] of [[0, 'a', ['corryvreckan'], []], [3, 'b', ['corryvreckan', 'cruachan', 'lyon', 'rannoch'], ['corryvreckan', 'cruachan', 'lyon']], [5, 'c', ['corryvreckan', 'cruachan', 'lyon', 'rannoch'], ['corryvreckan']], [7, 'd', LEVELS.map((l) => l.id), LEVELS.map((l) => l.id)]]) {
     save(`gothic-select-${name}`, await frame({ state: null, ui: { screen: 'select', levels: levelDefs, selected: sel, time: 3.4, unlocked: un, completed: dn }, warm: 1 }));
   }
 }
@@ -177,14 +177,14 @@ for (const w of worlds) {
   save(`${key}-notes`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes }, advance: 2.2 }));
   save(`${key}-notes-p3`, await frame({ state: { ...base, tod: 0.3 }, ui: { screen: 'notes', time: 3, notes: LEVELS[0].fieldNotes, scroll: 2 }, advance: 3.2 }));
   save(`${key}-pause`, await frame({ state: { ...base, tod: 0.3, ...sp }, ui: { screen: 'pause', time: 3, selected: 1 } }));
-  save(`${key}-complete`, await frame({ state: { ...base, tod: 0.3, ...sp, gateOpen: true, chainLit: 3, fragments: ['rannoch'] }, ui: { screen: 'complete', time: 4 }, warm: 3, advance: 0.8 }));
+  save(`${key}-complete`, await frame({ state: { ...base, tod: 0.3, ...sp, gateOpen: true, chainLit: 3, fragments: ['corryvreckan'] }, ui: { screen: 'complete', time: 4 }, warm: 3, advance: 0.8 }));
   // timing
   const perf = await page.evaluate(() => window.P.perf(120, { at: 'cairn', heading: 0.4, speed: 4, tod: 0.88 }));
   console.log(w, 'draw() avg', perf.toFixed(2), 'ms/frame (night, worst case)');
 }
 
 // ------------------------------------------------------------------ atmosphere (weather on)
-const FX_LEVELS = [0, 2, 3, 5];
+const FX_LEVELS = [3, 4, 5, 6];
 const saveRaw = (name, dataUrl) => save(name, dataUrl);
 if (!NO_FX && nReal > 0) {
   saveRaw('fx-sprites', await page.evaluate(() => window.P.sprites(8)));

@@ -22,7 +22,7 @@ import { PLUCK_DEFAULTS } from './voices/pluck.js';
 import { TEXTURE_DEFAULTS } from './voices/texture.js';
 import { KIT_DEFAULTS } from './voices/kit.js';
 
-export const LEVEL_IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
+export const LEVEL_IDS = ['corryvreckan', 'cruachan', 'lyon', 'rannoch', 'cairngorm', 'coe', 'cuillin', 'nevis'];
 export const VOICE_DEFAULTS = { drone: DRONE_DEFAULTS, pad: PAD_DEFAULTS, bass: BASS_DEFAULTS, lead: LEAD_DEFAULTS, bell: BELL_DEFAULTS, pluck: PLUCK_DEFAULTS, texture: TEXTURE_DEFAULTS, kit: KIT_DEFAULTS };
 
 /** Resolve a voice patch: defaults + level overrides. */
@@ -107,7 +107,7 @@ export const COVER_KEYS = ['moor', 'path', 'bog', 'scree', 'crag', 'snow', 'wood
 const mk = (p) => p;
 
 export const PROFILES = {
-  // ============================================================================ I. Rannoch Moor
+  // ============================================================================ IV. Rannoch Moor
   rannoch: mk({
     id: 'rannoch', loud: 0, kitLift: 6, title: 'Vast and sparse. Glass bells, long lochan delays.',
     root: 50, modeName: 'dorian', mode: M.dorian, dawn: [0, 2, 3, 6, 7, 9, 10], night: [0, 1, 3, 5, 7, 9, 10],
@@ -158,9 +158,9 @@ export const PROFILES = {
     glitch: 0,
   }),
 
-  // ============================================================================ II. Glen Affric
-  affric: mk({
-    id: 'affric', loud: 0, kitLift: 4, title: 'Bright pinewood. Pluck arpeggios, shimmering water grains.',
+  // ============================================================================ II. Ben Cruachan (BORROWED: the old Glen Affric profile verbatim until the sonic round)
+  cruachan: mk({
+    id: 'cruachan', loud: 0, kitLift: 4, title: 'Bright pinewood. Pluck arpeggios, shimmering water grains.',
     root: 55, modeName: 'lydian', mode: M.lydian, dawn: [0, 2, 4, 6, 8, 9, 11], night: M.lydianDom,
     bpm: 72, swing: 0.12, phraseBars: 4, nightTempo: 0.92,
     motifOp: 'rotate:1',
@@ -195,7 +195,7 @@ export const PROFILES = {
     glitch: 0,
   }),
 
-  // ============================================================================ III. Glen Coe
+  // ============================================================================ VI. Glen Coe
   coe: mk({
     id: 'coe', loud: 2, bedDb: -2.5, title: 'Dark and dramatic. Toms, gong, crashes, low saw drones.',
     root: 57, modeName: 'phrygian', mode: M.phrygian, dawn: M.aeolian, night: M.locrian,
@@ -233,7 +233,7 @@ export const PROFILES = {
     glitch: 0.02,
   }),
 
-  // ============================================================================ IV. Cairngorm Plateau
+  // ============================================================================ V. Cairngorm Plateau
   cairngorm: mk({
     id: 'cairngorm', loud: -2, bedDb: -3, kitLift: 5, title: 'Arctic and glacial. Frozen granular, snow hiss, the slowest pulse.',
     root: 52, modeName: 'aeolian', mode: M.aeolian, dawn: M.dorian, night: M.phrygian,
@@ -277,9 +277,9 @@ export const PROFILES = {
     glitch: 0,
   }),
 
-  // ============================================================================ V. Torridon
-  torridon: mk({
-    id: 'torridon', loud: 0, bedDb: -4.5, title: 'Monumental. Brass-like saw pads, terraced rhythm.',
+  // ============================================================================ III. Glen Lyon (BORROWED: the old Torridon profile verbatim until the sonic round)
+  lyon: mk({
+    id: 'lyon', loud: 0, bedDb: -4.5, title: 'Monumental. Brass-like saw pads, terraced rhythm.',
     root: 48, modeName: 'mixolydian', mode: M.mixolydian, dawn: M.ionian, night: M.dorian,
     bpm: 68, swing: 0.0, phraseBars: 4, nightTempo: 0.94, terraced: true,
     motifOp: 'rotate:3',
@@ -319,7 +319,7 @@ export const PROFILES = {
     glitch: 0.0,
   }),
 
-  // ============================================================================ VI. The Cuillin
+  // ============================================================================ VII. The Cuillin
   cuillin: mk({
     id: 'cuillin', loud: 1, kitLift: 5, title: 'Jagged and metallic. FM rock percussion, bitcrush glitch.',
     root: 54, modeName: 'lydianDom', mode: M.lydianDom, dawn: M.lydian, night: M.octatonic,
@@ -357,9 +357,9 @@ export const PROFILES = {
     glitch: 0.1,
   }),
 
-  // ============================================================================ VII. Assynt
-  assynt: mk({
-    id: 'assynt', loud: -3, bedDb: -4, kitLift: 5.5, moveLift: 0.85, frontDb: -3, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
+  // ============================================================================ I. Corryvreckan (BORROWED: the old Assynt profile verbatim until the sonic round)
+  corryvreckan: mk({
+    id: 'corryvreckan', loud: -3, bedDb: -4, kitLift: 5.5, moveLift: 0.85, frontDb: -3, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
     root: 51, modeName: 'pentMajor', mode: M.pentMajor, dawn: [0, 2, 4, 6, 9], night: [0, 2, 3, 7, 9],
     bpm: 60, swing: 0.0, phraseBars: 4, nightTempo: 0.88,
     motifOp: 'augment+retro',

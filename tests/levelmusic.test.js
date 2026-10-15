@@ -6,10 +6,11 @@ import { pickChordIndex, chordTones, voiceChord, droneNotes, rootTriad, pc } fro
 import { euclid, Conductor, PatternGen, MelodyMarkov } from '../src/audio/conductor.js';
 import { Rng } from '../src/core/rng.js';
 
-const ROOT_PC = { rannoch: 2, affric: 7, coe: 9, cairngorm: 4, torridon: 0, cuillin: 6, assynt: 3, nevis: 2 };
-const BPM = { rannoch: 64, affric: 72, coe: 76, cairngorm: 56, torridon: 68, cuillin: 84, assynt: 60, nevis: 70 };
+// corryvreckan / cruachan / lyon borrow the old assynt / affric / torridon profiles verbatim until the sonic round
+const ROOT_PC = { corryvreckan: 3, cruachan: 7, lyon: 0, rannoch: 2, cairngorm: 4, coe: 9, cuillin: 6, nevis: 2 };
+const BPM = { corryvreckan: 60, cruachan: 72, lyon: 68, rannoch: 64, cairngorm: 56, coe: 76, cuillin: 84, nevis: 70 };
 
-test('one profile per level, roots and tempi follow the design (D G A E C F# Eb D)', () => {
+test('one profile per level, roots and tempi follow the design (Eb G C D E A F# D)', () => {
   assert.deepEqual(LEVEL_IDS, LEVELS.map((l) => l.id));
   for (const l of LEVELS) {
     const p = PROFILES[l.id];

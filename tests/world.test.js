@@ -5,7 +5,7 @@ import { buildWorld } from '../src/world/terrain.js';
 import { createNoise } from '../src/core/noise.js';
 import { COVER, POI_TYPES, MAP_SIZE as S } from '../src/world/codes.js';
 
-const ID_ORDER = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
+const ID_ORDER = ['corryvreckan', 'cruachan', 'lyon', 'rannoch', 'cairngorm', 'coe', 'cuillin', 'nevis'];
 const worlds = new Map();
 const buildMs = new Map();
 function world(lv) {
@@ -185,7 +185,7 @@ for (const lv of LEVELS) {
     assert.ok(['N', 'E', 'S', 'W'].includes(g.side));
     assert.ok(toEdge[g.side] <= 3, `gate within 3 cells of side ${g.side}`);
     assert.equal(toEdge[g.side], Math.min(...Object.values(toEdge)), 'side is the nearest edge');
-    assert.ok(typeof g.name === 'string' && /Bealach|Lairig|Làirig/.test(g.name), 'gate name');
+    assert.ok(typeof g.name === 'string' && /Bealach|Lairig|Làirig|Pass|Bàgh|Caolas|Màm|Ford|Sound|Kyle/.test(g.name), 'gate name');
     assert.deepEqual(g.chain, lv.gate.chain);
     const types = new Set(w.pois.map((p) => p.type));
     for (const t of g.chain) assert.ok(types.has(t), `chain type ${t} present`);
@@ -277,10 +277,9 @@ test('level-specific features', () => {
   const by = Object.fromEntries(LEVELS.map((l) => [l.id, l]));
   const cover = (id, c) => world(by[id]).cover.reduce((n, v) => n + (v === c), 0);
   assert.ok(cover('rannoch', COVER.SHALLOW) + cover('rannoch', COVER.DEEP) > 1500, 'rannoch: lochan country');
-  assert.ok(cover('affric', COVER.WOOD) > 8000, 'affric: pinewood');
   assert.ok(cover('coe', COVER.CRAG) > 2000, 'coe: crags');
   assert.ok(cover('cairngorm', COVER.SNOW) > 3000, 'cairngorm: snow');
-  assert.ok(cover('torridon', COVER.DEEP) > 1500, 'torridon: sea loch');
+  // corryvreckan / cruachan / lyon are placeholders on old ground until they are rebuilt natively; their character asserts come with them
   assert.ok(cover('cuillin', COVER.CRAG) > 2500, 'cuillin: jagged');
   assert.ok(cover('nevis', COVER.CRAG) > 3000, 'nevis: north face');
   const rn = world(by.rannoch);

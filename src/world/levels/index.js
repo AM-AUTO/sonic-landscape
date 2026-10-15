@@ -1,12 +1,12 @@
 /** All levels in album order. */
+import corryvreckan from './corryvreckan.js';
+import cruachan from './cruachan.js';
+import lyon from './lyon.js';
 import rannoch from './rannoch.js';
-import affric from './affric.js';
-import coe from './coe.js';
 import cairngorm from './cairngorm.js';
-import torridon from './torridon.js';
+import coe from './coe.js';
 import cuillin from './cuillin.js';
-import assynt from './assynt.js';
 import nevis from './nevis.js';
 
-export const LEVELS = [rannoch, affric, coe, cairngorm, torridon, cuillin, assynt, nevis];
+export const LEVELS = [corryvreckan, cruachan, lyon, rannoch, cairngorm, coe, cuillin, nevis];
 export default LEVELS;

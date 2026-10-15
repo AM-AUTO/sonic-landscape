@@ -63,13 +63,13 @@ Invariants (tested):
 ### LevelDef  (`src/world/levels/<id>.js`, default export; `src/world/levels/index.js` exports `LEVELS` array in album order)
 ```js
 {
-  id: 'rannoch',                 // rannoch | affric | coe | cairngorm | torridon | cuillin | assynt | nevis
-  index: 0,
+  id: 'rannoch',                 // corryvreckan | cruachan | lyon | rannoch | cairngorm | coe | cuillin | nevis
+  index: 3,
   name: 'Rannoch Moor',
   gaelic: 'Mòinteach Raineach',
   gridLetters: 'NN',             // OS 100km square letters for grid labels
   gridOrigin: [32, 51],          // km easting/northing of map's NW corner within that square (labels only)
-  subtitle: 'I. The Moor',       // album track title
+  subtitle: 'IV. The Muir',      // album track title
   seed: 1101,
   contourInterval: 10,
   elevation: { min: 290, max: 640 },

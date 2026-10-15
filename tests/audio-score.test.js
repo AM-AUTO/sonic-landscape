@@ -52,7 +52,7 @@ test('score plays every level through the walk without throwing, and uses the wh
 test('events are consumed once: an empty events array makes no contour notes', async () => {
   ctx.currentTime = 0;
   const audio = await createAudio(ctx, { seed: 1 });
-  const g = new Game({ levels: LEVELS, progress: { unlocked: ['rannoch'], completed: [], fragments: [], notes: [] } });
+  const g = new Game({ levels: LEVELS, progress: { unlocked: ['corryvreckan'], completed: [], fragments: [], notes: [] } });
   g.loadLevel(0);
   audio.setLevel(g.level);
   for (let i = 0; i < 40; i++) { ctx.currentTime = i * 0.05; audio.update(withEvents(g.state, [])); }
@@ -66,9 +66,10 @@ test('events are consumed once: an empty events array makes no contour notes', a
 test('setLevel is safe to call repeatedly and switches level cleanly', async () => {
   ctx.currentTime = 0;
   const audio = await createAudio(ctx, { seed: 2 });
-  audio.setLevel(LEVELS[0]); audio.setLevel(LEVELS[0]); audio.setLevel(LEVELS[3]); audio.setLevel(LEVELS[3]);
+  const CG = LEVELS.findIndex((l) => l.id === 'cairngorm');
+  audio.setLevel(LEVELS[0]); audio.setLevel(LEVELS[0]); audio.setLevel(LEVELS[CG]); audio.setLevel(LEVELS[CG]);
   const g = new Game({ levels: LEVELS, progress: { unlocked: LEVELS.map((l) => l.id), completed: [], fragments: ['rannoch'], notes: [] } });
-  g.loadLevel(3);
+  g.loadLevel(CG);
   for (let i = 0; i < 100; i++) { ctx.currentTime = i * 0.05; audio.update(withEvents(g.state, [])); }
   assert.equal(audio.score.levelId, 'cairngorm');
   audio.setMasterVolume(0.5);
@@ -78,7 +79,7 @@ test('setLevel is safe to call repeatedly and switches level cleanly', async () 
 test('a long gap in update() skips ahead instead of bursting', async () => {
   ctx.currentTime = 0;
   const audio = await createAudio(ctx, { seed: 3 });
-  const g = new Game({ levels: LEVELS, progress: { unlocked: ['rannoch'], completed: [], fragments: [], notes: [] } });
+  const g = new Game({ levels: LEVELS, progress: { unlocked: ['corryvreckan'], completed: [], fragments: [], notes: [] } });
   g.loadLevel(0); audio.setLevel(g.level);
   for (let i = 0; i < 40; i++) { ctx.currentTime = i * 0.05; audio.update(withEvents(g.state, [])); }
   const steps0 = audio.score.cond.stats.steps;
@@ -150,7 +151,7 @@ test('pre-warming makes the expensive buffers ahead of need: the queue drains a 
   ctx.currentTime = 0;
   const audio = await createAudio(ctx, { seed: 31 });
   const g = new Game({ levels: LEVELS, progress: { unlocked: LEVELS.map((l) => l.id), completed: [], fragments: [], notes: [] } });
-  g.loadLevel(3); audio.setLevel(g.level);                       // cairngorm: harp plucks
+  g.loadLevel(LEVELS.findIndex((l) => l.id === 'cairngorm')); audio.setLevel(g.level);   // cairngorm: harp plucks
   const sc = audio.score;
   audio.update(withEvents(g.state, []));
   const n0 = sc.warmQ.length;

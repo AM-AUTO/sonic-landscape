@@ -1,5 +1,5 @@
 /**
- * VI. The Cuillin (NG), Skye — a jagged gabbro horseshoe around Loch Coruisk,
+ * VII. The Cuillin (NG), Skye — a jagged gabbro horseshoe around Loch Coruisk,
  * which drains a short river south into the sea at Loch Scavaig. Sgùrr Alasdair
  * on the west arm, Sgùrr nan Gillean at the north; bealachs let you through.
  */
@@ -9,12 +9,12 @@ const approach = [[150, 4], [148, 28], [146, 48], [152, 62], [164, 76], [172, 92
 
 export default {
   id: 'cuillin',
-  index: 5,
+  index: 6,
   name: 'The Cuillin',
   gaelic: 'An Cuilthionn',
   gridLetters: 'NG',
   gridOrigin: [40, 18],
-  subtitle: 'VI. The Black Rig',
+  subtitle: 'VII. The Black Rig',
   seed: 6606,
   authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,

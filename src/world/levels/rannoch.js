@@ -1,17 +1,17 @@
 /**
- * I. Rannoch Moor (NN) — vast peat plateau pocked with lochans, the Black Mount
- * rising on the west edge, Loch Laidon in the south-east. The teaching level.
+ * IV. Rannoch Moor (NN) — vast peat plateau pocked with lochans, the Black Mount
+ * rising on the west edge, Loch Laidon in the south-east.
  */
 const track = [[138, 0], [134, 28], [127, 62], [121, 96], [122, 132], [113, 172], [104, 214], [96, 255]];
 
 export default {
   id: 'rannoch',
-  index: 0,
+  index: 3,
   name: 'Rannoch Moor',
   gaelic: 'Mòinteach Raineach',
   gridLetters: 'NN',
   gridOrigin: [32, 51],
-  subtitle: 'I. The Muir',
+  subtitle: 'IV. The Muir',
   seed: 1101,
   authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 10,

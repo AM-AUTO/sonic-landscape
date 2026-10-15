@@ -1,5 +1,5 @@
 /**
- * III. Glen Coe (NN) — a deep U-shaped glen: the knife-edge Aonach Eagach on the
+ * VI. Glen Coe (NN) — a deep U-shaped glen: the knife-edge Aonach Eagach on the
  * north wall, the Three Sisters and Bidean nam Bian to the south, Buachaille
  * Etive Mòr standing guard at the east end where the glen climbs to Rannoch Moor.
  */
@@ -8,12 +8,12 @@ const road = [[255, 91], [235, 92], [212, 92], [190, 91], [166, 88], [150, 88], 
 
 export default {
   id: 'coe',
-  index: 2,
+  index: 5,
   name: 'Glen Coe',
   gaelic: 'Gleann Comhann',
   gridLetters: 'NN',
   gridOrigin: [10, 51],
-  subtitle: 'III. The Glen o Greetin',
+  subtitle: 'VI. The Glen o Greetin',
   seed: 3303,
   authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,

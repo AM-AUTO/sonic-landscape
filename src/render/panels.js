@@ -292,7 +292,7 @@ const MOODS = {
     ],
     ground: { kind: 'moor', top: 0.668, lochans: 15 }, motif: 'stag', mist: [{ y: 0.585, hh: 0.1, layerMax: 1, speed: 4, dens: 0.8 }, { y: 0.66, hh: 0.07, layerMax: 3, speed: 7, dens: 0.6 }],
   },
-  affric: {
+  cruachan: {   // placeholder mood (old Glen Affric) until the level is rebuilt
     stops: SKY_RED, bias: 1.0, horizon: 0.62, sun: { x: 0.3, y: 0.52, r: 15, glow: 4.4 },
     layers: [
       { band: 0, base: 0.58, amp: 0.3, upper: C.heather, lower: C.blood, fade: 0.2, rim: C.rust, contours: 4, cstep: 5, span: 0.8, off: 4 },
@@ -319,7 +319,7 @@ const MOODS = {
     ],
     ground: { kind: 'none' }, motif: 'snow', mist: [{ y: 0.66, hh: 0.14, layerMax: 1, speed: 6, dens: 0.8 }, { y: 0.84, hh: 0.1, layerMax: 2, speed: 10, dens: 0.6 }],
   },
-  torridon: {
+  lyon: {   // placeholder mood (old Torridon) until the level is rebuilt
     stops: SKY_RED, bias: 1.0, horizon: 0.62, sun: { x: 0.78, y: 0.55, r: 12, glow: 5 },
     layers: [
       { band: 0, base: 0.6, amp: 0.3, upper: C.ember, lower: C.rust, fade: 0.25, rim: C.flame, contours: 7, cstep: 4, cline: C.blood, span: 0.8, off: 4 },
@@ -337,7 +337,7 @@ const MOODS = {
     ],
     ground: { kind: 'none' }, motif: 'ravens', mist: [{ y: 0.66, hh: 0.14, layerMax: 1, speed: 4, dens: 0.75 }, { y: 0.88, hh: 0.1, layerMax: 2, speed: 8, dens: 0.55 }],
   },
-  assynt: {
+  corryvreckan: {   // placeholder mood (old Assynt) until the level is rebuilt
     stops: SKY_RED, bias: 1.1, horizon: 0.6, sun: { x: 0.28, y: 0.58, r: 15, glow: 4.6 },
     layers: [
       { band: 1, base: 0.62, amp: 0.4, upper: C.heather, lower: C.blood, fade: 0.2, rim: C.rust, contours: 4, cstep: 5, span: 0.8, off: 30, gamma: 1.8 },

@@ -92,7 +92,7 @@ const ui = {
 
 // ---------------------------------------------------------------- skylines
 // the tracklist and title want every track's real skyline: build them quietly, one at a time, while those screens idle
-const WARM_ORDER = [3, 0, 1, 2, 4, 5, 6, 7];
+const WARM_ORDER = [0, 1, 2, 3, 4, 5, 6, 7];   // album order: the tracklist opens on I
 let warmClock = 0;
 function idleWarm(dt) {
   warmClock += dt;

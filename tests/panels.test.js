@@ -94,7 +94,7 @@ test('every track names its signature hue: a palette colour from the red family 
   const names = LEVELS.map((lv) => lv.palette.accent);
   assert.ok(names.every((n) => typeof n === 'string' && PAL[n]), 'accent is a palette name');
   assert.equal(new Set(names).size, 8);
-  assert.deepEqual(names, ['ember', 'rust', 'magenta', 'ice', 'lamp', 'heather', 'rock', 'flame']);
+  assert.deepEqual(names, ['rock', 'rust', 'lamp', 'ember', 'ice', 'magenta', 'heather', 'flame']);
 });
 
 // ------------------------------------------------------------------ field notes page

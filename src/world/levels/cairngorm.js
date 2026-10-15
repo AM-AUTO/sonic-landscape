@@ -1,5 +1,5 @@
 /**
- * IV. Cairngorm Plateau (NH/NJ) — Britain's high arctic tableland: a vast
+ * V. Cairngorm Plateau (NH/NJ) — Britain's high arctic tableland: a vast
  * plateau at the snowline, scooped on the north by Coire an t-Sneachda and
  * Coire an Lochain, the Lairig Ghru trenching down the west, Loch Avon
  * and the Shelter Stone in the glacial trough to the south-east.
@@ -10,12 +10,12 @@ const ghru = [[60, 152], [58, 180], [55, 214], [52, 255]];
 
 export default {
   id: 'cairngorm',
-  index: 3,
+  index: 4,
   name: 'Cairngorm Plateau',
   gaelic: 'Am Monadh Ruadh',
   gridLetters: 'NJ',
   gridOrigin: [96, 98],
-  subtitle: 'IV. The Heich Grund',
+  subtitle: 'V. The Heich Grund',
   seed: 4404,
   authoredSize: 256, // authored on the old 256 sheet; buildWorld upsamples it
   contourInterval: 20,

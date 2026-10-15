@@ -156,7 +156,7 @@ if (doAudio && only == null) {
 // --- real-time performance with live audio: autopilot at normal speed, time every audio.update + frame
 let perf = null;
 if (doAudio && (only == null || args.includes('--perf'))) {
-  const lvl = only != null ? (LEVELS.findIndex((l) => l.id === only || String(LEVELS.indexOf(l)) === only)) : 2;
+  const lvl = only != null ? (LEVELS.findIndex((l) => l.id === only || String(LEVELS.indexOf(l)) === only)) : LEVELS.findIndex((l) => l.id === 'coe');   // the heaviest score
   const page = await browser.newPage({ viewport: { width: 1152, height: 648 } });
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });

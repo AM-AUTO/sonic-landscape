@@ -134,7 +134,7 @@ const slopeAt = (w, x, y) => { const N = w.size, h = w.height, i = y * N + x; re
 // Each demo borrows a current level's ground and dresses it as one of the new sheets (docs/LEVELS.md).
 const DEMOS = {
   corryvreckan: {
-    level: 'assynt', title: 'I Corryvreckan (on assynt ground)',
+    level: 'corryvreckan', title: 'I Corryvreckan (on assynt ground)',
     season: { night: 0.55, dawn: 0.1, dusk: 0.1, snowline: 600 },
     look(w) {
       const { list } = comps(w); const sea = list.filter((c) => c.edge).sort((a, b) => b.size - a.size)[0];
@@ -145,7 +145,7 @@ const DEMOS = {
     },
   },
   cruachan: {
-    level: 'affric', title: 'II Cruachan (on affric ground)',
+    level: 'cruachan', title: 'II Cruachan (on affric ground)',
     season: { night: 0.60, dawn: 0.09, dusk: 0.09, snowline: 850 },
     look(w) {
       const N = w.size, { comp, list } = comps(w);
@@ -165,7 +165,7 @@ const DEMOS = {
     },
   },
   lyon: {
-    level: 'torridon', title: 'III Glen Lyon (on torridon ground)',
+    level: 'lyon', title: 'III Glen Lyon (on torridon ground)',
     season: { night: 0.63, dawn: 0.08, dusk: 0.08, snowline: 650 },
     look(w) {
       const N = w.size;

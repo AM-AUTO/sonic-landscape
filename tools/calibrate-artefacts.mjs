@@ -12,7 +12,7 @@ import { startServer } from './lib/serve.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null; };
-const IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
+const IDS = ['corryvreckan', 'cruachan', 'lyon', 'rannoch', 'cairngorm', 'coe', 'cuillin', 'nevis'];
 const TYPES = ['trig', 'cairn', 'lochan', 'waterfall', 'bothy', 'stone', 'crag', 'summit'];
 const levels = val('--level') ? val('--level').split(',') : IDS;
 const file = path.join(root, 'src/audio/artcal.js');

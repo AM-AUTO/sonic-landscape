@@ -5,7 +5,7 @@
 //
 //   node tools/render-audio.mjs [--level <id[,id]>] [--seconds N] [--no-wrong] [--no-wav] [--parallel N (default 3)] [--stems]
 //                               [--mute ch,ch --tag name]  (diagnostic stems: mute channels, write <id>.<name>.wav)
-//                               [--switch | --switch-only]  (also / only run the rannoch -> affric hand-over check; always run on a full album)
+//                               [--switch | --switch-only]  (also / only run the corryvreckan -> cruachan hand-over check; always run on a full album)
 //                               [--tweak 'js']  (diagnostic: run js(audio, score) after setLevel)
 //                               [--stroll]  (diagnostic: walk instead of run between waypoints)
 //                               [--stroll-check]  (only the synthetic flat-walk check: percussion must answer steady walking within 10 s)
@@ -13,7 +13,7 @@
 //
 // FAILS (exit 1) if: any NaN; peak > -0.3 dBFS; > 5 % silent 100 ms windows (< -60 dBFS); a full artefact rises < +4 dB RMS
 // versus the preceding 6 s AND is not (>= +2 dB with >= 30 % spectral-centroid change); P90 - P10 of the 1 s RMS curve < 14 dB;
-// the Drift coda (20 s of standing still after the finale) is above -24 dBFS; assynt's mean RMS is above -22 dBFS; the chroma's
+// the Drift coda (20 s of standing still after the finale) is above -24 dBFS; corryvreckan's mean RMS is above -22 dBFS (it borrows the minimalist assynt profile until the sonic round); the chroma's
 // top pitch class is outside the level's root triad; (full album) the union parameter-audit dead list is not empty; the level
 // hand-over glitches; a smoothed control (energy / drift / altitude) goes non-finite; or any console error.
 // Also: kit-channel RMS in the flow sections must be within 18 dB of the full-mix RMS on every level (the kit's dry bed channels,
@@ -35,7 +35,7 @@ const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null; };
 
-const IDS = ['rannoch', 'affric', 'coe', 'cairngorm', 'torridon', 'cuillin', 'assynt', 'nevis'];
+const IDS = ['corryvreckan', 'cruachan', 'lyon', 'rannoch', 'cairngorm', 'coe', 'cuillin', 'nevis'];
 const switchOnly = flag('--switch-only');
 const strollOnly = flag('--stroll-check');
 const idleRun = !!val('--idle') || flag('--stems');
@@ -142,7 +142,7 @@ try {
     if (!idleRun) {
       if (r.dynP90P10 < 14) failures.push(`${id}: dynamics P90-P10 of 1 s RMS is ${r.dynP90P10} dB (< 14)`);
       if (r.codaDb !== null && r.codaDb > -24) failures.push(`${id}: Drift coda ${r.codaDb} dBFS (> -24)`);
-      if (id === 'assynt' && r.rmsDb > -22) failures.push(`assynt: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
+      if (id === 'corryvreckan' && r.rmsDb > -22) failures.push(`corryvreckan: mean RMS ${r.rmsDb} dBFS (the minimalist track should sit around -22 to -24)`);
     }
     {
       // kit presence: the kit's dry channels vs the mix, over the seconds spent in flow while the walker is moving, i.e. not drifting or under an artefact (power means; seconds with an artefact piece still sounding or fading are left out)
@@ -157,12 +157,12 @@ try {
 
   // ---- level hand-over: the same audio instance moves from one level to the next (as main.js will do)
   if (full || flag('--switch') || switchOnly) {
-    const sw = await page.evaluate(() => window.renderSwitch('rannoch', 'affric', 14));
-    console.log(`\nLEVEL SWITCH rannoch -> affric at ${sw.switchAt} s: rms around the join ${sw.rmsAround.join(' ')} dB, peak ${sw.peakDb.toFixed(1)}, now on ${sw.levelAfter}`);
+    const sw = await page.evaluate(() => window.renderSwitch('corryvreckan', 'cruachan', 14));
+    console.log(`\nLEVEL SWITCH corryvreckan -> cruachan at ${sw.switchAt} s: rms around the join ${sw.rmsAround.join(' ')} dB, peak ${sw.peakDb.toFixed(1)}, now on ${sw.levelAfter}`);
     for (const e of sw.errors) failures.push('switch: ' + e);
     if (sw.nan) failures.push('switch: NaN');
     if (sw.minAround < -45) failures.push(`switch: silent gap at the level join (${sw.minAround} dB)`);
-    if (sw.levelAfter !== 'affric') failures.push('switch: level did not change');
+    if (sw.levelAfter !== 'cruachan') failures.push('switch: level did not change');
   }
 
   // ---- stroll check: steady flat walking must be answered by percussion (every level)

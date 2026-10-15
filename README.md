@@ -54,16 +54,18 @@ and work out what the land wants. The game never tells you outright.
 
 | | Sheet | Key | Character |
 |---|---|---|---|
-| I | Rannoch Moor | D dorian | vast, sparse, lochan echoes |
-| II | Glen Affric | G lydian | bright pinewood, falling water |
-| III | Glen Coe | A phrygian | dark walls, toms and gongs |
-| IV | Cairngorm Plateau | E aeolian | arctic, frozen grains |
-| V | Torridon | C mixolydian | monumental sandstone terraces |
-| VI | The Cuillin | F♯ lydian ♭7 | jagged gabbro, metallic glitch |
-| VII | Assynt | E♭ pentatonic | stillness, isolated peaks |
+| I | Corryvreckan & Jura | E♭ pentatonic* | island coast, the whirlpool, the teaching level |
+| II | Ben Cruachan & Loch Awe | G lydian* | massif and loch, the dam |
+| III | Glen Lyon | C mixolydian* | the long trench glen, field walls |
+| IV | Rannoch Moor | D dorian | vast, sparse, lochan echoes |
+| V | Cairngorm Plateau | E aeolian | arctic, frozen grains |
+| VI | Glen Coe | A phrygian | dark walls, toms and gongs |
+| VII | The Cuillin | F♯ lydian ♭7 | jagged gabbro, metallic glitch |
 | VIII | Ben Nevis | D ionian → lydian | homecoming |
 
-The roots walk the circle of fifths and come home to D. A five-note **Contour Motif** is
+\* Borrowed: I–III play the old Assynt, Glen Affric and Torridon scores until the sonic round gives them
+their own (and restores a root walk that comes home to D). The three sheets are placeholders on old ground
+until they are rebuilt to `docs/LEVELS.md`. A five-note **Contour Motif** is
 transformed in every sheet. Each completed sheet leaves its fragment of the motif as a ghost
 voice in every later one, so the album accumulates. On the last summit the motif plays whole.
 
