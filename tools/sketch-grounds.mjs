@@ -617,6 +617,12 @@ const SKETCHES = {
   },
 };
 
+export { SR, freq, rnd, stereo, mixInto, add, mono2, monoOf, lowpass, granulate, reverb, master, curve, applyCurve, duck, compress, limit, monoLow,
+  tape, fold, shape, crush, windNoise, dust, noiseBursts, pinkish, resonate, erodeLoop, scrape, grainClick, reverseSwell, stutter, dirty,
+  subAndBeat, droneBed, droneWall, bowedString, kickTight, snareNoise, hatMetal, metalHit, thud, jit, groundEvents };
+export const reseed = (v = 12345) => { seed = v; };
+
+if (import.meta.url === `file://${process.argv[1]}`) {
 mkdirSync(OUT, { recursive: true });
 for (const name of ONLY) {
   if (!SKETCHES[name]) continue;
@@ -625,4 +631,5 @@ for (const name of ONLY) {
   const file = `${OUT}/sketch-${name}${JUST ? '-just' : ''}.wav`;
   master(mix, file);
   console.log(`${file}  ${(mix[0].length / SR).toFixed(1)} s  (${((Date.now() - t) / 1000).toFixed(1)} s to render)`);
+}
 }
