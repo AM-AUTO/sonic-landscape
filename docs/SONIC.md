@@ -13,4 +13,8 @@ The live, commented version is the Claude Doc "Tae Be Walkit: Sonic Palette"
   - `node tools/sketch-grounds.mjs [--only lyon,coe,album] [--just]` writes sound sketches in the album's language:
     saturated granular bowed-string drone, low-pass-gate FM plucks, re-struck sustains, kick, sub and birl ticks.
     No reed, pipe or folk timbres (the timbre rule in the doc). Direction only, not the game's final sound.
+- **Aesthetic guardrails** (from Fennesz and Floating Points; full text in the doc): played sources first, noise grown
+  from the instruments themselves, warm voicings under abrasion, human time, one arc with a hard cut, detailed dry
+  broken percussion, a hi-fi mono bottom. `sketch-grounds.mjs` prints the measurable checks (arc ≥ 12 dB,
+  crest 11–16 dB, low end mono, independent noise ≤ -18 dB) for every render.
 - **Status:** awaiting answers to the album-level questions A1–A7 and per-track decisions D1–D3. `src/audio` is unchanged.
