@@ -13,11 +13,21 @@
  *   heading          → lead pan, chord inversion       time of day → mode variant, tempo, delay
  *   proximity        → artefact pre-echo              fragments → ghost motifs from completed levels
  *   poi / chain / gate-open / level-complete → artefacts.js
+ *
+ * Form (stanzas): the conductor plans each stanza during the last bar of the one before (onStanzaPlan) and commits it
+ * on the downbeat (onStanza). The score answers the plan with an ARRANGEMENT STATE — this.arr = { section, kitSection,
+ * density, drift, modeKind, layers: {drone, pad, bass, lead, bell, pluck, texture, kit, ghost: 0..1} } — computed from
+ * the planned section, the energy averaged over the stanza just played, drift (predicted at the downbeat) and the time
+ * of day, and schedules a pickup when a layer comes in. Every discrete change (section, the kit's effective section,
+ * the drift drop of the pulse, the bass on / off, the time-of-day mode, kit-pattern mutation) lands on a stanza
+ * downbeat; layer gains ramp over one beat from it. Continuous expression (energy curves, altitude, cover, reverb)
+ * stays continuous. Quantisation tiers: 16th (ticks, footsteps, splash, slide, acknowledgements), beat (chords,
+ * partials), bar (artefact pieces, gate cadence, finale), stanza (arrangement, sections, cuts).
  */
 import { degreeToMidi } from './theory.js';
 import { Drone } from './voices/drone.js';
 import { TEXTURE_NOISE } from './voices/texture.js';
-import { Conductor, PatternGen, MelodyMarkov, humanise } from './conductor.js';
+import { Conductor, PatternGen, MelodyMarkov, humanise, sectionFor } from './conductor.js';
 import { pickChordIndex, chordTones, chordRoot, voiceChord, droneNotes, nearestTone, pc } from './harmony.js';
 import {
   PROFILES, getProfile, motifFor, kitGens, textureFor, COVER_KEYS, CHANNEL_NAMES, FRONT_CHANNELS,
@@ -48,6 +58,13 @@ const HIT_COST = { kick: 15, snare: 22, rim: 9, clap: 16, hatC: 12, hatO: 14, ri
 const STRUCTURAL = new Set(['crash', 'gong', 'timp', 'reverseSwell']);          // always sound
 const smooth = (cur, target, dt, tcUp, tcDown = tcUp) => cur + (target - cur) * (1 - Math.exp(-dt / (target > cur ? tcUp : tcDown)));
 const smoothstep = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+/** arrangement layers and the bed channel each one scales (lead and kit are generation-only: the lead channel also carries
+ *  the artefact lead, and the bed kit channels carry the walker's own footsteps / splashes, which must never be muted) */
+export const LAYERS = ['drone', 'pad', 'bass', 'lead', 'bell', 'pluck', 'texture', 'kit', 'ghost'];
+const LAYER_CH = { drone: 'drone', pad: 'pad', bass: 'bass', bell: 'bell', pluck: 'pluck', texture: 'texture', ghost: 'ghost' };
+const LAYER_CH_OF = Object.fromEntries(Object.entries(LAYER_CH).map(([l, c]) => [c, l]));
+const SEC_RANK = { ebb: 0, flow: 1, swell: 2 };
+const ON = 0.05;           // a layer above this is 'on'
 
 export class Score {
   constructor(engine) {
@@ -62,6 +79,8 @@ export class Score {
         onTransition: (x) => this._onTransition(x),
         onSection: (x) => this._onSection(x),
         onMutate: (x) => this._onMutate(x),
+        onStanzaPlan: (x) => this._onStanzaPlan(x),
+        onStanza: (x) => this._onStanza(x),
       },
     });
     this.art = new Artefacts(this);
@@ -84,7 +103,12 @@ export class Score {
     this.lastMajorT = -99; this.ascentCount = 0; this.lastAscentT = -99;
     this.markov = null;
     this.loops = [];
-    this.ghostIdx = 0; this.nextGhostPhrase = 1;
+    this.ghostIdx = 0; this.nextGhostStanza = 1;
+    // form: the committed arrangement, the plan for the next stanza, the layer-gain ramp and the stanza's energy average
+    this.arr = this._defaultArr('ebb'); this.arrPlan = null; this.layerRamp = null; this.pickupFor = -1;
+    this.stanzaE = { sum: 0, m: 0, n: 0 };
+    this.deferred = [];      // [{step, tier, fn}] callbacks run on a grid line (cadence, finale)
+    this.form = { stanzas: [], changes: [], plans: 0 };
     this.gens = []; this.bassGen = null;
     this.duck = { amount: 0, end: 0 };
     this.lastFootT = -9; this.lastSplashT = -9;
@@ -103,7 +127,7 @@ export class Score {
     this.fragments = []; this.resonance = []; this.state = null;
 
     this.budget = BUDGET_MAX; this.budgetT = 0;
-    this.stats = { dropped: 0, hits: {}, notes: {}, chords: 0, ticks: 0, leads: 0, ghosts: 0, loops: 0, sections: [], transitions: 0, footsteps: 0, duck: 0 };
+    this.stats = { dropped: 0, hits: {}, notes: {}, chords: 0, ticks: 0, leads: 0, ghosts: 0, loops: 0, sections: [], transitions: 0, footsteps: 0, duck: 0, acks: 0, pickups: 0, stanzas: 0 };
     this.timeline = [];
     this.nodeBudget = 0;
   }
@@ -170,6 +194,14 @@ export class Score {
     return true;
   }
 
+  /** run fn(t, step) on the first unscheduled `tier` line ('16th' | 'beat' | 'bar' | 'stanza') at or after t; returns {t, step} */
+  atGrid(tier, t, fn) {
+    if (!this.cond.started) this.cond.update(this.now);
+    const g = this.cond.nextGrid(t, tier);
+    this.deferred.push({ step: g.step, tier, fn });
+    return g;
+  }
+
   // ------------------------------------------------------------------------------------------------
   // level
   // ------------------------------------------------------------------------------------------------
@@ -204,8 +236,11 @@ export class Score {
     this.cov = { key: 'moor', pending: 'moor', since: t, appliedKey: 'moor', lastTexChange: t };
 
     // conductor + generators
-    this.cond.snapTempo(prof.bpm, prof.swing, prof.phraseBars);
+    this.cond.snapTempo(prof.bpm, prof.swing, prof.phraseBars, prof.stanzaBars || 4);
     this.cond.reset();
+    this.deferred = []; this.arrPlan = null; this.layerRamp = null; this.pickupFor = -1;
+    this.stanzaE = { sum: 0, m: 0, n: 0 };
+    this.arr = this._defaultArr('ebb');
     this.gens = kitGens(prof).map((spec) => new PatternGen(spec, this.rng));
     this.bassGen = new PatternGen({ h: 'bass', flow: { p: 0.5, k: [2, 3], rot: [0, 3, 6] }, swell: { p: 0.9, k: [5, 6, 7], rot: [0, 2] } }, this.rng);
     this.terraced = !!prof.terraced;
@@ -218,7 +253,7 @@ export class Score {
     ];
     this.pendingTicks.clear(); this.gridPending = null;
     this.padPrev = null; this.lastPadBar = -99; this.altOct = 0;
-    this.ghostIdx = 0; this.nextGhostPhrase = 2;
+    this.ghostIdx = 0; this.nextGhostStanza = Math.max(1, Math.round(4 / (prof.stanzaBars || 4)));
     this.lastLeadT = -99;
     this.lvPow = Math.pow(10, -24 / 10);
     this.initChord = true;
@@ -335,22 +370,22 @@ export class Score {
     this.resonance = state.resonance || [];
     // altitude register (hysteresis): high ground lifts pad / lead an octave
     if (C.a > 0.78) this.altOct = 1; else if (C.a < 0.5) this.altOct = 0;
-    // time-of-day mode variant is applied at the next phrase start
+    // time-of-day mode variant: planned with the next stanza, applied on its downbeat
     const kind = this.phase === 'dawn' ? 'dawn' : this.phase === 'night' ? 'night' : 'day';
     if (kind !== this.modeKind && kind !== this.pendingModeKind) this.pendingModeKind = kind;
   }
 
-  _energyTarget() {
+  /** the walker's energy target, with the artefact modifiers A (default: this control tick's) and whether a piece sounds */
+  _energyTarget(A = this.art.cached, active = this.art.activeCount > 0) {
     const C = this.C;
     // energy answers movement first (momentum: steady walking on flat ground reaches flow, running approaches swell);
     // slope, slides and nearby artefacts add on top
     const lift = this.profile.moveLift ?? 1;
     let e = 0.06 + 0.20 * C.v + 0.30 * C.m * lift + 0.06 * C.run * lift + 0.30 * C.s * Math.min(1, C.v * 1.5) + 0.12 * C.slide + 0.22 * this.proxMax;
     e *= 1 - 0.95 * C.d;
-    if (this.art.activeCount) e = Math.min(e, 0.72);        // while an artefact sounds it sets the level; the walker's own effort doesn't pile on
-    const A = this.art.cached;
+    if (active) e = Math.min(e, 0.72);        // while an artefact sounds it sets the level; the walker's own effort doesn't pile on
     if (A && A.energy !== undefined) e = Math.max(e, A.energy);
-    else if (this.art.activeCount) e = Math.max(e, 0.62);
+    else if (active) e = Math.max(e, 0.62);
     if (A && A.energyFloor !== undefined) e = Math.max(e, A.energyFloor);
     if (A && A.energyMax !== undefined) e = Math.min(e, A.energyMax);
     return clamp(e, 0, 1);
@@ -380,8 +415,8 @@ export class Score {
         case 'slide-start': this._slide(true, now); break;
         case 'slide-end': this._slide(false, now); break;
         case 'poi':
-          if (ev.full) { const P = this.art.play(ev.poi.type, { t: now, quality: ev.quality, poi: ev.poi, gate: gateNow }); if (P) { this.levelHoldUntil = now + 9; this.log('boost', { type: ev.poi.type, boost: +(P.boostDb + P.servoDb).toFixed(1), target: +P.targetDb.toFixed(1), heard: +this.heardDb.toFixed(1) }); } }
-          else this.art.playPartial(ev.poi.type, { t: now, quality: ev.quality, missing: ev.missing, poi: ev.poi });
+          if (ev.full) this._fireArtefact(ev, now, gateNow);
+          else this._firePartial(ev, now);
           this.log('poi', { type: ev.poi.type, full: ev.full });
           break;
         case 'resonance-end': this.art.endResonance(ev.poiId); break;
@@ -393,6 +428,51 @@ export class Score {
     }
     if (gridEv) this.gridPending = { gx: gridEv.gx, gy: gridEv.gy, major: gridEv.major };
     if (this.gridPending) this._resolveGrid(now);
+  }
+
+  /**
+   * A full artefact, in three tiers: an acknowledgement on the next 16th (the player hears that it fired); the piece on the
+   * next bar line (its duck and entry with it: the piece is built with t0 on that bar and re-anchored to the exact step
+   * time when the conductor schedules it); its arrangement consequence on the next stanza downbeat (_planSection).
+   */
+  _fireArtefact(ev, now, gate) {
+    const type = ev.poi.type;
+    const ack = this.cond.next16(now + 0.01);
+    this.art.acknowledge(type, ack.t, 'full');
+    const bar = this.cond.nextGrid(now + 0.03, 'bar');
+    const P = this.art.play(type, { t: bar.t, quality: ev.quality, poi: ev.poi, gate });
+    if (!P) return null;
+    P.anchorStep = bar.step; P.startStep = bar.step; P.firedAt = now;
+    this.levelHoldUntil = bar.t + 9;
+    this.log('boost', { type, boost: +(P.boostDb + P.servoDb).toFixed(1), target: +P.targetDb.toFixed(1), heard: +this.heardDb.toFixed(1) });
+    this.log('art-start', { type, at: +bar.t.toFixed(3), step: bar.step });
+    this._replanForArtefact();
+    return P;
+  }
+
+  /**
+   * An artefact fired after the coming downbeat was already planned: if its consequence asks for another section, the
+   * plan is redone (conductor.requestCut: same downbeat while a beat remains, else the stanza after) — so a piece
+   * starting on that downbeat does not arrive together with a section change it contradicts.
+   */
+  _replanForArtefact() {
+    const c = this.cond, p = c.planned;
+    if (!p) return;
+    const cur = c.pending ? c.pending.to : c.section;
+    const sec = this._planSection({ at: p.at, from: c.section, to: cur });
+    if (sec !== cur) c.requestCut(sec);
+  }
+
+  /** a partial: acknowledgement on the next 16th, the (short) piece on the next beat */
+  _firePartial(ev, now) {
+    const type = ev.poi.type;
+    if (this.art.fullSounding) return null;                // a full piece is sounding: the partial is not heard at all
+    const ack = this.cond.next16(now + 0.01);
+    this.art.acknowledge(type, ack.t, 'partial');
+    const beat = this.cond.nextGrid(now + 0.03, 'beat');
+    const Q = this.art.playPartial(type, { t: beat.t, quality: ev.quality, missing: ev.missing, poi: ev.poi });
+    if (Q) { Q.anchorStep = beat.step; Q.startStep = beat.step; Q.firedAt = now; }
+    return Q;
   }
 
   _contour(ev, now) {
@@ -544,7 +624,7 @@ export class Score {
     const glide = 3 + 3 * C.d;
     if (this.drone) this.drone.setChord(droneNotes(root, mode, entry, prof.drone.low + (C.a > 0.85 ? 12 : 0)), t, glide);
     // bass
-    if (this.cond.section !== 'ebb' && C.d < 0.5) {
+    if (this.cond.section !== 'ebb' && this.arr.layers.bass > ON) {
       const b = V.bass;
       b.note(this._bassMidi(entry), t, Math.min(this.cond.barDur * 1.6, 6), 0.55 + 0.3 * C.e);
       this.count('notes', 'bass');
@@ -614,18 +694,39 @@ export class Score {
     this.stats.footsteps++;
   }
 
+  /**
+   * Ground sounds (splash, slide) land on the next 16th. Within ~80 ms of the event that is heard as the impact itself;
+   * further away the sound still lands on that 16th but softer (it no longer reads as the impact), and two ground sounds
+   * in one 16th merge into one.
+   */
+  _groundSlot(now) {
+    const q = this.cond.next16(now + 0.005);
+    if (q.step === this._lastGroundStep) return null;
+    this._lastGroundStep = q.step;
+    const t = q.t;                                         // the step's own time (swing included)
+    return { t, step: q.step, vel: t - now <= 0.08 ? 1 : 0.7 };
+  }
+
   _splash(now) {
     if (now - this.lastSplashT < 0.7) return;
+    const g = this._groundSlot(now);
+    if (!g) return;
     this.lastSplashT = now;
-    this.hit('shaker', now + 0.01, 0.3 + 0.1 * this.rng.float(), { decay: 0.12 + 0.1 * this.rng.float(), tone: 0.75 + 0.2 * this.rng.float(), pan: this.rng.float() - 0.5 });
-    if (this.rng.chance(0.2)) this.hit('grainBurst', now + 0.03, 0.3, { length: 0.16 + 0.1 * this.rng.float(), tone: 0.8 });
+    this.hit('shaker', g.t, (0.3 + 0.1 * this.rng.float()) * g.vel, { decay: 0.12 + 0.1 * this.rng.float(), tone: 0.75 + 0.2 * this.rng.float(), pan: this.rng.float() - 0.5 });
+    if (this.rng.chance(0.2)) this.hit('grainBurst', g.t, 0.3 * g.vel, { length: 0.16 + 0.1 * this.rng.float(), tone: 0.8 });
+    this.log('splash', { at: +g.t.toFixed(3) });
   }
 
   _slide(on, now) {
     if (on) {
       this.slideUntil = now + 1.5;
-      this.hit('breath', now + 0.02, 0.3, { length: 1.4, tone: 0.8, pitch: 1.25 });
-      this.hit('grainBurst', now + 0.05, 0.35, { length: 0.5, tone: 0.3 });
+      const q = this.cond.next16(now + 0.005);             // a slide always sounds (never merged away)
+      const t = q.t;
+      const vel = t - now <= 0.08 ? 1 : 0.8;
+      this.hit('breath', t, 0.3 * vel, { length: 1.4, tone: 0.8, pitch: 1.25 });
+      this.hit('grainBurst', t, 0.35 * vel, { length: 0.5, tone: 0.3 });
+      this._lastGroundStep = q.step;
+      this.log('slide', { at: +t.toFixed(3) });
     } else this.slideUntil = now + 0.4;
   }
 
@@ -636,6 +737,145 @@ export class Score {
     const steady = this.C.path > 0.5 ? 0.35 : 1;          // path: steadier, cleaner pulse
     if (this.rng.float() < steady) for (const g of this.gens) g.mutate(0.8 * steady);
     if (this.bassGen && this.rng.float() < steady) this.bassGen.mutate(1);
+  }
+
+  // ------------------------------------------------------------------------------------------------
+  // form: stanza plan (last bar) → arrangement committed on the downbeat
+  // ------------------------------------------------------------------------------------------------
+  _defaultArr(section = 'ebb') {
+    const layers = {};
+    for (const k of LAYERS) layers[k] = 1;
+    layers.bass = section === 'ebb' ? 0 : 1;
+    layers.ghost = this._ghostFrags().length ? 1 : 0;
+    return { stanza: -1, section, kitSection: section, density: 0.1, drift: 0, modeKind: this.modeKind || 'day', layers };
+  }
+
+  _ghostFrags() { return (this.fragments || []).filter((id) => id !== this.levelId && PROFILES[id]); }
+
+  /** drift as it will stand at time t: rising while the walker stays still, falling at once when they move */
+  _driftAt(t) {
+    const p = this.state && this.state.player;
+    if (!p) return this.C.d;
+    const ahead = Math.max(0, t - this.now);
+    const still = p.still || 0;
+    const raw = clamp(((still > 0.3 ? still + ahead : 0) - 4) / 3, 0, 1) * (this.art.activeAt(t) ? 0.35 : 1);
+    const pred = smoothstep(raw);
+    return still > 0.3 ? Math.max(this.C.d, pred) : Math.min(this.C.d, pred);
+  }
+
+  /**
+   * The section the plan should land on. With no full artefact sounding (or starting before the downbeat) it is the
+   * conductor's own choice; otherwise the piece's modifiers as they will stand just after the downbeat (energy floor /
+   * ceiling / level) set the energy, and the section follows from it through the same hysteresis — the artefact's
+   * arrangement consequence (a lift, a hold, a hush) arrives on the next stanza downbeat instead of whenever the
+   * smoothed energy gets there.
+   */
+  _planSection(x) {
+    if (!this.art.activeAt(x.at)) return x.to;
+    const tq = x.at + this.beat();
+    const e = this._energyTarget(this.art.mods(tq), true);
+    return sectionFor(e, x.from);
+  }
+
+  /** arrangement for the stanza starting at x.at, given its section */
+  _planArrangement(section, x) {
+    const C = this.C, st = this.stanzaE;
+    const eAvg = st.n ? st.sum / st.n : C.e;
+    const drift = this._driftAt(x.at + this.beat());
+    // the kit wakes with the walker's momentum a stanza before the section does (was: at once, on any 16th)
+    const kitSection = section === 'ebb' && C.m > 0.4 && drift < 0.3 ? 'flow' : section;
+    const kit = drift >= 0.5 ? 0 : clamp(1 - drift, 0, 1);       // drift: the pulse drops on the downbeat (was a continuous fade)
+    const layers = {};
+    for (const k of LAYERS) layers[k] = 1;
+    layers.kit = kit;
+    layers.bass = kitSection !== 'ebb' && kit > 0.3 ? 1 : 0;
+    layers.ghost = this._ghostFrags().length ? 1 : 0;
+    const modeKind = this.pendingModeKind || this.modeKind;
+    return {
+      stanza: x.stanza, section, kitSection, modeKind,
+      density: +(clamp((eAvg - 0.08) / 0.75, 0, 1) * (1 - 0.7 * drift)).toFixed(3),
+      drift: +drift.toFixed(3), energy: +eAvg.toFixed(3), layers,
+    };
+  }
+
+  /** what changed between two arrangements: section / kit section / mode, and layers crossing on ↔ off */
+  _arrDiff(a, b) {
+    const out = [];
+    if (!a || !b) return ['all'];
+    if (a.section !== b.section) out.push('section');
+    if (a.kitSection !== b.kitSection) out.push('kitSection');
+    if (a.modeKind !== b.modeKind) out.push('mode');
+    for (const k of LAYERS) {
+      const x = a.layers[k] > ON, y = b.layers[k] > ON;
+      if (x !== y) out.push(k + (y ? '+' : '-'));
+    }
+    return out;
+  }
+
+  _onStanzaPlan(x) {
+    this.form.plans++;
+    let sec = x.to;
+    if (!x.replan) {
+      sec = this._planSection(x);
+      if (sec !== x.to) this.cond.requestCut(sec);                 // taken by the conductor as soon as this hook returns
+    }
+    const arr = this._planArrangement(sec, x);
+    this.arrPlan = arr;
+    const diff = this._arrDiff(this.arr, arr);
+    this.log('plan', { stanza: x.stanza, at: +x.at.toFixed(3), section: sec, what: diff.join(','), replan: !!x.replan });
+    // transition grammar: a section change gets its fill from _onTransition; a layer coming in without one gets a pickup
+    // (reverse swell landing on the downbeat, a short rim run when the pulse comes back). Drops get nothing: they are hard
+    // and land on the downbeat.
+    if (sec === x.from && this.pickupFor !== x.stanza) {
+      const rising = diff.filter((d) => d.endsWith('+') || (d === 'kitSection' && SEC_RANK[arr.kitSection] > SEC_RANK[this.arr.kitSection]));
+      if (rising.length) this._pickup(x, rising);
+    }
+  }
+
+  _pickup(x, kinds) {
+    this.pickupFor = x.stanza;
+    const len = Math.min(this.cond.barDur * 0.5, 2.5), sd = this.cond.stepDur;
+    this.hit('reverseSwell', x.at - len, 0.3, { length: len, tone: 0.5 });
+    if (kinds.some((k) => k === 'kit+' || k === 'kitSection' || k === 'bass+')) {
+      for (let i = 0; i < 3; i++) this.hit('rim', x.at - (3 - i) * sd, 0.16 + 0.05 * i, { pan: i % 2 ? 0.3 : -0.3, pitch: 1 - 0.08 * i });
+    }
+    this.stats.pickups++;
+    this.log('pickup', { stanza: x.stanza, at: +x.at.toFixed(3), what: kinds.join(',') });
+  }
+
+  _onStanza(x) {
+    const planned = this.arrPlan && this.arrPlan.stanza === x.stanza ? this.arrPlan : null;
+    const arr = planned || this._planArrangement(x.section, { stanza: x.stanza, at: x.t });
+    arr.section = x.section;
+    if (SEC_RANK[arr.kitSection] < SEC_RANK[x.section]) arr.kitSection = x.section;
+    const prev = this.arr;
+    const diff = this._arrDiff(prev, arr);
+    this.layerRamp = { from: this._layersAt(x.t), to: { ...arr.layers }, t0: x.t, dur: this.beat() };
+    this.arr = arr; this.arrPlan = null;
+    this.stanzaE = { sum: 0, m: 0, n: 0 };
+    this.stats.stanzas++;
+    // time-of-day mode variant
+    if (arr.modeKind !== this.modeKind) {
+      const prof = this.profile;
+      this.modeKind = arr.modeKind;
+      if (this.pendingModeKind === arr.modeKind) this.pendingModeKind = null;
+      this.modeCur = this.modeKind === 'dawn' ? prof.dawn : this.modeKind === 'night' ? prof.night : prof.mode;
+      this._refreshHarmony(x.t, 4);
+      this.log('mode', { variant: this.modeKind, at: +x.t.toFixed(3) });
+    }
+    if (this.form.stanzas.length < 4000) this.form.stanzas.push(+x.t.toFixed(4));
+    if (diff.length && this.form.changes.length < 4000) this.form.changes.push({ at: +x.t.toFixed(4), stanza: x.stanza, what: diff, planned: !!planned });
+    if (diff.length) this.log('arr', { stanza: x.stanza, at: +x.t.toFixed(3), what: diff.join(','), section: arr.section, kit: arr.kitSection, density: arr.density });
+  }
+
+  /** layer values at time t: the committed arrangement, ramped over one beat from its downbeat (never before it) */
+  _layersAt(t) {
+    const R = this.layerRamp, L = this.arr.layers;
+    if (!R) return { ...L };
+    const k = clamp((t - R.t0) / Math.max(0.01, R.dur), 0, 1);
+    const o = {};
+    for (const n of LAYERS) o[n] = R.from[n] + (R.to[n] - R.from[n]) * k;
+    return o;
   }
 
   _onTransition({ from, to, t, tApply, lenSec }) {
@@ -671,10 +911,10 @@ export class Score {
     return nm === 'tomL' ? r - 12 : nm === 'tomM' ? r - 5 : r;
   }
 
-  _onSection({ from, to, t }) {
+  _onSection({ from, to, t, stanza }) {
     const cr = this.profile.kit.crash;
     this.stats.sections.push(to);
-    this.log('section', { from, to });
+    this.log('section', { from, to, at: +t.toFixed(3), stanza });
     if (to === 'swell') {
       this.hit('crash', t, 0.7 + 0.15 * this.rng.float(), { tone: 0.6 });
       if (this.rng.chance(cr.timp)) this.hit('timp', t, 0.7, { midi: this.rootNow() - 12 });
@@ -691,12 +931,24 @@ export class Score {
   _onStep(s) {
     const C = this.C, prof = this.profile, rng = this.rng, sec = s.section;
     const sd = s.sd;
-    // time-of-day mode variant, at phrase starts
-    if (s.isPhraseStart && this.pendingModeKind) {
-      this.modeKind = this.pendingModeKind; this.pendingModeKind = null;
-      this.modeCur = this.modeKind === 'dawn' ? prof.dawn : this.modeKind === 'night' ? prof.night : prof.mode;
-      this._refreshHarmony(s.t, 4);
-      this.log('mode', { variant: this.modeKind });
+    // grid callbacks (cadence, finale) and artefact pieces re-anchored to the exact time of their bar / beat
+    if (this.deferred.length) {
+      const due = this.deferred.filter((d) => d.step <= s.step);
+      if (due.length) {
+        this.deferred = this.deferred.filter((d) => d.step > s.step);
+        for (const d of due) {
+          if (d.step < s.step) {                                   // skipped over (a gap): the next line of its tier
+            const g = this.cond.nextGrid(s.t, d.tier);
+            if (g.step > s.step) { this.deferred.push({ ...d, step: g.step }); continue; }
+          }
+          d.fn(s.t, s.step);
+        }
+      }
+    }
+    for (const p of this.art.pieces) {
+      if (p.anchorStep === null || p.anchorStep === undefined) continue;
+      if (p.anchorStep === s.step) { p.t0 = s.t; p.anchorStep = null; }
+      else if (p.anchorStep < s.step) p.anchorStep = null;
     }
     if (!this.lastScaleKey) this._applyScale();
 
@@ -705,19 +957,20 @@ export class Score {
     if (tk) { this.pendingTicks.delete(s.step); this.lastTickStep = s.step; this._playTick(tk, s.t); }
     if (this.pendingTicks.size > 8) for (const k of this.pendingTicks.keys()) if (k < s.step) this.pendingTicks.delete(k);
 
-    const A = this.art.cached;
-    const pulse = clamp(1 - C.d, 0, 1) * (this.art.pulseHold ? 0 : 1);
+    const arr = this.arr;
+    // the pulse is the arrangement's kit layer (drift drops it on a stanza downbeat); a sounding artefact may hold it
+    const pulse = arr.layers.kit * (this.art.pulseHoldAt(s.t) ? 0 : 1);
 
-    // ---- percussion (the kit wakes with the walker's momentum, a little before the conductor's section catches up)
+    // ---- percussion (the kit wakes with the walker's momentum a stanza before the section does: arr.kitSection)
     const effSec = this._effSection(sec);
     if (pulse > 0.06) this._kitStep(s, pulse, effSec);
 
     // ---- bass
-    if (effSec !== 'ebb' && pulse > 0.3) this._bassStep(s);
+    if (arr.layers.bass > ON && pulse > 0.3) this._bassStep(s);
 
     // ---- pad breathing: re-articulate the chord each phrase so the harmony never goes silent
-    const sparse = sec === 'ebb' || C.d > 0.3;                      // ebb / drift: the pad swells and ebbs away instead of holding
-    if (s.isPhraseStart && s.bar - this.lastPadBar >= prof.phraseBars && this.entry && !(sparse && C.d > 0.3 && rng.chance(0.4))) {
+    const sparse = sec === 'ebb' || arr.drift > 0.3;                // ebb / drift: the pad swells and ebbs away instead of holding
+    if (s.isPhraseStart && s.bar - this.lastPadBar >= prof.phraseBars && this.entry && !(sparse && arr.drift > 0.3 && rng.chance(0.4))) {
       this.padVariant = (this.padVariant + 1) % 3;
       const tones = chordTones(this.rootNow(), this.modeNow(), this.entry);
       const center = prof.pad.center + this.keyShift + 12 * this.altOct;
@@ -749,8 +1002,8 @@ export class Score {
       }
     }
 
-    // ---- ghost fragments
-    if (s.i16 === 0 && s.barInPhrase === 2 && s.phrase >= this.nextGhostPhrase && this.fragments.length) this._ghost(s);
+    // ---- ghost fragments: on bar 2 of a stanza (the second bar of a two-bar one)
+    if (s.i16 === 0 && s.barInStanza === Math.min(2, s.stanzaBars - 1) && s.stanza >= this.nextGhostStanza && arr.layers.ghost > ON && this.fragments.length) this._ghost(s);
 
     // ---- artefact pre-echo layers and resonance
     this.art.onStep(s, this.prox);
@@ -759,8 +1012,10 @@ export class Score {
     if (s.isPhraseStart && s.phrase % 4 === 3 && sec !== 'swell' && rng.chance(0.25 + 0.4 * C.d)) this._quoteMotif(s);
   }
 
+  /** the kit's effective section: the arrangement's (momentum may wake it to flow while the section is still ebb) */
   _effSection(sec) {
-    return (sec === 'ebb' && this.C.m > 0.4 && this.C.d < 0.3) ? 'flow' : sec;
+    const k = this.arr.kitSection;
+    return SEC_RANK[k] > SEC_RANK[sec] ? k : sec;
   }
 
   _kitStep(s, pulse, sec = s.section) {
@@ -830,7 +1085,7 @@ export class Score {
       if (rng.chance(cr.phrase)) this.hit('crash', t, 0.5 + 0.25 * rng.float(), { tone: 0.55, decay: this.P.kit.crashDecay * (0.8 + 0.4 * rng.float()) });
       if (rng.chance(cr.gong * 0.5)) this.hit('gong', t, 0.4, { midi: this.rootNow() - 12 + (rng.chance(0.3) ? 7 : 0), decay: 9 + 4 * rng.float() });
       if (rng.chance(cr.timp * 0.5)) this.hit('timp', t, 0.6, { midi: this.rootNow() - 12 });
-    } else if ((sec === 'flow' || (sec === 'ebb' && this.C.m > 0.4)) && pulse > 0.3) {
+    } else if ((sec === 'flow' || (sec === 'ebb' && this.arr.kitSection !== 'ebb')) && pulse > 0.3) {
       if (rng.chance(cr.phrase * (0.18 + 0.35 * this.C.m))) this.hit('crash', t, 0.26 + 0.06 * this.C.m, { tone: 0.4, decay: this.P.kit.crashDecay * 0.7 });
       // a quiet wash every other phrase: the moor exhales
       if (s.phrase % 2 === 1 && rng.chance(0.5 + 0.3 * this.C.m)) {
@@ -901,11 +1156,11 @@ export class Score {
 
   _ghost(s) {
     const rng = this.rng;
-    const frags = this.fragments.filter((id) => id !== this.levelId && PROFILES[id]);
+    const frags = this._ghostFrags();
     if (!frags.length) return;
     const id = frags[this.ghostIdx % frags.length];
     this.ghostIdx++;
-    this.nextGhostPhrase = s.phrase + 1 + rng.int(0, 1);
+    this.nextGhostStanza = s.stanza + Math.max(1, Math.round(4 / s.stanzaBars)) * (1 + rng.int(0, 1));      // about every 1–2 four-bar spans, as before
     const fp = PROFILES[id];
     const m = motifFor(fp);
     const b = this.beat();
@@ -919,7 +1174,7 @@ export class Score {
     }
     G.note(this.midi(0, 24), this.at(t), 7, 0.26);                                // every ghost resolves to the tonic
     this.count('notes', 'ghost'); this.stats.ghosts++;
-    this.log('ghost', { from: id });
+    this.log('ghost', { from: id, at: +s.t.toFixed(3), stanza: s.stanza, bar: s.barInStanza });
   }
 
   _quoteMotif(s) {
@@ -943,6 +1198,9 @@ export class Score {
     const A = this.art.mods(now) || {};
     this.art.cached = A;
     const tc = A.fast ? 0.25 : 0.6;
+    this.stanzaE.sum += C.e; this.stanzaE.m += C.m; this.stanzaE.n++;
+    const layers = this._layersAt(now);
+    const R = this.layerRamp, ramping = R && now >= R.t0 && now <= R.t0 + R.dur + 0.15;
 
     // --- channels: all ten parameters, baseline from the level's colouring
     // the pad / drone bed follows effort less than the kit does: momentum raises the pulse, not the whole wall of sound
@@ -961,6 +1219,8 @@ export class Score {
       else if (bedMul !== 1 && !FRONT_CHANNELS.includes(name)) o.gain *= bedMul;
       else if (name === 'lead') o.gain *= leadMul;
       else if (frontMul !== 1) o.gain *= frontMul;
+      const ly = LAYER_CH_OF[name];
+      if (ly) o.gain *= layers[ly];
       if (this.mute && this.mute.has(name)) o.gain = 0;
       const cur = ch[name].state;
       const diff = {};
@@ -970,7 +1230,7 @@ export class Score {
         const tol = k === 'cutoff' ? Math.abs(o[k]) * 0.012 : k === 'resonance' ? 0.05 : 0.004;
         if (prev === undefined || Math.abs(prev - o[k]) > tol) { diff[k] = o[k]; any = true; }
       }
-      if (any) ch[name].set(diff, now, name === 'lead' || name === 'ghost' ? tc : Math.max(tc, 0.5));
+      if (any) ch[name].set(diff, now, ly && ramping ? 0.08 : name === 'lead' || name === 'ghost' ? tc : Math.max(tc, 0.5));      // a layer ramp is followed tick by tick
     }
 
     // --- voices: altitude / drift / cover → drone & texture

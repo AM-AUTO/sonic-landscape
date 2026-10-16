@@ -20,6 +20,12 @@
 // scaled by the master gain), and a synthetic steady flat walk must bring the kit in within 10 s, flow within 7 s, and decay to
 // ebb / drift after 15 s of standing (the stroll check; every level, full album or --stroll-check).
 // Also prints the level by section (ebb / flow / swell / while an artefact sounds; targets -26..-30 / ~-20 / ~-15 / -11..-15 peaks).
+// Stanza form (FORM table): every section / arrangement change (section, the kit's effective section, layers on / off,
+// time-of-day mode) is logged with its time; FAILS if any lands off a stanza downbeat (tolerance one 16th), or if an
+// artefact piece starts off a bar line / a partial off a beat / a cadence or finale off a bar line. Because changes
+// wait for the next stanza downbeat: the artefact consequence is measured from the piece's start (its bar line), the
+// Drift coda from the finale's start, and the stroll check allows flow by 4 s + one stanza + one bar after walking
+// begins and gives standing one stanza + one bar more to settle (was: flow within 7 s, 22 s of standing).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,7 +144,9 @@ try {
     if (r.ctl.some((c) => c.slice(1, 4).some((v) => !Number.isFinite(v)))) failures.push(`${id}: a smoothed control (energy / drift / altitude) went non-finite`);
     if (!(r.peakDb <= -0.3)) failures.push(`${id}: peak ${r.peakDb} dBFS > -0.3`);
     if (r.silentPct > 5) failures.push(`${id}: ${r.silentPct}% silent 100 ms windows (> 5%)`);
-    for (const a of r.artefacts) if (a.full && !a.pass) failures.push(`${id}: artefact ${a.type}@${a.t}s weak (dRMS ${a.dRmsDb} dB, dCentroid ${a.dCentroidPct}%)`);
+    for (const a of r.artefacts) if (a.full && !a.pass) failures.push(`${id}: artefact ${a.type}@${a.t}s (piece at ${a.start}s) weak (dRMS ${a.dRmsDb} dB, dCentroid ${a.dCentroidPct}%)`);
+    if (r.form.offBoundary > 0) failures.push(`${id}: ${r.form.offBoundary} arrangement / section change(s) off a stanza boundary: ` + r.form.changes.filter((c) => !c.onBoundary).map((c) => `${c.t}s ${c.what} (${c.offS}s off)`).join('; '));
+    if (r.form.piecesOffGrid > 0) failures.push(`${id}: ${r.form.piecesOffGrid} piece(s) off their grid: ` + r.form.pieces.filter((p) => !p.onGrid).map((p) => `${p.kind} ${p.type}@${p.t0}s (${p.tier}, ${p.offS}s off)`).join('; '));
     if (!idleRun) {
       if (r.dynP90P10 < 14) failures.push(`${id}: dynamics P90-P10 of 1 s RMS is ${r.dynP90P10} dB (< 14)`);
       if (r.codaDb !== null && r.codaDb > -24) failures.push(`${id}: Drift coda ${r.codaDb} dBFS (> -24)`);
@@ -167,7 +175,7 @@ try {
 
   // ---- stroll check: steady flat walking must be answered by percussion (every level)
   if (strollIds.length && !flag('--stems')) {
-    console.log('\nSTROLL CHECK (2 s still, 18 s steady flat walk at moor pace, 22 s still)');
+    console.log('\nSTROLL CHECK (2 s still, 18 s steady flat walk at moor pace, then 22 s + one stanza + one bar still)');
     console.log('level'.padEnd(10) + '1st hit'.padStart(9) + 'flow at'.padStart(9) + 'hits 4-14'.padStart(11) + 'kit dB'.padStart(8) + 'mix dB'.padStart(8) + '  after standing   what played');
     for (const id of strollIds) {
       const r = await page.evaluate((i) => window.renderStroll(i), id);
@@ -175,7 +183,8 @@ try {
       for (const e of r.errors) failures.push(`stroll ${id}: ${e}`);
       if (r.kitDb - r.mixDb < -18) failures.push(`stroll ${id}: kit-channel RMS during steady walking is ${(r.kitDb - r.mixDb).toFixed(1)} dB re the mix (must be within 18 dB)`);
       if (r.firstHit === null || r.firstHit > 10) failures.push(`stroll ${id}: first percussion ${r.firstHit} s after walking began (> 10)`);
-      if (r.flowAt === null || r.flowAt > 7) failures.push(`stroll ${id}: flow reached ${r.flowAt} s after walking began (> 7)`);
+      const flowLimit = +(4 + r.stanzaSec + r.barSec).toFixed(1);
+      if (r.flowAt === null || r.flowAt > flowLimit) failures.push(`stroll ${id}: flow reached ${r.flowAt} s after walking began (> ${flowLimit}: 4 s + one stanza + one bar)`);
       if (r.hits4to14 < 8) failures.push(`stroll ${id}: only ${r.hits4to14} percussion hits in seconds 4-14 of steady walking (< 8)`);
       if (r.endSection === 'flow' || r.endSection === 'swell') failures.push(`stroll ${id}: still ${r.endSection} 20 s after stopping (should decay to ebb / drift)`);
     }
@@ -199,6 +208,16 @@ try {
     for (const c of r.ctl) { const t = c[0]; if (t < 3 || t >= r.rmsCurve.length - 5) continue; const v = r.rmsCurve[t]; (c[6] > 0 ? b.art : b[c[4]] || []).push(v); }
     const pm = (a) => (a.length ? (10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length)).toFixed(1) + ' [' + a.length + ']' : 'n/a');
     console.log(r.id.padEnd(10) + pm(b.ebb).padStart(14) + pm(b.flow).padStart(14) + pm(b.swell).padStart(14) + pm(b.art).padStart(14) + Math.max(...r.rmsCurve.slice(3, r.rmsCurve.length - 5)).toFixed(1).padStart(10));
+  }
+
+  // ---- stanza form: every arrangement / section change and where it landed
+  console.log('\nFORM (stanza boundaries; tolerance one 16th)');
+  console.log('level'.padEnd(10) + 'N'.padStart(3) + 'stanzas'.padStart(9) + 'changes'.padStart(9) + 'off'.padStart(5) + 'pieces'.padStart(8) + 'offgrid'.padStart(9) + 'acks'.padStart(6) + 'pickups'.padStart(9) + '  change times (s: what)');
+  for (const r of results) {
+    const F = r.form;
+    const list = F.changes.map((c) => `${c.t.toFixed(1)}:${c.what}${c.onBoundary ? '' : '!OFF'}`).join(' ');
+    console.log(r.id.padEnd(10) + String(F.stanzaBars).padStart(3) + String(F.stanzas).padStart(9) + String(F.changes.length).padStart(9) + String(F.offBoundary).padStart(5) + String(F.pieces.length).padStart(8) + String(F.piecesOffGrid).padStart(9) + String(F.acks).padStart(6) + String(F.pickups).padStart(9) + '  ' + list);
+    console.log(''.padEnd(10) + '   pieces: ' + F.pieces.map((p) => `${p.kind === 'artefact' ? p.type : p.kind}@${p.t0}${p.firedAt !== null ? '(fired ' + p.firedAt + ')' : ''}/${p.tier}${p.onGrid ? '' : '!OFF'}`).join(' '));
   }
 
   console.log('\nKIT PRESENCE IN FLOW (dBFS, power-mean of the flow seconds; bed hits per flow minute)');

@@ -10,6 +10,11 @@
  *
  * Every piece: ducks the bed ~6 dB (fx.master.duck), strikes a crash / swell, plays foreground material built on
  * the level's motif transform and mode, and hands over to resonance echoes for RESONANCE_SECONDS.
+ *
+ * Timing (stanza form): the score acknowledges a firing on the next 16th (acknowledge()), starts the piece on the next
+ * bar line (play() with a future t: its duck and entry are scheduled there, and until then it neither counts as sounding
+ * nor contributes modifiers), a partial on the next beat, and the gate cadence / finale on the next bar line (prompt: the completion card
+ * appears within seconds); their arrangement consequence (energy floor / level) reaches the section on the next stanza.
  */
 import { MODES, transformMotif, CONTOUR_MOTIF } from './theory.js';
 import { euclid } from './conductor.js';
@@ -99,19 +104,40 @@ export class Artefacts {
     this.cached = {};
     this.echo = new Map();
     this.concordState = { next: 0, types: [] };
-    this.pendingCadence = null;
+    this.pendingCadence = null; this.cadenceQueued = false; this.finaleQueued = false;
     this.playedErrors = new Set();
   }
 
   reset() {
     for (const p of this.pieces) this._end(p, this.S.now, true);
     this.pieces = []; this.echo.clear(); this.concordState = { next: 0, types: [] }; this.pendingCadence = null;
+    this.cadenceQueued = false; this.finaleQueued = false;
     this.cached = {};
   }
 
   get active() { return this.pieces.filter((p) => !p.ended); }
-  get activeCount() { return this.pieces.filter((p) => !p.ended && !p.fade && p.kind === 'artefact' && !p.partial).length; }
-  get pulseHold() { return this.pieces.some((p) => !p.ended && p.flags.pulseHold); }
+  /** full pieces sounding now (a piece waiting for its bar line does not count yet) */
+  get activeCount() { return this.activeAt(this.S.now); }
+  /** full pieces sounding (not releasing) at time t, including those that will have started by then */
+  activeAt(t) { return this.pieces.filter((p) => !p.ended && !p.fade && p.kind === 'artefact' && !p.partial && p.t0 <= t + 1e-6).length; }
+  /** a full piece exists, sounding or waiting for its bar line (a partial is then not played) */
+  get fullSounding() { return this.pieces.some((p) => !p.ended && !p.fade && p.kind === 'artefact' && !p.partial); }
+  get pulseHold() { return this.pulseHoldAt(this.S.now); }
+  pulseHoldAt(t) { return this.pieces.some((p) => !p.ended && p.flags.pulseHold && t >= p.t0 - 1e-6); }
+
+  /**
+   * Tier one of a firing: a small acknowledgement on the given (next-16th) time — a soft click and a short high chime on
+   * the artefact's signature degree — so the player knows it fired before the piece arrives on the bar.
+   */
+  acknowledge(type, t, kind = 'full') {
+    const S = this.S, V = S.stage.v, prof = S.profile;
+    const deg = SIGNATURE[type] ?? 0;
+    const soft = kind === 'partial';
+    V.eBell.note(S.midi(deg, prof.lead.base - prof.root + 24), S.at(t), soft ? 0.9 : 1.5, soft ? 0.14 : 0.22);
+    S.hit('click', t, soft ? 0.18 : 0.26, { tone: 0.75, pan: 0 }, true);
+    S.count('notes', 'ack'); S.stats.acks = (S.stats.acks || 0) + 1;
+    S.log('ack', { type, tier: kind, at: +t.toFixed(3) });
+  }
 
   // ------------------------------------------------------------------------------------------------
   // public API
@@ -135,7 +161,7 @@ export class Artefacts {
     P.boostDb = 0;
     P.servoDb = clamp(P.targetDb - nominal, -12, 10);
     this.pieces.push(P);
-    S.log('artefact', { type, dur: +P.dur.toFixed(1) });
+    S.log('artefact', { type, dur: +P.dur.toFixed(1), at: +t.toFixed(3) });
     S.count('notes', 'artefacts');
     return P;
   }
@@ -144,7 +170,7 @@ export class Artefacts {
   playPartial(type, { t, missing = [], quality = 0.5 } = {}) {
     const S = this.S, V = S.stage.v;
     t = t ?? S.now;
-    if (this.pieces.some((p) => !p.ended && p.kind === 'artefact' && !p.partial)) return null;     // a full piece is sounding
+    if (this.fullSounding) return null;     // a full piece is sounding (or about to)
     this.pieces = this.pieces.filter((p) => { if (p.partial && !p.ended) this._end(p, t, true); return !p.ended; });
     const P = new Piece(this, type, t, { dur: 4.6, partial: true, kind: 'partial' });
     const b = S.beat(), M = S.motif();
@@ -173,7 +199,7 @@ export class Artefacts {
     };
     P.finish();
     this.pieces.push(P);
-    S.log('partial', { type, missing: missing.join(',') });
+    S.log('partial', { type, missing: missing.join(','), at: +t.toFixed(3) });
     return P;
   }
 
@@ -183,27 +209,49 @@ export class Artefacts {
     for (const p of this.pieces) if (!p.ended && p.onContour) p.onContour(ev, now);
   }
 
-  /** gate-open: cadence into the tonic. Waits for a sounding artefact to finish (it opens on the same frame as the last one) */
+  /**
+   * gate-open: cadence into the tonic, on the next bar line (acknowledged at once). Waits for a sounding artefact
+   * to finish first (the gate opens on the same frame as the last one).
+   */
   cadence(now) {
-    if (this.activeCount) this.pendingCadence = { due: now };
-    else this._playCadence(now);
+    this.acknowledge('cadence', this.S.cond.next16(now + 0.01).t, 'cadence');
+    if (this.fullSounding) this.pendingCadence = { due: now };
+    else this._queueCadence(now);
   }
 
+  _queueCadence(t) {
+    if (this.cadenceQueued) return;
+    this.cadenceQueued = true;
+    this.S.atGrid('bar', t + 0.05, (tt) => {
+      this.cadenceQueued = false;
+      if (this.fullSounding) { this.pendingCadence = { due: tt }; return; }      // a piece arrived meanwhile: wait for it
+      this._playCadence(tt);
+    });
+  }
+
+  /** level complete: acknowledged on the next 16th, the finale on the next bar line (releasing everything there) */
   finale(now) {
-    this._cutAll(now, 'all');
-    this.pendingCadence = null;
     const S = this.S;
-    const P = new Piece(this, 'finale', now, { dur: 18, kind: 'finale' });
-    this._build_finale(P);
-    P.finish();
-    this.pieces.push(P);
-    S.log('finale', {});
+    this.acknowledge('finale', S.cond.next16(now + 0.01).t, 'finale');
+    this.pendingCadence = null;
+    if (this.finaleQueued) return;
+    this.finaleQueued = true;
+    S.atGrid('bar', now + 0.05, (t) => {
+      this.finaleQueued = false;
+      this._cutAll(t, 'all');
+      this.pendingCadence = null;
+      const P = new Piece(this, 'finale', t, { dur: 18, kind: 'finale' });
+      this._build_finale(P);
+      P.finish();
+      this.pieces.push(P);
+      S.log('finale', { at: +t.toFixed(3) });
+    });
   }
 
   /** two or more artefacts now resonate: interlocking chime (the sustained pad is kept by update()) */
   concord(types, now) {
     const S = this.S, V = S.stage.v;
-    if (this.activeCount) { this.pendingConcord = { types: types.slice(), due: now }; return; }
+    if (this.fullSounding) { this.pendingConcord = { types: types.slice(), due: now }; return; }
     this._concordChime(types, now);
   }
 
@@ -230,8 +278,8 @@ export class Artefacts {
       if (p.fade ? now - p.fade.t0 >= p.fade.dur : rel > p.dur && p.i >= p.acts.length) this._end(p, now);
     }
     this.pieces = this.pieces.filter((p) => !p.ended);
-    if (this.pendingCadence && !this.activeCount) { const c = this.pendingCadence; this.pendingCadence = null; this._playCadence(now + 0.4); }
-    if (this.pendingConcord && !this.activeCount) { const c = this.pendingConcord; this.pendingConcord = null; this._concordChime(c.types, now + 0.2); }
+    if (this.pendingCadence && !this.fullSounding) { this.pendingCadence = null; this._queueCadence(now + 0.4); }
+    if (this.pendingConcord && !this.fullSounding) { const c = this.pendingConcord; this.pendingConcord = null; this._concordChime(c.types, now + 0.2); }
     this._resonance(now, state);
   }
 
@@ -313,7 +361,7 @@ export class Artefacts {
     merge(this._proxMods());
     fromPiece = true;
     for (const p of this.pieces) {
-      if (p.ended || !p.modsFn) continue;
+      if (p.ended || !p.modsFn || now < p.t0 - 1e-6) continue;          // a piece waiting for its bar line shapes nothing yet
       A.fast = true;
       const rel = now - p.t0;
       const fade = p.fade ? Math.pow(clamp(1 - (now - p.fade.t0) / p.fade.dur, 0, 1), 1.3) : 1;         // 1 → 0 while released
@@ -876,7 +924,7 @@ export class Artefacts {
     });
     P.finish();
     this.pieces.push(P);
-    S.log('cadence', {});
+    S.log('cadence', { at: +t.toFixed(3) });
   }
 
   _build_finale(P) {
@@ -936,7 +984,7 @@ export class Artefacts {
     const S = this.S, V = S.stage.v;
     const res = (state && state.resonance) || [];
     if (!res.length) { this.echo.clear(); return; }
-    const busy = this.activeCount > 0;
+    const busy = this.fullSounding;
     const types = [...new Set(res.map((r) => r.type))];
     const n = types.length;
     // concord pad: held pitch set while two or more artefacts resonate
@@ -1008,7 +1056,7 @@ export class Artefacts {
   onStep(s, prox) {
     if (!prox) return;
     const S = this.S, V = S.stage.v, rng = S.rng;
-    if (this.activeCount) return;
+    if (this.fullSounding) return;
     const b = S.beat();
     for (const type of Object.keys(prox)) {
       const c = prox[type];

@@ -18,7 +18,9 @@ import { analyse, fft, spectralCentroid } from './wav.mjs';
 const SR = 44100;
 const UPDATE = 0.05;
 const DT = 1 / 60;
-const CODA = 34;           // the level-complete finale (~13 s), then 20 s of standing-still Drift
+const CODA = 34;           // the level-complete finale (~13 s), then 20 s of standing-still Drift (measured from the finale's start)
+/** the finale starts on the next bar line after level-complete: allow one bar (at the slowest night tempo) for it */
+const finaleWait = (id) => { const p = PROFILES[id]; return 240 / (p.bpm * (p.nightTempo || 0.88)) + 1; };
 const TAIL = 5;
 
 // ---- node creation counter (per-note graphs go through Scope)
@@ -96,7 +98,7 @@ function presim(idx, opts) {
     if (t >= nb * UPDATE - 1e-9) { const s = snap(game.state); s.events = ev; ev = []; buckets.push(s); nb++; }
     if (opts.idle && t >= opts.idle) break;
     if (codaT === null && game.state.levelComplete) { codaT = t; completeT = t; }
-    if (codaT !== null && t >= codaT + CODA) break;
+    if (codaT !== null && t >= codaT + CODA + finaleWait(game.level.id)) break;
     if (codaT === null && ap.done && t > 20 && !game.state.levelComplete && t > cap - 1) break;
   }
   return { game, buckets, wps, wrong: wv.length ? wv[0].poiId : null, simSeconds: t, completeT, warnings: plan.warnings || [] };
@@ -143,6 +145,70 @@ function attachKitTap(ctx, audio) {
   return { tap, hitLog, sync: () => { tap.gain.value = Math.max(0, audio.score.gainNow || 0); } };
 }
 
+/**
+ * Form audit (independent of the score's own logs): wraps the conductor's step scheduler to record every bar line and
+ * every stanza downbeat it schedules, and any change of the section or of the arrangement state (section, the kit's
+ * effective section, layers on / off, mode) at the step where it happened; changes made outside a scheduled step
+ * (between steps) are recorded at the audio time. Also records every artefact / partial / cadence / finale piece.
+ */
+function attachFormAudit(audio) {
+  const sc = audio.score, c = sc.cond;
+  const L = { bars: [], downbeats: [], changes: [], pieces: [] };
+  const key = () => { const a = sc.arr || {}; const ly = a.layers || {}; return [c.section, a.kitSection, a.modeKind, ...Object.keys(ly).sort().map((k) => k + (ly[k] > 0.05 ? '+' : '-'))].join('|'); };
+  let last = key();
+  const orig = c._scheduleStep.bind(c);
+  c._scheduleStep = function () {
+    const step = c.step, t = c.nextTime + ((step & 1) ? c.swing * c.stepDur : 0), sd = c.stepDur;
+    orig();
+    if (step % 16 === 0) L.bars.push(t);
+    if (c.isStanzaStart(step)) L.downbeats.push(t);
+    const k = key();
+    if (k !== last) { L.changes.push({ t: +t.toFixed(4), sd, step, from: last, to: k, onStep: true }); last = k; }
+  };
+  const upd = c.update.bind(c);
+  c.update = function (now) {
+    const r = upd(now);
+    const k = key();
+    if (k !== last) { L.changes.push({ t: +now.toFixed(4), sd: c.stepDur, step: null, from: last, to: k, onStep: false }); last = k; }
+    return r;
+  };
+  const art = sc.art;
+  for (const m of ['play', 'playPartial']) {
+    const o = art[m].bind(art);
+    art[m] = (...a) => { const P = o(...a); if (P) L.pieces.push(P); return P; };
+  }
+  const oc = art._playCadence.bind(art);
+  art._playCadence = (t) => { const r = oc(t); const P = art.pieces[art.pieces.length - 1]; if (P && P.kind === 'cadence') L.pieces.push(P); return r; };
+  const ob = art._build_finale.bind(art);
+  art._build_finale = (P) => { L.pieces.push(P); return ob(P); };
+  return L;
+}
+
+/** summarise the form audit: changes off a stanza downbeat (tolerance one 16th), pieces off their grid tier */
+function formReport(L, sc) {
+  const nearest = (arr, t) => { let b = Infinity; for (const x of arr) { const d = Math.abs(x - t); if (d < b) b = d; } return b; };
+  const changes = L.changes.map((ch) => {
+    const off = nearest(L.downbeats, ch.t);
+    const what = []; const a = ch.from.split('|'), b = ch.to.split('|');
+    for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) what.push(i === 0 ? 'section:' + b[i] : i === 1 ? 'kit:' + b[i] : i === 2 ? 'mode:' + b[i] : b[i]);
+    return { t: ch.t, what: what.join(','), offS: +off.toFixed(4), onBoundary: off <= ch.sd + 1e-6 };
+  });
+  const sd = sc.cond.stepDur;
+  const tier = (P) => (P.kind === 'partial' ? 'beat' : 'bar');      // artefact pieces, cadence and finale: bar lines
+  const pieces = L.pieces.map((P) => {
+    const tr = tier(P);
+    const grid = tr === 'bar' ? L.bars : tr === 'stanza' ? L.downbeats : null;
+    const off = grid ? nearest(grid, P.t0) : (P.startStep !== undefined && P.startStep % 4 === 0 ? 0 : Infinity);
+    return { type: P.type, kind: P.kind, tier: tr, t0: +P.t0.toFixed(3), firedAt: P.firedAt !== undefined ? +P.firedAt.toFixed(3) : null, offS: +off.toFixed(4), onGrid: off <= sd + 1e-6 };
+  });
+  return {
+    stanzaBars: sc.cond.stanzaBars, stanzas: L.downbeats.length, bars: L.bars.length,
+    changes, offBoundary: changes.filter((c) => !c.onBoundary).length,
+    pieces, piecesOffGrid: pieces.filter((p) => !p.onGrid).length,
+    acks: (sc.stats.acks || 0), pickups: sc.stats.pickups || 0, plans: sc.form.plans,
+  };
+}
+
 const powMean = (a) => (a.length ? 10 * Math.log10(a.reduce((x, v) => x + Math.pow(10, v / 10), 0) / a.length) : -120);
 
 window.renderLevel = async function renderLevel(id, opts = {}) {
@@ -159,6 +225,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   const audio = await createAudio(ctx, { seed: game.level.seed });
   audio.setLevel(game.level);
   const kitTap = attachKitTap(ctx, audio);
+  const formLog = attachFormAudit(audio);
   if (opts.mute && opts.mute.length) audio.score.mute = new Set(opts.mute);
   if (opts.tweak) new Function('audio', 'score', opts.tweak)(audio, audio.score);          // diagnostic hook (--tweak 'js')
   const quantum = 128 / SR;
@@ -228,23 +295,32 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   const dyn = mid.length ? q(0.95) - q(0.05) : 0;
   const dynP = mid.length ? q(0.9) - q(0.1) : 0;
 
-  // the Drift coda: standing still after the finale (complete + 14 s … complete + 34 s)
-  let codaDb = -99;
-  if (ps.completeT) { const c0 = ps.completeT + 14, c1 = Math.min(buf.duration, ps.completeT + CODA); codaDb = analyse(channels, SR, c0, c1).rmsDb; }
+  // the form audit
+  const form = formReport(formLog, audio.score);
 
-  // artefact consequence: 6 s after vs 6 s before each full POI event
+  // the Drift coda: standing still after the finale (finale start + 14 s … + 34 s; the finale starts on the next
+  // bar line after level-complete — before the stanza form it started at level-complete itself)
+  let codaDb = -99;
+  const finP = form.pieces.find((p) => p.kind === 'finale');
+  const codaFrom = finP ? finP.t0 : ps.completeT;
+  if (ps.completeT) { const c0 = codaFrom + 14, c1 = Math.min(buf.duration, codaFrom + CODA); codaDb = analyse(channels, SR, c0, c1).rmsDb; }
+
+  // artefact consequence: 6 s after the piece starts (its bar line; was: the POI event) vs 6 s before the POI event
   const arts = [];
+  const fullPieces = formLog.pieces.filter((P) => P.kind === 'artefact' && P.firedAt !== undefined);
   for (let b = 0; b < buckets.length; b++) {
     for (const ev of buckets[b].events) {
       if (ev.type !== 'poi') continue;
       const t = b * UPDATE;
-      const a0 = Math.max(0, t - 6), a1 = t, b0 = t + 0.05, b1 = Math.min(buf.duration, t + 6.05);
+      const P = ev.full ? fullPieces.find((x) => x.type === ev.poi.type && Math.abs(x.firedAt - t) < 0.08) : null;
+      const ts = P ? P.t0 : t;
+      const a0 = Math.max(0, t - 6), a1 = t, b0 = ts + 0.05, b1 = Math.min(buf.duration, ts + 6.05);
       const before = analyse(channels, SR, a0, a1), after = analyse(channels, SR, b0, b1);
       const cb = a1 - a0 > 1 ? spectralCentroid(mono, SR, Math.floor(a0 * SR), Math.floor(a1 * SR)) : 0;
       const ca = spectralCentroid(mono, SR, Math.floor(b0 * SR), Math.floor(b1 * SR));
       const dRms = after.rmsDb - before.rmsDb;
       const dCent = cb > 0 ? (ca - cb) / cb : 1;
-      arts.push({ t: +t.toFixed(2), type: ev.poi.type, id: ev.poi.id, full: ev.full, beforeSec: +(a1 - a0).toFixed(1), rmsBefore: +before.rmsDb.toFixed(2), rmsAfter: +after.rmsDb.toFixed(2), dRmsDb: +dRms.toFixed(2), centroidBefore: Math.round(cb), centroidAfter: Math.round(ca), dCentroidPct: +(dCent * 100).toFixed(1), pass: !ev.full || dRms >= 4 || (dRms >= 2 && Math.abs(dCent) >= 0.3) });
+      arts.push({ t: +t.toFixed(2), start: +ts.toFixed(2), type: ev.poi.type, id: ev.poi.id, full: ev.full, beforeSec: +(a1 - a0).toFixed(1), rmsBefore: +before.rmsDb.toFixed(2), rmsAfter: +after.rmsDb.toFixed(2), dRmsDb: +dRms.toFixed(2), centroidBefore: Math.round(cb), centroidAfter: Math.round(ca), dCentroidPct: +(dCent * 100).toFixed(1), pass: !ev.full || dRms >= 4 || (dRms >= 2 && Math.abs(dCent) >= 0.3) });
     }
   }
 
@@ -270,9 +346,9 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     dynRangeDb: +dyn.toFixed(1), dynP90P10: +dynP.toFixed(1), codaDb: ps.completeT ? +codaDb.toFixed(1) : null, centroidMean: Math.round(centroidMean),
     rmsCurve: perSec, kitCurve, kitHits: kitTap.hitLog.length, kitHitTimes: kitTap.hitLog.map((h) => h[0]), ctl,
     chroma: Array.from(ch, (v) => +v.toFixed(4)), chromaTop: names[top], rootTriad: triad.map((p) => names[p]), chromaInTriad: triad.includes(top),
-    artefacts: arts, gameEvents,
+    artefacts: arts, gameEvents, form,
     nodes: { perSecMean: +nodesMean.toFixed(1), perSecMedian: nodeMedian(), perSecMax: perSecNodes.length ? Math.max(...perSecNodes) : 0, total: nodeCount - nodeStart, by: Object.fromEntries(Object.entries(nodesBy).sort((a, b) => b[1] - a[1]).slice(0, 14)) },
-    stats: ins.stats, timeline: ins.timeline.filter((e) => ['level', 'artefact', 'boost', 'servo', 'partial', 'section', 'cadence', 'finale', 'concord', 'gate-open', 'level-complete', 'mode', 'ghost', 'quote', 'transition'].includes(e.kind)).slice(0, 400),
+    stats: ins.stats, timeline: ins.timeline.filter((e) => ['level', 'artefact', 'boost', 'servo', 'partial', 'section', 'cadence', 'finale', 'concord', 'gate-open', 'level-complete', 'mode', 'ghost', 'quote', 'transition', 'arr', 'plan', 'pickup', 'ack', 'art-start'].includes(e.kind)).slice(0, 600),
     updateMs: { mean: +(upd.sum / Math.max(1, upd.n)).toFixed(2), max: +upd.max.toFixed(1), calls: upd.n, slow: upd.slow.slice(0, 24) },
     audit, errors, uploaded: upload,
   };
@@ -287,7 +363,9 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
 window.renderStroll = async function renderStroll(id, o = {}) {
   const idx = LEVELS.findIndex((l) => l.id === id);
   if (idx < 0) throw new Error('unknown level ' + id);
-  const speed = o.speed ?? 4.4, t0 = 2, walk = o.walk ?? 18, rest = o.rest ?? 22, total = t0 + walk + rest;
+  // stanza form: a section change waits for the next stanza downbeat, so standing gets one stanza + a bar more to settle
+  const prof = PROFILES[id], barSec = 240 / prof.bpm, stanzaSec = (prof.stanzaBars || 4) * barSec;
+  const speed = o.speed ?? 4.4, t0 = 2, walk = o.walk ?? 18, rest = o.rest ?? Math.ceil(22 + stanzaSec + barSec), total = t0 + walk + rest;
   const ps = presim(idx, { seconds: 4, noWrong: true, idle: 4 });
   const base = ps.buckets[ps.buckets.length - 1];
   const n = Math.ceil(total / UPDATE) + 1;
@@ -333,7 +411,7 @@ window.renderStroll = async function renderStroll(id, o = {}) {
   const mixDb = analyse(mixCh, SR, t0 + 6, t0 + 16).rmsDb;
   const endRow = ctl.find((c) => c[0] === Math.floor(total - 1));
   const names = {}; for (const h of hits.filter((h) => h[0] >= t0 + 2 && h[0] < t0 + walk)) names[h[1]] = (names[h[1]] || 0) + 1;
-  return { id, firstHit, flowAt: flowRow ? flowRow[0] - t0 : null, hits4to14, hitNames: names, kitDb: +kitDb.toFixed(1), mixDb: +mixDb.toFixed(1), endSection: endRow ? endRow[2] : null, endEnergy: endRow ? endRow[1] : null, ctl, errors };
+  return { id, stanzaSec: +stanzaSec.toFixed(2), barSec: +barSec.toFixed(2), rest, firstHit, flowAt: flowRow ? flowRow[0] - t0 : null, hits4to14, hitNames: names, kitDb: +kitDb.toFixed(1), mixDb: +mixDb.toFixed(1), endSection: endRow ? endRow[2] : null, endEnergy: endRow ? endRow[1] : null, ctl, errors };
 };
 
 /**

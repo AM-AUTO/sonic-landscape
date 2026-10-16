@@ -111,7 +111,7 @@ export const PROFILES = {
   rannoch: mk({
     id: 'rannoch', loud: 0, kitLift: 6, title: 'Vast and sparse. Glass bells, long lochan delays.',
     root: 50, modeName: 'dorian', mode: M.dorian, dawn: [0, 2, 3, 6, 7, 9, 10], night: [0, 1, 3, 5, 7, 9, 10],
-    bpm: 64, swing: 0.0, phraseBars: 4, nightTempo: 0.9,
+    bpm: 64, swing: 0.0, phraseBars: 4, stanzaBars: 2, nightTempo: 0.9,
     motifOp: 'invert',
     chords: [
       { d: 0, steps: [0, 2, 4], w: 4, name: 'i' }, { d: 0, steps: [0, 2, 4, 8], w: 2, name: 'i9', spread: 1 },
@@ -162,7 +162,7 @@ export const PROFILES = {
   cruachan: mk({
     id: 'cruachan', loud: 0, kitLift: 4, title: 'Bright pinewood. Pluck arpeggios, shimmering water grains.',
     root: 55, modeName: 'lydian', mode: M.lydian, dawn: [0, 2, 4, 6, 8, 9, 11], night: M.lydianDom,
-    bpm: 72, swing: 0.12, phraseBars: 4, nightTempo: 0.92,
+    bpm: 72, swing: 0.12, phraseBars: 4, stanzaBars: 4, nightTempo: 0.92,
     motifOp: 'rotate:1',
     chords: [
       { d: 0, steps: [0, 2, 4], w: 4, name: 'I' }, { d: 0, steps: [0, 2, 4, 6], w: 2.5, name: 'Imaj7', spread: 1 },
@@ -199,7 +199,7 @@ export const PROFILES = {
   coe: mk({
     id: 'coe', loud: 2, bedDb: -2.5, title: 'Dark and dramatic. Toms, gong, crashes, low saw drones.',
     root: 57, modeName: 'phrygian', mode: M.phrygian, dawn: M.aeolian, night: M.locrian,
-    bpm: 76, swing: 0.0, phraseBars: 4, nightTempo: 0.93,
+    bpm: 76, swing: 0.0, phraseBars: 4, stanzaBars: 4, nightTempo: 0.93,
     motifOp: 'retro',
     chords: [
       { d: 0, steps: [0, 2, 4], w: 5, name: 'i' }, { d: 1, steps: [0, 2, 4], w: 3, name: 'bII' },
@@ -237,7 +237,7 @@ export const PROFILES = {
   cairngorm: mk({
     id: 'cairngorm', loud: -2, bedDb: -3, kitLift: 5, title: 'Arctic and glacial. Frozen granular, snow hiss, the slowest pulse.',
     root: 52, modeName: 'aeolian', mode: M.aeolian, dawn: M.dorian, night: M.phrygian,
-    bpm: 56, swing: 0.0, phraseBars: 4, nightTempo: 0.9,
+    bpm: 56, swing: 0.0, phraseBars: 4, stanzaBars: 2, nightTempo: 0.9,
     motifOp: 'augment',
     chords: [
       { d: 0, steps: [0, 1, 4], w: 4, name: 'isus2' }, { d: 0, steps: [0, 3, 4], w: 2.5, name: 'isus4' },
@@ -281,7 +281,7 @@ export const PROFILES = {
   lyon: mk({
     id: 'lyon', loud: 0, bedDb: -4.5, title: 'Monumental. Brass-like saw pads, terraced rhythm.',
     root: 48, modeName: 'mixolydian', mode: M.mixolydian, dawn: M.ionian, night: M.dorian,
-    bpm: 68, swing: 0.0, phraseBars: 4, nightTempo: 0.94, terraced: true,
+    bpm: 68, swing: 0.0, phraseBars: 4, stanzaBars: 2, nightTempo: 0.94, terraced: true,
     motifOp: 'rotate:3',
     chords: [
       { d: 0, steps: [0, 2, 4], w: 4, name: 'I' }, { d: 3, steps: [0, 2, 4], w: 3, name: 'IV' },
@@ -323,7 +323,7 @@ export const PROFILES = {
   cuillin: mk({
     id: 'cuillin', loud: 1, kitLift: 5, title: 'Jagged and metallic. FM rock percussion, bitcrush glitch.',
     root: 54, modeName: 'lydianDom', mode: M.lydianDom, dawn: M.lydian, night: M.octatonic,
-    bpm: 84, swing: 0.18, phraseBars: 4, nightTempo: 0.92,
+    bpm: 84, swing: 0.18, phraseBars: 4, stanzaBars: 4, nightTempo: 0.92,
     motifOp: 'invert+retro',
     chords: [
       { d: 0, steps: [0, 2, 4, 6], w: 4, name: 'I7' }, { d: 1, steps: [0, 2, 4], w: 2.5, name: 'II' },
@@ -361,7 +361,7 @@ export const PROFILES = {
   corryvreckan: mk({
     id: 'corryvreckan', loud: -3, bedDb: -4, kitLift: 5.5, moveLift: 0.85, frontDb: -3, title: 'Stillness. Minimal, the longest delays, isolated peaks.',
     root: 51, modeName: 'pentMajor', mode: M.pentMajor, dawn: [0, 2, 4, 6, 9], night: [0, 2, 3, 7, 9],
-    bpm: 60, swing: 0.0, phraseBars: 4, nightTempo: 0.88,
+    bpm: 60, swing: 0.0, phraseBars: 4, stanzaBars: 4, nightTempo: 0.88,
     motifOp: 'augment+retro',
     chords: [
       { d: 0, steps: [0, 2, 3], w: 4, name: 'I' }, { d: 0, steps: [0, 1, 3], w: 3.5, name: 'Isus2' },
@@ -401,7 +401,7 @@ export const PROFILES = {
   nevis: mk({
     id: 'nevis', loud: 1, title: 'Homecoming. Every fragment, full tutti.',
     root: 50, modeName: 'ionian', mode: M.ionian, dawn: M.lydian, night: M.mixolydian,
-    bpm: 70, swing: 0.06, phraseBars: 4, nightTempo: 0.93,
+    bpm: 70, swing: 0.06, phraseBars: 4, stanzaBars: 4, nightTempo: 0.93,
     motifOp: 'identity',
     chords: [
       { d: 0, steps: [0, 2, 4], w: 5, name: 'I' }, { d: 3, steps: [0, 2, 4], w: 3, name: 'IV' },

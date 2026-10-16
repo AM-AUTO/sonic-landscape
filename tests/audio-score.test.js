@@ -168,3 +168,121 @@ test('pre-warming makes the expensive buffers ahead of need: the queue drains a 
   sc.stage.v.pluck.note(sc.profile.lead.base + sc.profile.mode[2], ctx.currentTime + 0.1, 1, 0.5);
   assert.equal(audio.engine.pluckCache.size, before, 'no buffer synthesised at trigger time');
 });
+
+// ------------------------------------------------------------------------------------------------
+// stanza form in the score
+// ------------------------------------------------------------------------------------------------
+/** record every scheduled step (time, bar, stanza) and every full / partial piece the score starts */
+function recordForm(audio) {
+  const sc = audio.score, c = sc.cond;
+  const steps = new Map();
+  const onStep = c.hooks.onStep;
+  c.hooks.onStep = (s) => { steps.set(s.step, s); onStep(s); };
+  const pieces = [];
+  for (const m of ['play', 'playPartial']) {
+    const orig = sc.art[m].bind(sc.art);
+    sc.art[m] = (...a) => { const P = orig(...a); if (P) pieces.push(P); return P; };
+  }
+  const hits = [];
+  const kit = sc.stage.v.kit, origHit = kit.hit.bind(kit);
+  kit.hit = (name, t, ...rest) => { hits.push({ name, t }); return origHit(name, t, ...rest); };
+  return { steps, pieces, hits };
+}
+const near = (list, t, tol) => list.some((x) => Math.abs(x - t) <= tol);
+
+test('stanza form in real play: sections, arrangement changes and mode switches on stanza downbeats; pieces on bar lines; acknowledgements within a 16th', async () => {
+  for (const id of ['lyon', 'coe']) {                         // a two-bar and a four-bar stanza level
+    const li = LEVELS.findIndex((l) => l.id === id);
+    ctx.currentTime = 0;
+    const audio = await createAudio(ctx, { seed: 5 + li });
+    const progress = { unlocked: LEVELS.slice(0, li + 1).map((l) => l.id), completed: LEVELS.slice(0, li).map((l) => l.id), fragments: LEVELS.slice(0, li).map((l) => l.id), notes: [] };
+    const g = new Game({ levels: LEVELS, progress });
+    g.loadLevel(li);
+    const ap = new Autopilot(g.world, planChainRoute(g.world, g.level));
+    audio.setLevel(g.level);
+    const R = recordForm(audio);
+    const sc = audio.score, c = sc.cond;
+    let t = 0, merged = [], n = 0, doneT = null;
+    while (t < 200) {
+      g.step(doneT === null ? ap.input(g.state) : { x: 0, y: 0, run: false, rest: false }, 1 / 60); t += 1 / 60; n++;
+      merged.push(...g.state.events);
+      if (n % 3 === 0) { ctx.currentTime = t; audio.update(withEvents(g.state, merged)); merged = []; }
+      if (g.state.levelComplete && doneT === null) doneT = t;
+      if (doneT !== null && t > doneT + 30) break;
+    }
+    assert.deepEqual(audio.errors, []);
+    assert.equal(c.stanzaBars, sc.profile.stanzaBars);
+    const all = [...R.steps.values()];
+    const downbeats = all.filter((s) => s.isStanzaStart).map((s) => s.t);
+    const barLines = all.filter((s) => s.i16 === 0).map((s) => s.t);
+    const beats = all.filter((s) => s.i16 % 4 === 0).map((s) => s.t);
+    const sd = c.stepDur, eps = 1e-3;
+    assert.ok(downbeats.length > 8, id + ' stanzas');
+    const tl = sc.timeline;
+    const secs = tl.filter((e) => e.kind === 'section');
+    assert.ok(secs.length >= 2, id + ' sections change');
+    for (const e of secs) assert.ok(near(downbeats, e.at, eps), `${id} section ${e.from}->${e.to} at ${e.at} is on a stanza downbeat`);
+    assert.ok(sc.form.changes.length >= secs.length);
+    for (const ch of sc.form.changes) assert.ok(near(downbeats, ch.at, eps), `${id} arrangement change ${ch.what} at ${ch.at}`);
+    for (const e of tl.filter((x) => x.kind === 'mode')) assert.ok(near(downbeats, e.at, eps), `${id} mode switch at ${e.at}`);
+    // the plan comes a bar ahead of the downbeat it plans
+    for (const e of tl.filter((x) => x.kind === 'plan' && !x.replan)) assert.ok(Math.abs(e.at - e.t - c.barDur) < c.barDur * 0.6, 'planned in the last bar');
+    // ghost fragments on bar 2 of a stanza (the second bar of a two-bar one)
+    for (const e of tl.filter((x) => x.kind === 'ghost')) assert.equal(e.bar, Math.min(2, c.stanzaBars - 1));
+    // artefact pieces start on bar lines (exactly the step time, after re-anchoring), partials on beats; each was acknowledged within a 16th
+    const full = R.pieces.filter((p) => p.kind === 'artefact');
+    assert.ok(full.length >= 2, id + ' artefacts played');
+    for (const p of full) {
+      assert.equal(p.startStep % 16, 0, 'a bar line');
+      assert.ok(Math.abs(R.steps.get(p.startStep).t - p.t0) < 1e-9, `${id} ${p.type} t0 ${p.t0} = the bar's step time`);
+      assert.ok(p.t0 - p.firedAt <= c.barDur + sd + 0.02 && p.t0 >= p.firedAt, 'within a bar of firing');
+    }
+    for (const p of R.pieces.filter((x) => x.kind === 'partial')) { assert.equal(p.startStep % 4, 0, 'partial on a beat'); assert.ok(near(beats, p.t0, 1e-9)); }
+    const acks = tl.filter((e) => e.kind === 'ack');
+    assert.ok(acks.length >= full.length, 'every firing acknowledged');
+    for (const a of acks) assert.ok(a.at - a.t <= sd + 0.06 && a.at >= a.t - 1e-6, `${id} ack ${a.type} ${a.at - a.t} s after firing (one 16th = ${sd.toFixed(3)})`);
+    // cadence / finale on bar lines (prompt), within a bar of being acknowledged
+    const fin = tl.filter((e) => (e.kind === 'finale' || e.kind === 'cadence') && e.at !== undefined);
+    assert.ok(fin.some((e) => e.kind === 'finale'), id + ' finale');
+    for (const e of fin) {
+      assert.ok(near(barLines, e.at, eps), `${id} ${e.kind} at ${e.at} on a bar line`);
+      const a = acks.filter((x) => x.type === e.kind && x.at <= e.at + eps).pop();
+      if (a) assert.ok(e.at - a.at <= c.barDur + sd + 0.02, `${id} ${e.kind} within a bar of its acknowledgement`);
+    }
+  }
+});
+
+test('splash and slide land on the 16th grid; an arrangement layer ramps over one beat from its downbeat, never before', async () => {
+  ctx.currentTime = 0;
+  const audio = await createAudio(ctx, { seed: 12 });
+  const g = new Game({ levels: LEVELS, progress: { unlocked: ['corryvreckan'], completed: [], fragments: [], notes: [] } });
+  g.loadLevel(0); audio.setLevel(g.level);
+  const R = recordForm(audio);
+  const sc = audio.score, c = sc.cond;
+  for (let i = 0; i < 40; i++) { ctx.currentTime = i * 0.05; audio.update(withEvents(g.state, [])); }
+  const fired = [];
+  for (let i = 40; i < 200; i++) {
+    ctx.currentTime = i * 0.05 + 0.013 * (i % 3);              // events arrive off the grid
+    const ev = i % 23 === 0 ? [{ type: 'splash' }] : i % 37 === 0 ? [{ type: 'slide-start' }] : [];
+    if (ev.length) fired.push([ev[0].type, ctx.currentTime]);
+    audio.update(withEvents(g.state, ev));
+  }
+  const grid = [...R.steps.values()].map((s) => s.t);
+  const logged = sc.timeline.filter((e) => e.kind === 'splash' || e.kind === 'slide');
+  assert.ok(logged.length >= 6, 'splashes and slides sounded ' + logged.length);
+  for (const e of logged) {
+    assert.ok(near(grid, e.at, 2e-3), `${e.kind} at ${e.at} is on a 16th`);
+    assert.ok(R.hits.some((h) => (h.name === 'shaker' || h.name === 'breath') && Math.abs(h.t - e.at) < 2e-3), 'and its sound is there');
+    assert.ok(e.at >= e.t - 1e-6 && e.at - e.t <= c.stepDur + 0.02, `${e.kind} lands within one 16th of the event`);
+  }
+  assert.ok(fired.length >= logged.length);
+  // layer ramp: from the downbeat, over a beat
+  const T = ctx.currentTime + 1, b = sc.beat();
+  sc.arr = { ...sc.arr, layers: { ...sc.arr.layers, bass: 0 } }; sc.layerRamp = null;
+  sc.arrPlan = { ...sc.arr, stanza: 99, section: 'flow', kitSection: 'flow', layers: { ...sc.arr.layers, bass: 1 } };
+  sc._onStanza({ stanza: 99, t: T, step: c.stanzaStep(99), section: 'flow', planned: true });
+  assert.equal(sc._layersAt(T - 0.05).bass, 0, 'not before the downbeat');
+  assert.ok(Math.abs(sc._layersAt(T + b / 2).bass - 0.5) < 1e-6, 'half way through the beat');
+  assert.equal(sc._layersAt(T + b + 0.01).bass, 1);
+  assert.ok(sc.form.changes.some((x) => x.stanza === 99 && x.what.includes('bass+')));
+});
