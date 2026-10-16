@@ -5,12 +5,16 @@
 const PARAMS = ['gain', 'frequency', 'Q', 'detune', 'delayTime', 'pan', 'playbackRate', 'threshold', 'knee', 'ratio', 'attack', 'release',
   'density', 'size', 'pitch', 'pitchSpread', 'spray', 'reverse', 'freeze', 'feedback'];
 
+/** every non-finite value or time handed to a FakeParam (a scheduled NaN would silence a real AudioParam): tests assert it stays empty */
+export const nonFinite = [];
+const chk = (where, ...xs) => { for (const x of xs) if (x !== undefined && !Number.isFinite(x) && nonFinite.length < 50) nonFinite.push({ where, x, stack: new Error().stack.split('\n').slice(2, 5).join(' | ') }); };
+
 export class FakeParam {
-  constructor(v = 0) { this.value = v; this.calls = 0; this.last = v; }
-  setValueAtTime(v) { this.value = v; this.last = v; this.calls++; return this; }
-  linearRampToValueAtTime(v) { this.last = v; this.calls++; return this; }
-  exponentialRampToValueAtTime(v) { this.last = v; this.calls++; return this; }
-  setTargetAtTime(v) { this.last = v; this.calls++; return this; }
+  constructor(v = 0) { chk('init', v); this.value = v; this.calls = 0; this.last = v; }
+  setValueAtTime(v, t) { chk('setValueAtTime', v, t); this.value = v; this.last = v; this.calls++; return this; }
+  linearRampToValueAtTime(v, t) { chk('linearRamp', v, t); this.last = v; this.calls++; return this; }
+  exponentialRampToValueAtTime(v, t) { chk('expRamp', v, t); this.last = v; this.calls++; return this; }
+  setTargetAtTime(v, t, tc) { chk('setTarget', v, t, tc); this.last = v; this.calls++; return this; }
   setValueCurveAtTime() { this.calls++; return this; }
   cancelScheduledValues() { return this; }
   cancelAndHoldAtTime() { return this; }
@@ -20,7 +24,7 @@ export const counters = { nodes: 0, started: 0, connects: 0 };
 
 function makeNode(opts = {}) {
   counters.nodes++;
-  const target = { _params: {}, onended: null, connected: 0, port: { postMessage() {}, onmessage: null } };
+  const target = { _params: {}, onended: null, connected: 0, port: { sent: [], postMessage(m) { if (this.sent.length < 200) this.sent.push(m); }, onmessage: null } };
   for (const k of Object.keys(opts)) {
     if (PARAMS.includes(k) && typeof opts[k] === 'number') target._params[k] = new FakeParam(opts[k]);
     else target[k] = opts[k];

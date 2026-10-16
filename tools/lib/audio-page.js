@@ -14,6 +14,7 @@ import { Autopilot, planChainRoute } from '../../src/game/autopilot.js';
 import { LEVELS } from '../../src/world/levels/index.js';
 import { PROFILES, tonicTriadPcs } from '../../src/audio/levelmusic.js';
 import { analyse, fft, spectralCentroid } from './wav.mjs';
+import { guardrailReport } from './guardrails.mjs';
 
 const SR = 44100;
 const UPDATE = 0.05;
@@ -262,6 +263,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
   schedule();
   const buf = await ctx.startRendering();
   const renderMs = performance.now() - t0;
+  await new Promise((r) => setTimeout(r, 30));          // let the last worklet port messages (erode pass log) arrive
   afterRender();
   const L = buf.getChannelData(0), R = buf.getChannelData(1);
   const channels = [L, R];
@@ -324,6 +326,9 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     }
   }
 
+  // the sketch guardrails on the real render (contra periods from score.contraLog, decay from the erode worklet's pass log)
+  const guard = guardrailReport(L, R, SR, { contraLog: audio.score.contraLog, beatSec: 60 / prof.bpm, passLog: audio.engine.erode && audio.engine.erode.passLog });
+
   const gameEvents = {};
   for (const b of buckets) for (const e of b.events) gameEvents[e.type] = (gameEvents[e.type] || 0) + 1;
   const ins = audio.inspect();
@@ -346,7 +351,7 @@ window.renderLevel = async function renderLevel(id, opts = {}) {
     dynRangeDb: +dyn.toFixed(1), dynP90P10: +dynP.toFixed(1), codaDb: ps.completeT ? +codaDb.toFixed(1) : null, centroidMean: Math.round(centroidMean),
     rmsCurve: perSec, kitCurve, kitHits: kitTap.hitLog.length, kitHitTimes: kitTap.hitLog.map((h) => h[0]), ctl,
     chroma: Array.from(ch, (v) => +v.toFixed(4)), chromaTop: names[top], rootTriad: triad.map((p) => names[p]), chromaInTriad: triad.includes(top),
-    artefacts: arts, gameEvents, form,
+    artefacts: arts, gameEvents, form, guardrails: guard.checks,
     nodes: { perSecMean: +nodesMean.toFixed(1), perSecMedian: nodeMedian(), perSecMax: perSecNodes.length ? Math.max(...perSecNodes) : 0, total: nodeCount - nodeStart, by: Object.fromEntries(Object.entries(nodesBy).sort((a, b) => b[1] - a[1]).slice(0, 14)) },
     stats: ins.stats, timeline: ins.timeline.filter((e) => ['level', 'artefact', 'boost', 'servo', 'partial', 'section', 'cadence', 'finale', 'concord', 'gate-open', 'level-complete', 'mode', 'ghost', 'quote', 'transition', 'arr', 'plan', 'pickup', 'ack', 'art-start'].includes(e.kind)).slice(0, 600),
     updateMs: { mean: +(upd.sum / Math.max(1, upd.n)).toFixed(2), max: +upd.max.toFixed(1), calls: upd.n, slow: upd.slow.slice(0, 24) },

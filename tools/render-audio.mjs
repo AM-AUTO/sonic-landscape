@@ -10,6 +10,7 @@
 //                               [--stroll]  (diagnostic: walk instead of run between waypoints)
 //                               [--stroll-check]  (only the synthetic flat-walk check: percussion must answer steady walking within 10 s)
 //                               [--idle N]  (diagnostic: stand still for N s from the spawn instead of walking — Eno / Drift check)
+//                               [--strict-guardrails]  (the GUARDRAILS table fails the run instead of warning)
 //
 // FAILS (exit 1) if: any NaN; peak > -0.3 dBFS; > 5 % silent 100 ms windows (< -60 dBFS); a full artefact rises < +4 dB RMS
 // versus the preceding 6 s AND is not (>= +2 dB with >= 30 % spectral-centroid change); P90 - P10 of the 1 s RMS curve < 14 dB;
@@ -26,6 +27,11 @@
 // wait for the next stanza downbeat: the artefact consequence is measured from the piece's start (its bar line), the
 // Drift coda from the finale's start, and the stroll check allows flow by 4 s + one stanza + one bar after walking
 // begins and gives standing one stanza + one bar more to settle (was: flow within 7 s, 22 s of standing).
+// GUARDRAILS table (the sketch guardrails of tools/sketch-grounds.mjs on the real render, tools/lib/guardrails.mjs): arc
+// (loudest vs 10th-percentile 2 s window, >= 12 dB), crest 11..16 dB, low-end L/R correlation > 0.95 (4-pole 150 Hz), noise
+// share (spectral flatness 200 Hz - 8 kHz, louder half, >= 0.05), contra periods (>= 2, from score.contraLog; skipped when the
+// score keeps none), decay trend (erode pass log: age up, high band down; skipped when no pass was logged). They WARN until
+// the palette voices land (audio stage phase 2B / 3); --strict-guardrails makes a failed check fail the run.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -218,6 +224,28 @@ try {
     const list = F.changes.map((c) => `${c.t.toFixed(1)}:${c.what}${c.onBoundary ? '' : '!OFF'}`).join(' ');
     console.log(r.id.padEnd(10) + String(F.stanzaBars).padStart(3) + String(F.stanzas).padStart(9) + String(F.changes.length).padStart(9) + String(F.offBoundary).padStart(5) + String(F.pieces.length).padStart(8) + String(F.piecesOffGrid).padStart(9) + String(F.acks).padStart(6) + String(F.pickups).padStart(9) + '  ' + list);
     console.log(''.padEnd(10) + '   pieces: ' + F.pieces.map((p) => `${p.kind === 'artefact' ? p.type : p.kind}@${p.t0}${p.firedAt !== null ? '(fired ' + p.firedAt + ')' : ''}/${p.tier}${p.onGrid ? '' : '!OFF'}`).join(' '));
+  }
+
+  // ---- the sketch guardrails on the real render
+  console.log('\nGUARDRAILS (sketch checks on the real render; ' + (flag('--strict-guardrails') ? 'strict: a FAIL fails the run' : 'warnings only until phase 2B / 3, --strict-guardrails to enforce') + ')');
+  const GR = ['arc', 'crest', 'lowCorr', 'noise', 'contra', 'decay'];
+  const GT = { arc: '>=12dB', crest: '11-16dB', lowCorr: '>0.95', noise: '>=0.05', contra: '>=2 per.', decay: 'age up' };
+  console.log('level'.padEnd(10) + GR.map((k) => (k + ' ' + GT[k]).padStart(20)).join(''));
+  const grWarn = [];
+  for (const r of results) {
+    const by = Object.fromEntries((r.guardrails || []).map((c) => [c.name, c]));
+    console.log(r.id.padEnd(10) + GR.map((k) => { const c = by[k]; if (!c) return 'n/a'.padStart(20); const v = c.value === null ? '-' : String(c.value); return (v.slice(0, 11) + ' ' + (c.pass === null ? 'SKIP' : c.pass ? 'ok' : 'FAIL')).padStart(20); }).join(''));
+    for (const k of GR) {
+      const c = by[k];
+      if (!c) continue;
+      if (c.pass === false) grWarn.push(`${r.id}: guardrail ${k} ${c.value} (target ${c.target})${c.note ? ' — ' + c.note : ''}`);
+    }
+    const notes = GR.map((k) => by[k]).filter((c) => c && c.note).map((c) => `${c.name}: ${c.note}`);
+    if (notes.length) console.log(''.padEnd(10) + '  ' + notes.join(' · '));
+  }
+  if (grWarn.length) {
+    if (flag('--strict-guardrails')) failures.push(...grWarn);
+    else console.log('guardrail warnings (not failing the run):\n - ' + grWarn.join('\n - '));
   }
 
   console.log('\nKIT PRESENCE IN FLOW (dBFS, power-mean of the flow seconds; bed hits per flow minute)');

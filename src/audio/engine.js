@@ -4,18 +4,26 @@
  * Raw Web Audio only. Works with AudioContext and OfflineAudioContext.
  *
  *   channel → drive → crush → filter → chorus → pan → gain ─┬→ out (ducked bed) ─┐
- *                                                          ├→ outFront (unducked)├→ bus → glue comp → lowcut → highcut
- *                                                          └→ 3 sends             │   → drive → soft-clip limiter → final → analyser → destination
+ *                                                          ├→ outFront (unducked)├→ bus → glue comp → lowcut → highcut → mono-low
+ *                                                          └→ sends               │   → soft limiter → drive → soft clip → final → analyser → destination
  *   sends.reverb → reverb ──────────────────────────────────────────────────────→ bus
  *   sends.delay  → delay  ──→ bus, ──(a little)→ sends.reverb
  *   sends.grain  → granular ─→ bus, ──→ delay, ──→ sends.reverb
+ *   sends.erode  → erode (eroding loop worklet) ─→ return (fx.erode.return) → bus, ──→ sends.reverb, ──→ sends.grain
+ *   sends.res + pink noise (fx.res.noise) → resonators worklet ─→ return (fx.res.return) → bus, ──→ sends.reverb
+ *
+ * Channel sends to erode / res are made on first use (ch.set({ erode, res })), so channels that never use them cost nothing.
+ * The erode / resonator / mono-low / limiter params are registered in the audit on first use (they are new surface the score
+ * wires stage by stage; a param registered but never moved would read as dead).
  */
 import { Rng, mulberry32 } from '../core/rng.js';
 import { createReverb } from './fx/reverb.js';
 import { createDelay } from './fx/delay.js';
 import { GranularFX } from './fx/granular.js';
+import { ErodeFX, erodeStub } from './fx/erode.js';
+import { ResonatorsFX, resonatorsStub } from './fx/resonators.js';
 import {
-  clamp, num, makeDriveCurve, makeCrushCurve, softClipCurve,
+  clamp, num, makeDriveCurve, makeCrushCurve, softClipCurve, compressorMakeup,
 } from './fx/util.js';
 
 const DRIVE_RANGE = 8;
@@ -42,8 +50,9 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   }
   function record(name, value) { note(name, value); }
 
-  function param(name, audioParam) {
-    entry(name);
+  /** an audited handle on an AudioParam (or null: audit only). opts.lazy: registered in the audit on its first set, not now */
+  function param(name, audioParam, opts = {}) {
+    if (!opts.lazy) entry(name);
     const h = {
       name, param: audioParam,
       /** smooth set: cancels later events, exponential approach with time constant tc */
@@ -166,12 +175,35 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   const glueMakeup = new GainNode(ctx, { gain: 1.15 });
   const lowcut = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 28, Q: -3 });
   const highcut = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 17500, Q: -3 });
+  // mono-low: M/S split; the side (L - R) / 2 is high-passed (4-pole Butterworth at ~150 Hz) and the pair rebuilt as M ± S', so
+  // everything below the crossover is mid only (a hi-fi mono bottom) and the mid itself is untouched (the sketch's monoLow)
+  const mlSplit = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
+  const mono1 = { channelCount: 1, channelCountMode: 'explicit' };
+  const mlMid = new GainNode(ctx, { gain: 0.5, ...mono1 });
+  const mlInvR = new GainNode(ctx, { gain: -1, ...mono1 });
+  const mlSide = new GainNode(ctx, { gain: 0.5, ...mono1 });
+  const mlHp1 = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 150, Q: 0.5412 });
+  const mlHp2 = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 150, Q: 1.3066 });
+  const mlNeg = new GainNode(ctx, { gain: -1, ...mono1 });
+  const mlMerge = new ChannelMergerNode(ctx, { numberOfInputs: 2 });
+  mlSplit.connect(mlMid, 0); mlSplit.connect(mlMid, 1);
+  mlSplit.connect(mlSide, 0); mlSplit.connect(mlInvR, 1); mlInvR.connect(mlSide);
+  mlSide.connect(mlHp1); mlHp1.connect(mlHp2);
+  mlMid.connect(mlMerge, 0, 0); mlHp2.connect(mlMerge, 0, 0);
+  mlMid.connect(mlMerge, 0, 1); mlHp2.connect(mlNeg); mlNeg.connect(mlMerge, 0, 1);
+  // soft limiter: a fast, high-threshold compressor ahead of the soft clip catches the transient spikes (surging contra layers)
+  // so the clip rarely bends, without flattening the arc (a -6 dB threshold took ~1.5 dB off loud stanzas and artefact entries);
+  // the compressor's own make-up gain (compressorMakeup: +1.37 dB at -3 dB) is taken back off, so below the threshold the stage
+  // is unity. master.setLimit(dB) moves the threshold and the trim together.
+  const LIM_KNEE = 2, LIM_RATIO = 20, LIM_DEFAULT = -3;
+  const limiter = new DynamicsCompressorNode(ctx, { threshold: LIM_DEFAULT, knee: LIM_KNEE, ratio: LIM_RATIO, attack: 0.001, release: 0.06 });
+  const limTrim = new GainNode(ctx, { gain: 1 / compressorMakeup(LIM_DEFAULT, LIM_KNEE, LIM_RATIO) });
   const mDrive = new GainNode(ctx, { gain: 1 / 2.5 });       // 1/range → unity through softclip
   const clip = new WaveShaperNode(ctx, { curve: softClipCurve(8192, { ceiling: 0.9, knee: 0.55, range: 2.5 }), oversample: '2x' });
   const finalGain = new GainNode(ctx, { gain: 0.95 });
   const analyser = new AnalyserNode(ctx, { fftSize: 2048, smoothingTimeConstant: 0.8 });
   bus.connect(glue); glue.connect(glueMakeup); glueMakeup.connect(lowcut); lowcut.connect(highcut);
-  highcut.connect(mDrive); mDrive.connect(clip); clip.connect(finalGain); finalGain.connect(analyser);
+  highcut.connect(mlSplit); mlMerge.connect(limiter); limiter.connect(limTrim); limTrim.connect(mDrive); mDrive.connect(clip); clip.connect(finalGain); finalGain.connect(analyser);
   analyser.connect(ctx.destination);
   // per-channel meters: the mono analyser above averages L and R (wide reverb / ping-pong content partly cancels), so the Score's
   // level reading (leveler, artefact servo) uses these two instead and matches the true stereo RMS of the render
@@ -189,12 +221,16 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   const hLow = param('master.lowCut', lowcut.frequency);
   const hHigh = param('master.highCut', highcut.frequency);
   const hDuck = param('master.duck', null);
+  const hMonoLow = param('master.monoLow', null, { lazy: true });
+  const hLimit = param('master.limit', null, { lazy: true });
 
   // ---------------------------------------------------------------- global FX
   const sends = {
     reverb: new GainNode(ctx, { gain: 1 }),
     delay: new GainNode(ctx, { gain: 1 }),
     grain: new GainNode(ctx, { gain: 1 }),
+    erode: new GainNode(ctx, { gain: 1 }),
+    res: new GainNode(ctx, { gain: 1 }),
   };
   const hooks = { param, record };
   const reverb = createReverb(ctx, hooks, { seed });
@@ -218,6 +254,24 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
     stub.input.connect(stub.output);
     granular = stub;
   }
+  // the eroding loop and the resonators (each falls back to a silent stub if its worklet cannot load)
+  let erode, res;
+  try {
+    if (!ctx.audioWorklet) throw new Error('AudioWorklet unavailable');
+    await ctx.audioWorklet.addModule(new URL('./worklets/erode.js', import.meta.url));
+    erode = new ErodeFX(ctx, hooks, { seed });
+  } catch (err) {
+    console.error('[engine] erode worklet failed to load:', err && err.message ? err.message : err);
+    erode = erodeStub(ctx);
+  }
+  try {
+    if (!ctx.audioWorklet) throw new Error('AudioWorklet unavailable');
+    await ctx.audioWorklet.addModule(new URL('./worklets/resonators.js', import.meta.url));
+    res = new ResonatorsFX(ctx, hooks, { seed });
+  } catch (err) {
+    console.error('[engine] resonators worklet failed to load:', err && err.message ? err.message : err);
+    res = resonatorsStub(ctx);
+  }
   readyResolve(true);
 
   sends.reverb.connect(reverb.input);
@@ -236,6 +290,41 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
   granular.output.connect(grainToDelay); grainToDelay.connect(delay.input);
   granular.output.connect(grainToReverb); grainToReverb.connect(sends.reverb);
 
+  // erode: send in, return to the bus, a little into the reverb, and optionally into the grain cloud (the sketch granulates the loop)
+  sends.erode.connect(erode.input);
+  const retErode = new GainNode(ctx, { gain: 1 });
+  const erodeToReverb = new GainNode(ctx, { gain: 0.25 });
+  const erodeToGrain = new GainNode(ctx, { gain: 0 });
+  erode.output.connect(retErode); retErode.connect(bus);
+  erode.output.connect(erodeToReverb); erodeToReverb.connect(sends.reverb);
+  erode.output.connect(erodeToGrain); erodeToGrain.connect(sends.grain);
+  erode.bindReturns({
+    return: { h: param('fx.erode.return', retErode.gain, { lazy: true }), lim: [0, 2] },
+    reverb: { h: param('fx.erode.reverb', erodeToReverb.gain, { lazy: true }), lim: [0, 1.5] },
+    grain: { h: param('fx.erode.grain', erodeToGrain.gain, { lazy: true }), lim: [0, 1.5] },
+  });
+  // resonators: send in, plus an always-running pink-noise source (silent until fx.res.noise is raised) so they can sing from noise alone
+  sends.res.connect(res.input);
+  const noiseGain = new GainNode(ctx, { gain: 0 });
+  const noiseSrc = new AudioBufferSourceNode(ctx, { buffer: noiseBuffer('pink', 12), loop: true });
+  noiseSrc.connect(noiseGain); noiseGain.connect(res.input);
+  noiseSrc.start(0);
+  const retRes = new GainNode(ctx, { gain: 1 });
+  const resToReverb = new GainNode(ctx, { gain: 0.3 });
+  res.output.connect(retRes); retRes.connect(bus);
+  res.output.connect(resToReverb); resToReverb.connect(sends.reverb);
+  const hNoise = param('fx.res.noise', noiseGain.gain, { lazy: true });
+  res.bindReturns({
+    return: { h: param('fx.res.return', retRes.gain, { lazy: true }), lim: [0, 2] },
+    reverb: { h: param('fx.res.reverb', resToReverb.gain, { lazy: true }), lim: [0, 1.5] },
+    noise: { h: hNoise, lim: [0, 2] },
+  });
+  const noiseSource = {
+    source: noiseSrc, output: noiseGain, param: hNoise,
+    /** pink-noise level into the resonators (0..2; the buffer is RMS 0.3) */
+    set(level, t = now(), tc = 0.1) { hNoise.set(num(level, 0, 0, 2), t, tc); },
+  };
+
   delay.setWet(0.55, 0);
   delay.setTime(0.5, 0);
   delay.setFeedback(0.45, 0);
@@ -251,6 +340,19 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
     setLowCut(hz, t = now()) { hLow.set(num(hz, 28, 10, 400), t, 0.1); },
     setHighCut(hz, t = now()) { hHigh.set(num(hz, 17500, 200, 20000), t, 0.1); },
     setGain(v, t = now()) { hMasterGain.set(num(v, 0.95, 0, 1.5), t, 0.05); },
+    /** soft-limiter threshold (dBFS at the master, -12..0; default -3): lower squeezes the peaks (crest) harder */
+    setLimit(db, t = now()) {
+      const v = num(db, LIM_DEFAULT, -12, 0);
+      hLimit.set(v, t, 0.05);
+      limiter.threshold.cancelScheduledValues(t); limiter.threshold.setTargetAtTime(v, t, 0.05);
+      limTrim.gain.cancelScheduledValues(t); limTrim.gain.setTargetAtTime(1 / compressorMakeup(v, LIM_KNEE, LIM_RATIO), t, 0.05);
+    },
+    /** mono-low crossover (Hz, 60..300; default 150): below it the master is mono */
+    setMonoLow(hz, t = now()) {
+      const f = num(hz, 150, 60, 300);
+      hMonoLow.set(f, t, 0.1);
+      for (const b of [mlHp1, mlHp2]) { b.frequency.cancelScheduledValues(t); b.frequency.setTargetAtTime(f, t, 0.1); }
+    },
     /**
      * Duck the bed (everything routed through `out`, i.e. all channels with duck:true) by
      * `amount` (0..1 linear reduction; 0.5 ≈ -6 dB): attack s down, hold s, release s back up.
@@ -310,6 +412,16 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
       cutoff: p('cutoff', filter.frequency), resonance: p('resonance', filter.Q),
       drive: p('drive', null), crush: p('crush', null), chorus: p('chorus', null),
     };
+    // sends to the eroding loop and the resonators: the GainNode and its audited handle are made on first use
+    const lazySend = (key) => {
+      if (!H[key]) {
+        const g = new GainNode(ctx, { gain: 0 });
+        gain.connect(g); g.connect(sends[key]);
+        H[key] = p(key, g.gain);
+        ch.nodes['send_' + key] = g;
+      }
+      return H[key];
+    };
     let crushBits = 0;
     const ch = {
       name, input, output: gain, filter, panner, gain, nodes: { pre, shaper, post, crusher, filter, cDelay, panner, gain },
@@ -320,6 +432,8 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
         if (v.reverb !== undefined) H.reverb.set(num(v.reverb, 0, 0, 2), t, tc);
         if (v.delay !== undefined) H.delay.set(num(v.delay, 0, 0, 2), t, tc);
         if (v.grain !== undefined) H.grain.set(num(v.grain, 0, 0, 2), t, tc);
+        if (v.erode !== undefined) lazySend('erode').set(num(v.erode, 0, 0, 2), t, tc);
+        if (v.res !== undefined) lazySend('res').set(num(v.res, 0, 0, 2), t, tc);
         if (v.cutoff !== undefined) H.cutoff.set(num(v.cutoff, 18000, 40, Math.min(20000, ctx.sampleRate * 0.45)), t, tc);
         if (v.resonance !== undefined) H.resonance.set(num(v.resonance, -3, -12, 24), t, tc);
         if (v.drive !== undefined) {
@@ -361,14 +475,21 @@ export async function createEngine(ctx, { seed = 1 } = {}) {
 
   const engine = {
     ctx, rng, seed, out, outFront, sends, bus, analyser, meterL, meterR,
-    masterNodes: { glue, glueMakeup, lowcut, highcut, drive: mDrive, clip, finalGain },
-    fx: { reverb, delay, granular, master },
+    masterNodes: { glue, glueMakeup, lowcut, highcut, monoLow: { split: mlSplit, mid: mlMid, side: mlSide, hp: [mlHp1, mlHp2], merge: mlMerge }, limiter, limTrim, drive: mDrive, clip, finalGain },
+    fx: { reverb, delay, granular, erode, res, master },
+    /** the eroding-loop worklet wrapper (captureAt / setAge / setPassesToFull / reset / set / passLog) */
+    erode,
+    /** the resonator worklet wrapper (setTargets / clear / set) */
+    res,
+    /** the pink-noise source feeding the resonators: { source, output, set(level, t, tc) } */
+    noiseSource,
     channel, channels,
     param, record, auditReport, audit: auditReport,
     noiseBuffer, noiseWarm, ready,
     /** release the master graph (voices should be stopped first) */
     dispose() {
       try { bus.disconnect(); analyser.disconnect(); meterSplit.disconnect(); out.disconnect(); outFront.disconnect(); } catch (e) { /* already gone */ }
+      try { noiseSrc.stop(); noiseSrc.disconnect(); } catch (e) { /* already gone */ }
     },
     /** cached lookup of a bitcrush curve (shared by voices) */
     crushCurve,

@@ -209,3 +209,25 @@ export class Scope {
     this.nodes.length = 0; this.sources.length = 0; this.links.length = 0;
   }
 }
+
+/**
+ * The make-up gain a DynamicsCompressorNode applies on its own (the WebKit kernel shared by Chromium, Gecko and WebKit:
+ * (1 / curve(1.0))^0.6 for the static curve with this threshold / knee / ratio). Divide by it to make a compressor unity below
+ * its threshold (the master limiter does). Matches headless Chromium to 0.01 % (-6/4/12 → 1.3423, -3/2/20 → 1.1715).
+ */
+export function compressorMakeup(thresholdDb, kneeDb, ratio) {
+  const dbToLin = (d) => Math.pow(10, d / 20), linToDb = (x) => 20 * Math.log10(x);
+  const linT = dbToLin(thresholdDb);
+  const kneeCurve = (x, k) => (x < linT ? x : linT + (1 - Math.exp(-k * (x - linT))) / k);
+  const slopeAt = (x, k) => {
+    if (x < linT) return 1;
+    const x2 = x * 1.001;
+    return (linToDb(kneeCurve(x2, k)) - linToDb(kneeCurve(x, k))) / (linToDb(x2) - linToDb(x));
+  };
+  const kneeTDb = thresholdDb + kneeDb, kneeT = dbToLin(kneeTDb);
+  let minK = 0.1, maxK = 10000, k = 5;
+  for (let i = 0; i < 15; i++) { if (slopeAt(kneeT, k) < 1 / ratio) maxK = k; else minK = k; k = Math.sqrt(minK * maxK); }
+  const yKneeDb = linToDb(kneeCurve(kneeT, k));
+  const full = 1 < kneeT ? kneeCurve(1, k) : dbToLin(yKneeDb + (0 - kneeTDb) / ratio);
+  return Math.pow(1 / full, 0.6);
+}
