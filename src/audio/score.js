@@ -23,6 +23,14 @@
  * downbeat; layer gains ramp over one beat from it. Continuous expression (energy curves, altitude, cover, reverb)
  * stays continuous. Quantisation tiers: 16th (ticks, footsteps, splash, slide, acknowledgements), beat (chords,
  * partials), bar (artefact pieces, gate cadence, finale), stanza (arrangement, sections, cuts).
+ *
+ * Palette (phase 2, palette.js): the default 'grit' palette adds the layers {sub, wall, res, erode, grain, contraA,
+ * contraB, arp, glimpse, scrape} (planned by palette.planGrit from section / energy / drift / the pibroch form step /
+ * the night, wired by score-grit.js) and retires the pretty voices: no supersaw pads, glass bells, kalimba plucks, add9
+ * entries or clean lead — contour ticks become grain clicks, index contours walk the ground (the resonators retune), the
+ * motif quote is a glimpse on worn tines, pickups are stutters / crushed reverse swells, the kit is the dirty family.
+ * `palette: 'legacy'` (profile field, or new Score(engine, {palette})) keeps the old palette and Phase 1 behaviour.
+ * score.contraLog = [{t, layer: 'A'|'B', period (beats), step}] lists every contra hit (the render guardrails).
  */
 import { degreeToMidi } from './theory.js';
 import { Drone } from './voices/drone.js';
@@ -33,6 +41,8 @@ import {
   PROFILES, getProfile, motifFor, kitGens, textureFor, COVER_KEYS, CHANNEL_NAMES, FRONT_CHANNELS,
 } from './levelmusic.js';
 import { createStage, applyProfile } from './stage.js';
+import { paletteFor, planGrit, GRIT_LAYERS, gritKitGens, formStepOf } from './palette.js';
+import { GritBand } from './score-grit.js';
 import { channelTarget, applyChannelMods, fxTargets, clamp, lerp, ovr } from './macros.js';
 import { Artefacts } from './artefacts.js';
 import { dayPhase } from '../world/codes.js';
@@ -60,15 +70,21 @@ const smooth = (cur, target, dt, tcUp, tcDown = tcUp) => cur + (target - cur) * 
 const smoothstep = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
 /** arrangement layers and the bed channel each one scales (lead and kit are generation-only: the lead channel also carries
  *  the artefact lead, and the bed kit channels carry the walker's own footsteps / splashes, which must never be muted) */
-export const LAYERS = ['drone', 'pad', 'bass', 'lead', 'bell', 'pluck', 'texture', 'kit', 'ghost'];
+export const LAYERS = ['drone', 'pad', 'bass', 'lead', 'bell', 'pluck', 'texture', 'kit', 'ghost', ...GRIT_LAYERS];
+/** layers whose level is a per-stanza event or a per-hit velocity rather than a channel gain (no on/off pickup) */
+const EVENT_LAYERS = new Set(['glimpse']);
 const LAYER_CH = { drone: 'drone', pad: 'pad', bass: 'bass', bell: 'bell', pluck: 'pluck', texture: 'texture', ghost: 'ghost' };
 const LAYER_CH_OF = Object.fromEntries(Object.entries(LAYER_CH).map(([l, c]) => [c, l]));
 const SEC_RANK = { ebb: 0, flow: 1, swell: 2 };
 const ON = 0.05;           // a layer above this is 'on'
 
 export class Score {
-  constructor(engine) {
+  constructor(engine, opts = {}) {
     this.engine = engine;
+    this.paletteOverride = opts.palette || null;
+    this.pal = null; this.grit = false; this.band = null;
+    this.contraLog = [];
+    this.formMax = 0;
     this.ctx = engine.ctx;
     this.rng = engine.rng;
     this.stage = createStage(engine);
@@ -127,7 +143,7 @@ export class Score {
     this.fragments = []; this.resonance = []; this.state = null;
 
     this.budget = BUDGET_MAX; this.budgetT = 0;
-    this.stats = { dropped: 0, hits: {}, notes: {}, chords: 0, ticks: 0, leads: 0, ghosts: 0, loops: 0, sections: [], transitions: 0, footsteps: 0, duck: 0, acks: 0, pickups: 0, stanzas: 0 };
+    this.stats = { dropped: 0, hits: {}, notes: {}, chords: 0, ticks: 0, leads: 0, ghosts: 0, loops: 0, sections: [], transitions: 0, footsteps: 0, duck: 0, acks: 0, pickups: 0, stanzas: 0, glimpses: 0, captures: 0, surges: 0 };
     this.timeline = [];
     this.nodeBudget = 0;
   }
@@ -170,11 +186,11 @@ export class Score {
    * and the structural hits (crash, gong, timpani, reverse swell) always sound and draw the budget down; the bed's
    * other hits are dropped when it is spent — percussion thins out instead of piling up.
    */
-  hit(name, t, vel, opts, front = false) {
+  hit(name, t, vel, opts, front = false, force = false) {
     const now = this.now;
     const cost = HIT_COST[name] || 8;
     this.budget = Math.min(BUDGET_MAX, this.budget + (now - this.budgetT) * BUDGET_RATE); this.budgetT = now;
-    if (!front && !STRUCTURAL.has(name) && this.budget < cost) { this.stats.dropped++; return; }
+    if (!front && !force && !STRUCTURAL.has(name) && this.budget < cost) { this.stats.dropped++; return; }
     this.budget -= cost;
     const kit = front ? this.stage.v.aKit : this.stage.v.kit;
     kit.hit(name, this.at(t), vel, opts || {});
@@ -212,7 +228,9 @@ export class Score {
     const first = !this.profile;
     this.levelDef = levelDef; this.levelId = levelDef.id; this.profile = prof;
     this.seed = (levelDef.seed ?? 1) | 0;
-    const { patches, base } = applyProfile(this.stage, prof, t);
+    const pal = this.pal = paletteFor(prof, this.paletteOverride);
+    this.grit = pal.grit;
+    const { patches, base } = applyProfile(this.stage, prof, t, 1.2, pal);
     this.P = patches; this.base = base;
     this._motif = motifFor(prof);
     this.keyShift = 0; this.modeOverride = null;
@@ -240,8 +258,12 @@ export class Score {
     this.cond.reset();
     this.deferred = []; this.arrPlan = null; this.layerRamp = null; this.pickupFor = -1;
     this.stanzaE = { sum: 0, m: 0, n: 0 };
+    this.contraLog.length = 0; this.formMax = 0;
+    let gritWarm = [];
+    if (this.grit) { this.band = this.band || new GritBand(this); gritWarm = this.band.setLevel(pal, prof, t, first); }
+    else if (this.band) this.band.sleep(t);
     this.arr = this._defaultArr('ebb');
-    this.gens = kitGens(prof).map((spec) => new PatternGen(spec, this.rng));
+    this.gens = (this.grit ? gritKitGens(kitGens(prof)) : kitGens(prof)).map((spec) => new PatternGen(spec, this.rng));
     this.bassGen = new PatternGen({ h: 'bass', flow: { p: 0.5, k: [2, 3], rot: [0, 3, 6] }, swell: { p: 0.9, k: [5, 6, 7], rot: [0, 2] } }, this.rng);
     this.terraced = !!prof.terraced;
     this.markov = new MelodyMarkov(this.rng, { center: Math.floor(prof.lead.span / 2), span: prof.lead.span });
@@ -259,21 +281,22 @@ export class Score {
     this.initChord = true;
     this.lastScaleKey = '';
     this.art.reset();
-    this.log('level', { id: prof.id, root: prof.root, bpm: prof.bpm });
+    this.log('level', { id: prof.id, root: prof.root, bpm: prof.bpm, palette: pal.palette, time: pal.time });
     this.levelStartT = t;
-    this._queueWarm(prof);
+    this._queueWarm(prof, gritWarm);
   }
 
   /**
    * Pre-warming: everything that is expensive to make on the main thread (noise buffers, Karplus-Strong pluck buffers) is made
    * ahead of need, one slice every 0.05–0.1 s after a level starts, so no update has to synthesise a buffer at trigger time.
    */
-  _queueWarm(prof) {
-    const eng = this.engine, q = [];
+  _queueWarm(prof, first = []) {
+    const eng = this.engine, q = [...first];                          // the palette's pre-renders first (the eroding loop, grains, tines)
     for (const [k, s] of TEXTURE_NOISE) q.push(() => eng.noiseWarm(k, s));
     const tex = this.stage.v.texture;
     q.push(() => tex.warmCrackle(0), () => tex.warmCrackle(1));      // an item returning false is run again on the next tick (incremental work)
     const pl = this.stage.v.pluck;
+    if (this.grit) { this.warmQ = q; this.lastWarm = this.now; return; }   // grit: no kalimba / string ticks to pre-warm
     const modes = [prof.mode, prof.dawn, prof.night].filter(Boolean);
     const seen = new Set();
     for (let m = prof.lead.base - 14; m <= prof.lead.base + 26; m++) {
@@ -368,6 +391,11 @@ export class Score {
     this.prox = prox; this.proxMax = mx;
     this.fragments = state.fragments || [];
     this.resonance = state.resonance || [];
+    // the pibroch form: how far the gate chain has come (most chain types resonating at once, never going back)
+    if (Array.isArray(state.chainProgress)) {
+      let n = 0; for (const c of state.chainProgress) if (c && c.resonating) n++;
+      if (n > this.formMax) this.formMax = n;
+    }
     // altitude register (hysteresis): high ground lifts pad / lead an octave
     if (C.a > 0.78) this.altOct = 1; else if (C.a < 0.5) this.altOct = 0;
     // time-of-day mode variant: planned with the next stanza, applied on its downbeat
@@ -478,8 +506,20 @@ export class Score {
   _contour(ev, now) {
     this.art.onContour(ev, now);
     if (ev.dir > 0) { this.lastAscentT = now; }
-    if (ev.major) { if (this.art.activeCount) this._queueTick(ev, now); else this._leadFromContour(ev, now); }
+    if (ev.major) { if (this.art.activeCount) this._queueTick(ev, now); else if (this.grit) this._groundFromContour(ev, now); else this._leadFromContour(ev, now); }
     else this._queueTick(ev, now);
+  }
+
+  /**
+   * Grit: an index contour is not a lead note. It walks the ground one note on (back, descending) and the resonators
+   * retune to it on the next bar line — the ground performed as resonance; a grain click marks the crossing.
+   */
+  _groundFromContour(ev, now) {
+    this.band.advanceGround(ev.dir, now);
+    const q = this.cond.next16(now + 0.01);
+    this.band.tick(q.t, clamp(0.3 + 0.4 * clamp(ev.speed / 8, 0, 1), 0.25, 0.8), 0.5);
+    this.stats.leads++;
+    this.lastLeadT = now;
   }
 
   // -------- ticks
@@ -502,6 +542,13 @@ export class Score {
   }
 
   _playTick(item, t) {
+    if (this.grit && this.band) {
+      // grit: a contour tick is a grain click (now and then the walked ground note on a worn tine) — no bell, no kalimba
+      if (this.budget < 4) { this.stats.dropped++; return; }
+      this.budget -= 4;
+      if (this.band.tick(t, clamp(0.22 + 0.25 * (item.speed / 8) + 0.1 * this.rng.float(), 0.15, 0.7), item.bright)) this.stats.ticks++;
+      return;
+    }
     if (this.budget < 12) { this.stats.dropped++; return; }                 // the bed's note ticks share the node budget with its percussion
     this.budget -= 12;
     const prof = this.profile, C = this.C, mode = this.modeNow();
@@ -568,6 +615,14 @@ export class Score {
   _majorGrid(now) {
     const q = this.cond.quantise(now + 0.02);
     const t = q.t;
+    if (this.grit) {
+      // grit: a crushed metal strike and a grain burst on a major grid line (no crash, no bell)
+      this.hit('metal', t, 0.4, { midi: this.rootNow() - 12, decay: 0.5 });
+      this.hit('grainBurst', t, 0.35, { length: 0.3, tone: 0.4 });
+      this.engine.fx.granular.set({ density: 50, mix: 1.0 }, now, 0.1);
+      this.log('major-grid', {});
+      return;
+    }
     this.hit('crash', t, 0.55 + 0.2 * this.rng.float(), { tone: 0.6 });
     this.hit('breath', t, 0.35, { length: this.beat() * 3, tone: 0.5 });
     this.stage.v.bell.note(this.midi(0, 36), this.at(t + 0.02), 4, 0.5);
@@ -617,8 +672,8 @@ export class Score {
     // bog: longer attacks, darker
     V.pad.p.attack = this.P.pad.attack * (1 + 0.9 * C.bog);
     V.pad.p.cutoff = lerp(prof.pad.cut[0], prof.pad.cut[1], C.a) * (1 - 0.35 * C.bog) * (1 + 0.2 * C.w - 0.2 * C.n);
-    V.pad.chord(voicing, t, dur, vel);
-    this.count('notes', 'pad');
+    if (this.arr.layers.pad > ON) { V.pad.chord(voicing, t, dur, vel); this.count('notes', 'pad'); }
+    else if (this.grit && this.band) this.band.onChord(t);           // grit: the chord root becomes one of the resonators
     this.lastPadBar = this.cond.bar;
     // drone follows (tonic stays)
     const glide = 3 + 3 * C.d;
@@ -712,7 +767,7 @@ export class Score {
     const g = this._groundSlot(now);
     if (!g) return;
     this.lastSplashT = now;
-    this.hit('shaker', g.t, (0.3 + 0.1 * this.rng.float()) * g.vel, { decay: 0.12 + 0.1 * this.rng.float(), tone: 0.75 + 0.2 * this.rng.float(), pan: this.rng.float() - 0.5 });
+    this.hit('shaker', g.t, (0.3 + 0.1 * this.rng.float()) * g.vel, { decay: 0.12 + 0.1 * this.rng.float(), tone: 0.75 + 0.2 * this.rng.float(), pan: this.rng.float() - 0.5 }, false, true);   // the walker's own sound always sounds
     if (this.rng.chance(0.2)) this.hit('grainBurst', g.t, 0.3 * g.vel, { length: 0.16 + 0.1 * this.rng.float(), tone: 0.8 });
     this.log('splash', { at: +g.t.toFixed(3) });
   }
@@ -723,7 +778,7 @@ export class Score {
       const q = this.cond.next16(now + 0.005);             // a slide always sounds (never merged away)
       const t = q.t;
       const vel = t - now <= 0.08 ? 1 : 0.8;
-      this.hit('breath', t, 0.3 * vel, { length: 1.4, tone: 0.8, pitch: 1.25 });
+      this.hit('breath', t, 0.3 * vel, { length: 1.4, tone: 0.8, pitch: 1.25 }, false, true);
       this.hit('grainBurst', t, 0.35 * vel, { length: 0.5, tone: 0.3 });
       this._lastGroundStep = q.step;
       this.log('slide', { at: +t.toFixed(3) });
@@ -747,7 +802,18 @@ export class Score {
     for (const k of LAYERS) layers[k] = 1;
     layers.bass = section === 'ebb' ? 0 : 1;
     layers.ghost = this._ghostFrags().length ? 1 : 0;
-    return { stanza: -1, section, kitSection: section, density: 0.1, drift: 0, modeKind: this.modeKind || 'day', layers };
+    const arr = { stanza: -1, section, kitSection: section, density: 0.1, drift: 0, modeKind: this.modeKind || 'day', layers, formStep: 0 };
+    if (this.grit && this.pal) {
+      const G = planGrit({ pal: this.pal, section, kitSection: section, drift: 0, energy: 0.1, kit: 1, stanza: -1, prev: { formStep: 0, captured: false, drift: 0, section } });
+      Object.assign(layers, G.layers, { glimpse: 0 });
+    } else for (const k of GRIT_LAYERS) layers[k] = 0;
+    return arr;
+  }
+
+  /** the pibroch form step (0 ground, 1–3 variations, 4 transformation, 5 return): chain progress, else the section */
+  _formStep(section) {
+    const f = formStepOf(this.state, this.formMax);
+    return f === null ? (section === 'swell' ? 2 : section === 'flow' ? 1 : 0) : f;
   }
 
   _ghostFrags() { return (this.fragments || []).filter((id) => id !== this.levelId && PROFILES[id]); }
@@ -791,11 +857,24 @@ export class Score {
     layers.bass = kitSection !== 'ebb' && kit > 0.3 ? 1 : 0;
     layers.ghost = this._ghostFrags().length ? 1 : 0;
     const modeKind = this.pendingModeKind || this.modeKind;
-    return {
+    const arr = {
       stanza: x.stanza, section, kitSection, modeKind,
       density: +(clamp((eAvg - 0.08) / 0.75, 0, 1) * (1 - 0.7 * drift)).toFixed(3),
       drift: +drift.toFixed(3), energy: +eAvg.toFixed(3), layers,
+      formStep: this._formStep(section),
     };
+    if (this.grit) {
+      // the palette layers (palette.planGrit): ebb = drone + sub + res + a sparse eroding loop; flow adds grain, contra A,
+      // the crushed broken kit and the arp; swell the wall, contra B and surges; drift drops hard to sub + res + erode
+      const prev = this.arr;
+      const swellRun = section === 'swell' ? (prev && prev.section === 'swell' ? (prev.swellRun ?? 0) + 1 : 0) : -1;
+      const G = planGrit({ pal: this.pal, section, kitSection, drift, energy: eAvg, kit, night: modeKind === 'night', formStep: arr.formStep, stanza: x.stanza, prev, swellRun: Math.max(0, swellRun) });
+      Object.assign(layers, G.layers);
+      if (layers.bass > ON) layers.bass = section === 'swell' && kit > 0.3 ? 0.6 : 0;        // the sub holds the low end; the bass line only in swell
+      layers.drone = drift >= 0.5 ? 0.55 : 0.75;                                             // the old drone sits under the sub and the beat
+      Object.assign(arr, G.flags, { swellRun });
+    } else for (const k of GRIT_LAYERS) layers[k] = 0;
+    return arr;
   }
 
   /** what changed between two arrangements: section / kit section / mode, and layers crossing on ↔ off */
@@ -806,9 +885,14 @@ export class Score {
     if (a.kitSection !== b.kitSection) out.push('kitSection');
     if (a.modeKind !== b.modeKind) out.push('mode');
     for (const k of LAYERS) {
+      if (EVENT_LAYERS.has(k)) continue;
       const x = a.layers[k] > ON, y = b.layers[k] > ON;
       if (x !== y) out.push(k + (y ? '+' : '-'));
     }
+    if (b.contraSurge) out.push('surge');
+    if (b.glimpse) out.push('glimpse');
+    if (b.erodeCapture) out.push('capture');
+    if (b.cut) out.push('cut');
     return out;
   }
 
@@ -827,7 +911,7 @@ export class Score {
     // (reverse swell landing on the downbeat, a short rim run when the pulse comes back). Drops get nothing: they are hard
     // and land on the downbeat.
     if (sec === x.from && this.pickupFor !== x.stanza) {
-      const rising = diff.filter((d) => d.endsWith('+') || (d === 'kitSection' && SEC_RANK[arr.kitSection] > SEC_RANK[this.arr.kitSection]));
+      const rising = diff.filter((d) => d.endsWith('+') || d === 'surge' || (d === 'kitSection' && SEC_RANK[arr.kitSection] > SEC_RANK[this.arr.kitSection]));
       if (rising.length) this._pickup(x, rising);
     }
   }
@@ -835,6 +919,14 @@ export class Score {
   _pickup(x, kinds) {
     this.pickupFor = x.stanza;
     const len = Math.min(this.cond.barDur * 0.5, 2.5), sd = this.cond.stepDur;
+    if (this.grit && this.band) {
+      // grit: a buffer-repeat stutter of the level's played material into the downbeat (a crushed reverse swell when a
+      // surge or the wall is coming, or before the material exists)
+      const how = this.band.pickup(x.at, { swell: kinds.includes('surge') || kinds.includes('wall+'), vel: 0.42 });
+      this.stats.pickups++;
+      this.log('pickup', { stanza: x.stanza, at: +x.at.toFixed(3), what: kinds.join(','), how });
+      return;
+    }
     this.hit('reverseSwell', x.at - len, 0.3, { length: len, tone: 0.5 });
     if (kinds.some((k) => k === 'kit+' || k === 'kitSection' || k === 'bass+')) {
       for (let i = 0; i < 3; i++) this.hit('rim', x.at - (3 - i) * sd, 0.16 + 0.05 * i, { pan: i % 2 ? 0.3 : -0.3, pitch: 1 - 0.08 * i });
@@ -850,8 +942,12 @@ export class Score {
     if (SEC_RANK[arr.kitSection] < SEC_RANK[x.section]) arr.kitSection = x.section;
     const prev = this.arr;
     const diff = this._arrDiff(prev, arr);
-    this.layerRamp = { from: this._layersAt(x.t), to: { ...arr.layers }, t0: x.t, dur: this.beat() };
+    this.layerRamp = { from: this._layersAt(x.t), to: { ...arr.layers }, t0: x.t, dur: this.beat(), cut: !!arr.cut };
     this.arr = arr; this.arrPlan = null;
+    if (this.grit && this.band) {
+      this.band.onStanza(arr, x, prev);
+      if (arr.contraSurge) this.stats.surges++;
+    }
     this.stanzaE = { sum: 0, m: 0, n: 0 };
     this.stats.stanzas++;
     // time-of-day mode variant
@@ -873,8 +969,9 @@ export class Score {
     const R = this.layerRamp, L = this.arr.layers;
     if (!R) return { ...L };
     const k = clamp((t - R.t0) / Math.max(0.01, R.dur), 0, 1);
+    const kc = clamp((t - R.t0) / 0.05, 0, 1);                 // a hard cut: what falls, falls in 50 ms on the downbeat
     const o = {};
-    for (const n of LAYERS) o[n] = R.from[n] + (R.to[n] - R.from[n]) * k;
+    for (const n of LAYERS) { const a = R.from[n] ?? 0, b = R.to[n] ?? 0; o[n] = a + (b - a) * (R.cut && b < a ? kc : k); }
     return o;
   }
 
@@ -882,6 +979,15 @@ export class Score {
     this.stats.transitions++;
     const sd = this.cond.stepDur, len = clamp(lenSec, 0.6, 7), favour = this.profile.kit;
     const C = this.C;
+    if (this.grit && this.band) {
+      // grit: no tom fills, rides or gongs — a crushed reverse swell into the swell, a stutter into flow, nothing into ebb
+      // (the fall back is a hard cut on the downbeat)
+      let how = null;
+      if (to === 'swell') how = this.band.pickup(tApply, { swell: true, vel: 0.5 + 0.1 * C.e });
+      else if (to === 'flow') how = this.band.pickup(tApply, { vel: 0.4 });
+      this.log('transition', { from, to, how });
+      return;
+    }
     if (to === 'swell') {
       this.hit('reverseSwell', t, 0.55 + 0.15 * C.e, { length: len, tone: 0.6 });
       const fill = favour.crash.swellFill;
@@ -915,6 +1021,12 @@ export class Score {
     const cr = this.profile.kit.crash;
     this.stats.sections.push(to);
     this.log('section', { from, to, at: +t.toFixed(3), stanza });
+    if (this.grit) {
+      // grit: a crushed hit on the downbeat instead of a crash (and a timpani)
+      if (to === 'swell') { this.hit('kick', t, 0.8, { decay: 0.3 }); this.hit('snare', t + 0.003, 0.55, { tone: 0.8 }); this.hit('grainBurst', t, 0.4, { length: 0.25, tone: 0.3 }); }
+      else if (to === 'flow' && from === 'ebb') this.hit('snap', t, 0.35, { tone: 0.3 });
+      return;
+    }
     if (to === 'swell') {
       this.hit('crash', t, 0.7 + 0.15 * this.rng.float(), { tone: 0.6 });
       if (this.rng.chance(cr.timp)) this.hit('timp', t, 0.7, { midi: this.rootNow() - 12 });
@@ -968,9 +1080,12 @@ export class Score {
     // ---- bass
     if (arr.layers.bass > ON && pulse > 0.3) this._bassStep(s);
 
+    // ---- the palette layers: contra A / B, grain clicks, the arp, the eroding loop's passes, scrapes
+    if (this.grit && this.band) this.band.onStep(s, this._layersAt(s.t), arr);
+
     // ---- pad breathing: re-articulate the chord each phrase so the harmony never goes silent
     const sparse = sec === 'ebb' || arr.drift > 0.3;                // ebb / drift: the pad swells and ebbs away instead of holding
-    if (s.isPhraseStart && s.bar - this.lastPadBar >= prof.phraseBars && this.entry && !(sparse && arr.drift > 0.3 && rng.chance(0.4))) {
+    if (arr.layers.pad > ON && s.isPhraseStart && s.bar - this.lastPadBar >= prof.phraseBars && this.entry && !(sparse && arr.drift > 0.3 && rng.chance(0.4))) {
       this.padVariant = (this.padVariant + 1) % 3;
       const tones = chordTones(this.rootNow(), this.modeNow(), this.entry);
       const center = prof.pad.center + this.keyShift + 12 * this.altOct;
@@ -986,11 +1101,11 @@ export class Score {
     // ---- crashes / gong / timpani on phrase boundaries
     if (s.isPhraseStart) this._phraseAccents(s, pulse);
 
-    // ---- Eno tape loops (sparse chance bells / pad swells / low plucks)
-    this._loops(s)
+    // ---- Eno tape loops (sparse chance bells / pad swells / low plucks) — retired in the grit palette
+    if (!this.grit) this._loops(s);
 
-    // ---- melodic continuation while ascending/descending
-    if (this.cont.left > 0 && s.t >= this.cont.notBefore && (s.i16 & 1) === 0 && C.d < 0.5 && !this.art.activeCount) {
+    // ---- melodic continuation while ascending/descending (the clean lead: legacy palette only)
+    if (!this.grit && this.cont.left > 0 && s.t >= this.cont.notBefore && (s.i16 & 1) === 0 && C.d < 0.5 && !this.art.activeCount) {
       if (rng.chance(0.4)) {
         const deg = this.markov.next({ dir: this.cont.dir * 0.8, isChord: (d) => this.isChordTone(this._leadMidi(d)) });
         const midi = this._leadMidi(deg);
@@ -1008,8 +1123,12 @@ export class Score {
     // ---- artefact pre-echo layers and resonance
     this.art.onStep(s, this.prox);
 
-    // ---- autonomous motif quote at long phrase boundaries (the album's binding thread)
-    if (s.isPhraseStart && s.phrase % 4 === 3 && sec !== 'swell' && rng.chance(0.25 + 0.4 * C.d)) this._quoteMotif(s);
+    // ---- autonomous motif quote at long phrase boundaries (the album's binding thread); in grit a glimpse on worn tines,
+    //      and only on a stanza downbeat (a glimpse is a stanza-tier event)
+    if (s.isPhraseStart && s.phrase % 4 === 3 && sec !== 'swell' && rng.chance(0.25 + 0.4 * C.d)) {
+      if (!this.grit) this._quoteMotif(s);
+      else if (s.isStanzaStart && this.band && !arr.glimpse && arr.drift < 0.5) { this.band.glimpse(s.t, 0.8, arr.dark ? -24 : -12, s.stanza); this.log('quote', { glimpse: true }); }
+    }
   }
 
   /** the kit's effective section: the arrangement's (momentum may wake it to flow while the section is still ebb) */
@@ -1081,6 +1200,12 @@ export class Score {
   _phraseAccents(s, pulse) {
     const cr = this.profile.kit.crash, rng = this.rng, sec = s.section;
     const t = s.t;
+    if (this.grit) {
+      // grit: no crashes, gongs or timpani on the phrase — a dirty low metal strike now and then, a grain burst
+      if (sec === 'swell' && pulse > 0.3 && rng.chance(cr.phrase * 0.6)) this.hit('metal', t, 0.35, { midi: this.rootNow() - 12 + (rng.chance(0.3) ? 7 : 0), decay: 0.4 + 0.4 * rng.float() });
+      else if (sec !== 'ebb' && pulse > 0.3 && rng.chance(0.25)) this.hit('grainBurst', t, 0.25, { length: 0.2 + 0.2 * rng.float(), tone: 0.3 });
+      return;
+    }
     if (sec === 'swell' && pulse > 0.3) {
       if (rng.chance(cr.phrase)) this.hit('crash', t, 0.5 + 0.25 * rng.float(), { tone: 0.55, decay: this.P.kit.crashDecay * (0.8 + 0.4 * rng.float()) });
       if (rng.chance(cr.gong * 0.5)) this.hit('gong', t, 0.4, { midi: this.rootNow() - 12 + (rng.chance(0.3) ? 7 : 0), decay: 9 + 4 * rng.float() });
@@ -1164,6 +1289,15 @@ export class Score {
     const fp = PROFILES[id];
     const m = motifFor(fp);
     const b = this.beat();
+    if (this.grit && this.band && this.band.g) {
+      // grit: the ghost of a completed level is its motif on worn tines (no glass or bowl bells), resolving to the tonic
+      const notes = m.degrees.map((d) => ({ midi: this.midi(d, 12), grace: null }));
+      notes.push({ midi: this.midi(0, 12), grace: null });
+      const n = this.band.g.glimpse.phrase(notes, this.at(s.t + 0.3), b * 1.6, 0.22, this.stage.ch.ghost.input, rng);
+      this.count('notes', 'ghost', n); this.stats.ghosts++;
+      this.log('ghost', { from: id, at: +s.t.toFixed(3), stanza: s.stanza, bar: s.barInStanza });
+      return;
+    }
     const G = this.stage.v.ghost;
     G.p.kind = fp.ghost.kind;
     let t = s.t + 0.3;
@@ -1232,6 +1366,8 @@ export class Score {
       }
       if (any) ch[name].set(diff, now, ly && ramping ? 0.08 : name === 'lead' || name === 'ghost' ? tc : Math.max(tc, 0.5));      // a layer ramp is followed tick by tick
     }
+    // the palette channels and voices (sub-drone, noise wall, resonators, eroding loop, grains, arp, glimpses)
+    if (this.grit && this.band) this.band.control(now, layers, C, A, bedMul, tc, ramping, R);
 
     // --- voices: altitude / drift / cover → drone & texture
     const dp = prof.drone;

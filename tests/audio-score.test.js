@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { installFakeAudio } from './helpers/fake-audio.js';
+import { installFakeAudio, nonFinite } from './helpers/fake-audio.js';
 import { Game } from '../src/game/sim.js';
 import { Autopilot, planChainRoute } from '../src/game/autopilot.js';
 import { LEVELS } from '../src/world/levels/index.js';
@@ -8,9 +8,9 @@ import { LEVELS } from '../src/world/levels/index.js';
 const ctx = installFakeAudio();
 const { createAudio, withEvents } = await import('../src/audio/index.js');
 
-async function play(li, maxSeconds) {
+async function play(li, maxSeconds, palette = null) {
   ctx.currentTime = 0;
-  const audio = await createAudio(ctx, { seed: 5 + li });
+  const audio = await createAudio(ctx, { seed: 5 + li, palette });
   const progress = { unlocked: LEVELS.slice(0, li + 1).map((l) => l.id), completed: LEVELS.slice(0, li).map((l) => l.id), fragments: LEVELS.slice(0, li).map((l) => l.id), notes: [] };
   const g = new Game({ levels: LEVELS, progress });
   g.loadLevel(li);
@@ -32,20 +32,46 @@ async function play(li, maxSeconds) {
   return { audio, g, t, seen };
 }
 
-test('score plays every level through the walk without throwing, and uses the whole kit and every layer', async () => {
+// Pins updated for the grit palette (phase 2B): the bed no longer plays pads, bells, kalimba / string plucks or the clean lead
+// (was: notes.pad / bass / bell > 0 and lead + aLead > 0 on every level); it plays grain clicks, contra hits, glimpses on worn
+// tines and, on the reel / strathspey tracks, the arp. The old pins still hold in the legacy palette (next test).
+test('score plays every level through the walk without throwing, and uses the whole kit and every palette layer', async () => {
+  nonFinite.length = 0;
   for (let li = 0; li < LEVELS.length; li++) {
     const { audio, t } = await play(li, 120);
-    const ins = audio.inspect();
-    assert.deepEqual(audio.errors, [], LEVELS[li].id + ' update() raised');
+    const ins = audio.inspect(), sc = audio.score, id = LEVELS[li].id;
+    assert.deepEqual(audio.errors, [], id + ' update() raised');
+    assert.equal(sc.pal.palette, 'grit', 'grit is the default palette');
     assert.ok(t > 30, 'walk lasted');
     const hits = ins.stats.hits, notes = ins.stats.notes;
-    assert.ok(Object.keys(hits).length >= 8, LEVELS[li].id + ' kit variety ' + Object.keys(hits).join());
-    for (const k of ['pad', 'bass', 'bell']) assert.ok(notes[k] > 0, LEVELS[li].id + ' ' + k);
-    assert.ok((notes.lead || 0) + (notes.aLead || 0) > 0, LEVELS[li].id + ' lead voice is heard');
+    assert.ok(Object.keys(hits).length >= 8, id + ' kit variety ' + Object.keys(hits).join());
+    for (const k of ['pad', 'bell', 'pluck', 'lead']) assert.ok(!notes[k], `${id}: the retired ${k} is not played by the bed (${notes[k]})`);
+    assert.ok((notes.grain || 0) + (notes.contraA || 0) > 0, id + ' grain clicks / contra');
+    assert.ok(notes.glimpse > 0, id + ' glimpses of the ground');
+    if (sc.pal.arp) assert.ok(notes.arp > 0, id + ' the arp lead'); else assert.ok(!notes.arp, id + ' pibroch: no lead at all');
     assert.ok(ins.stats.chords >= 5, 'chords change with the grid');
-    
+    assert.ok(ins.stats.captures >= 1, id + ' the eroding loop captured');
+    assert.ok(sc.contraLog.length > 0, id + ' contra hits logged');
     assert.ok(ins.timeline.some((e) => e.kind === 'artefact'), 'an artefact played');
+    assert.ok(ins.timeline.some((e) => e.kind === 'entry'), id + ' the grit artefact entry (crushed hit, resonator bloom, stutter)');
     assert.equal(audio.audit().params['ch.lead.crush'] !== undefined, true);
+    for (const k of ['subdrone.wall', 'noisewall.level']) assert.ok(audio.audit().params[k] && audio.audit().params[k].count > 0, id + ' ' + k + ' moves');
+  }
+  assert.deepEqual(nonFinite, [], 'no non-finite value was scheduled on any AudioParam');
+});
+
+test('the legacy palette switch still plays the old palette (pads, bells, plucks, the clean lead) and no palette layer', async () => {
+  for (const li of [0, 2, 5]) {
+    const { audio } = await play(li, 90, 'legacy');
+    const ins = audio.inspect(), sc = audio.score, notes = ins.stats.notes, id = LEVELS[li].id;
+    assert.deepEqual(audio.errors, [], id + ' update() raised');
+    assert.equal(sc.pal.palette, 'legacy');
+    for (const k of ['pad', 'bass', 'bell']) assert.ok(notes[k] > 0, id + ' ' + k);
+    assert.ok((notes.lead || 0) + (notes.aLead || 0) > 0, id + ' lead voice is heard');
+    for (const k of ['grain', 'arp', 'glimpse', 'contraA', 'contraB']) assert.ok(!notes[k], id + ' no ' + k);
+    assert.equal(sc.contraLog.length, 0);
+    assert.equal(sc.stage.g, null, 'the palette voices are never made');
+    for (const k of ['sub', 'wall', 'res', 'erode', 'arp', 'contraA']) assert.equal(sc.arr.layers[k], 0, 'layer ' + k + ' off');
   }
 });
 
@@ -149,7 +175,7 @@ test('back-to-back artefacts release the previous piece over a few seconds (no h
 
 test('pre-warming makes the expensive buffers ahead of need: the queue drains a few items at a time and nothing is made at trigger time', async () => {
   ctx.currentTime = 0;
-  const audio = await createAudio(ctx, { seed: 31 });
+  const audio = await createAudio(ctx, { seed: 31, palette: 'legacy' });          // the KS pluck pre-warm is the legacy palette's
   const g = new Game({ levels: LEVELS, progress: { unlocked: LEVELS.map((l) => l.id), completed: [], fragments: [], notes: [] } });
   g.loadLevel(LEVELS.findIndex((l) => l.id === 'cairngorm')); audio.setLevel(g.level);   // cairngorm: harp plucks
   const sc = audio.score;
@@ -167,6 +193,32 @@ test('pre-warming makes the expensive buffers ahead of need: the queue drains a 
   const before = audio.engine.pluckCache.size;
   sc.stage.v.pluck.note(sc.profile.lead.base + sc.profile.mode[2], ctx.currentTime + 0.1, 1, 0.5);
   assert.equal(audio.engine.pluckCache.size, before, 'no buffer synthesised at trigger time');
+});
+
+test('grit pre-warming: the eroding loop, grains, metal, scrapes, dust and the glimpse tines are rendered ahead, one item per tick', async () => {
+  for (const native of [true, false]) {
+    ctx.currentTime = 0;
+    const audio = await createAudio(ctx, { seed: 32 });
+    if (!native) { audio.engine.erode = null; audio.engine.res = null; }             // no 2A worklets: the JS fallbacks
+    const g = new Game({ levels: LEVELS, progress: { unlocked: LEVELS.map((l) => l.id), completed: [], fragments: [], notes: [] } });
+    g.loadLevel(LEVELS.findIndex((l) => l.id === 'coe')); audio.setLevel(g.level);
+    const sc = audio.score;
+    audio.update(withEvents(g.state, []));
+    const n0 = sc.warmQ.length;
+    assert.ok(n0 > 15, 'a queue of buffers to make');
+    for (let i = 0; i < 1500 && sc.warmQ.length; i++) { ctx.currentTime += 0.05; audio.update(withEvents(g.state, [])); }
+    assert.equal(sc.warmQ.length, 0, 'the queue drains');
+    const G = sc.stage.g;
+    assert.ok(G.erode.material && G.erode.ready, 'the played source and its eroded passes');
+    assert.equal(G.erode.native, native);
+    assert.ok(G.grain.ready && G.grain.metals.length === 2 && G.grain.slices.length > 0 && G.grain.swellBuf, 'grains, metal, slices, the reverse swell');
+    assert.ok(G.wall.scrapes.length >= 4 && G.wall.dustBuf, 'scrapes and dust');
+    for (const n of sc.pal.ground) assert.ok(G.glimpse.has(n.midi - 12, n.grace === null ? null : n.grace - 12), 'tine ' + n.midi);
+    const size = G.glimpse.cache.size;
+    sc.band.glimpse(ctx.currentTime + 0.1, 1);
+    assert.equal(G.glimpse.cache.size, size, 'no tine rendered at trigger time');
+    assert.deepEqual(audio.errors, []);
+  }
 });
 
 // ------------------------------------------------------------------------------------------------

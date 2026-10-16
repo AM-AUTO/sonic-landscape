@@ -426,6 +426,17 @@ export class Artefacts {
    */
   _entry(P, { vel = 1, low = 'timp', crash = true, pad = true, bells = true, swell = 0, pedal = true } = {}) {
     const { S, V, kit, bell, pad: padv, lm, rootLow, cpad } = this._ctx(P);
+    if (S.grit && S.band) {
+      // the grit palette's entry (no crash, add9 pad or bell arpeggio): a crushed hit, a resonator bloom on the tonic and a
+      // short stutter; the tonic pedal stays (the bass only — no supersaw dyad)
+      if (pedal) P.every(0.15, P.dur - 5, 7.4, (t) => { V.aBass.note(rootLow(), S.at(t), 8, 0.5); });
+      P.at(0, (t) => {
+        S.band.entry(t, vel);
+        if (swell) kit('reverseSwell', t, 0.4 * vel, { length: swell, tone: 0.4 });
+        if (low) kit(low, t, 0.7 * vel, { midi: S.rootNow() - 12, decay: low === 'gong' ? 6 : 2.5, tone: 0.2 + 0.3 * S.rng.float() });
+      });
+      return;
+    }
     // a tonic pedal under the whole piece: whatever the foreground plays, the key never leaves the floor
     if (pedal) {
       P.every(0.15, P.dur - 5, 7.4, (t, rel, k) => {
@@ -767,7 +778,7 @@ export class Artefacts {
       };
     };
     draw();
-    P.at(0, (t) => { kit('crash', t, 1.0, { tone: 0.85, decay: 5 }); kit('snare', t, 0.8, { tone: 0.8 }); kit('metal', t, 0.5, { midi: S.midi(0, 24), decay: 0.8, tone: 0.2 + 0.6 * S.rng.float() }); });
+    P.at(0, (t) => { kit('crash', t, 1.0, { tone: 0.85, decay: 5 }); kit('snare', t, 0.8, { tone: 0.8 }); kit('metal', t, 0.5, { midi: S.midi(0, 24), decay: 0.8, tone: 0.2 + 0.6 * S.rng.float() }); if (S.grit && S.band) S.band.entry(t, 1); });
     P.every(0.3, P.dur - 3, sd * 0.5, (t, rel, k) => {
       const i = k % 16;
       const sec = (k / 16) | 0;

@@ -28,13 +28,13 @@ export function withEvents(state, events) {
   return { ...state, events };
 }
 
-export async function createAudio(ctx, { seed = 1 } = {}) {
+export async function createAudio(ctx, { seed = 1, palette = null } = {}) {
   const engine = await createEngine(ctx, { seed });
   // the noise buffers the percussion and the texture layers loop: made once, here, while the caller is still loading (~150 ms),
   // so the first updates of a level never have to synthesise them
   engine.noiseBuffer('white', 12); engine.noiseBuffer('pink', 12);
   for (const [k, sec] of TEXTURE_NOISE) engine.noiseBuffer(k, sec);
-  const score = new Score(engine);
+  const score = new Score(engine, { palette });          // palette: null (each profile's own, default 'grit') | 'grit' | 'legacy'
   let volume = 1;
   const seen = new Set();
   const audio = {
@@ -66,6 +66,7 @@ export async function createAudio(ctx, { seed = 1 } = {}) {
         if (score.drone) score.drone.stop(t);
         score.stage.v.texture.stop(t);
         score.stage.v.kit.dispose(); score.stage.v.aKit.dispose();
+        if (score.band) score.band.sleep(t);
       } catch (e) { /* already gone */ }
       engine.dispose();
     },
