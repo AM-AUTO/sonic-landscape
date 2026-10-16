@@ -141,6 +141,11 @@ function reverb(inp, rt = 4, damp = 0.4, pre = 0.02) {
 }
 
 function master(mix, file) {
+  // DC blocker (the asymmetric saturation leaves an offset) and a gentle high shelf for edge
+  for (const ch of mix) {
+    let x1 = 0, y1 = 0; for (let i = 0; i < ch.length; i++) { const y = ch[i] - x1 + 0.9995 * y1; x1 = ch[i]; y1 = y; ch[i] = y; }
+    let lp = 0; const a = 1 - Math.exp(-2 * Math.PI * 2800 / SR); for (let i = 0; i < ch.length; i++) { lp += a * (ch[i] - lp); ch[i] += 0.55 * (ch[i] - lp); }
+  }
   let peak = 0; for (const ch of mix) for (const v of ch) peak = Math.max(peak, Math.abs(v));
   const g = 0.89 / (peak || 1), n = mix[0].length, pcm = Buffer.alloc(n * 4);
   for (let i = 0; i < n; i++) for (let c = 0; c < 2; c++) pcm.writeInt16LE(Math.round(sat(mix[c][i] * g, 1.1) * 32000), i * 4 + c * 2);
@@ -177,73 +182,189 @@ function groundEvents(g, loops = 2, t0 = 2) {
   return { ev, end: t };
 }
 
+// ---------------------------------------------------------------------------- edge and texture (round 3)
+/** Asymmetric tape-style saturation: even harmonics from the bias, soft ceiling. */
+const tape = (x, d = 2, bias = 0.15) => (Math.tanh(d * (x + bias)) - Math.tanh(d * bias)) / Math.tanh(d);
+/** Wavefolder: folds peaks back, adds bright grit as the input rises. */
+const fold = (x, amt = 1.5) => Math.sin(x * amt * Math.PI / 2);
+function shape(x, fn) { const y = new Float32Array(x.length); for (let i = 0; i < x.length; i++) y[i] = fn(x[i], i); return y; }
+/** Bitcrush and sample-and-hold: dirt, used sparingly. */
+function crush(x, bits = 8, hold = 3) { const q = 2 ** (bits - 1), y = new Float32Array(x.length); let h = 0; for (let i = 0; i < x.length; i++) { if (i % hold === 0) h = Math.round(x[i] * q) / q; y[i] = h; } return y; }
+/** Band-limited moving noise (wind, surf): a band-pass from two one-poles, its centre and level breathing. */
+function windNoise(sec, { lo = 300, hi = 3000, rate = 0.07, depth = 0.7 } = {}) {
+  const n = Math.ceil(sec * SR), y = new Float32Array(n); let a = 0, b = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR, m = 0.5 + 0.5 * Math.sin(2 * Math.PI * rate * t + Math.sin(t * 0.31) * 2);
+    const fc = lo + (hi - lo) * m, x = rnd() * 2 - 1;
+    const ka = 1 - Math.exp(-2 * Math.PI * fc / SR), kb = 1 - Math.exp(-2 * Math.PI * fc * 0.35 / SR);
+    a += ka * (x - a); b += kb * (x - b);
+    y[i] = (a - b) * (1 - depth + depth * m) * 2.2;
+  }
+  return y;
+}
+/** Dust and crackle: sparse clicks with tiny rings, density per second. */
+function dust(sec, density = 12, level = 0.3) {
+  const y = new Float32Array(Math.ceil(sec * SR)), n = Math.floor(sec * density);
+  for (let k = 0; k < n; k++) { const i0 = Math.floor(rnd() * y.length), amp = level * rnd() ** 2 * (rnd() < 0.5 ? -1 : 1), len = 30 + Math.floor(rnd() * 200); for (let j = 0; j < len && i0 + j < y.length; j++) y[i0 + j] += amp * Math.exp(-j / (len / 5)) * (j % 2 ? -1 : 1); }
+  return y;
+}
+/** Granular noise bursts: short shaped noise grains, filtered, scattered. */
+function noiseBursts(sec, { density = 3, gmin = 0.03, gmax = 0.25, fc = 2500, level = 0.4 } = {}) {
+  const y = new Float32Array(Math.ceil(sec * SR)), n = Math.floor(sec * density);
+  for (let k = 0; k < n; k++) {
+    const i0 = Math.floor(rnd() * y.length), len = Math.floor((gmin + rnd() * (gmax - gmin)) * SR), f = fc * (0.5 + rnd()), a = 1 - Math.exp(-2 * Math.PI * f / SR); let s = 0;
+    for (let j = 0; j < len && i0 + j < y.length; j++) { s += a * ((rnd() * 2 - 1) - s); y[i0 + j] += s * level * Math.sin(Math.PI * j / len) ** 2; }
+  }
+  return y;
+}
+/** Piecewise-linear curve over time: [[t, v], ...]. */
+const curve = (pts) => (t) => { if (t <= pts[0][0]) return pts[0][1]; for (let k = 1; k < pts.length; k++) if (t <= pts[k][0]) { const [t0, v0] = pts[k - 1], [t1, v1] = pts[k]; return v0 + (v1 - v0) * (t - t0) / (t1 - t0); } return pts.at(-1)[1]; };
+function applyCurve(st, fn) { for (const ch of st) for (let i = 0; i < ch.length; i++) ch[i] *= fn(i / SR); return st; }
+/** Sidechain: duck a stereo buffer after each trigger time. */
+function duck(st, times, depth = 0.6, rel = 0.22) {
+  const sorted = times.slice().sort((a, b) => a - b); let k = 0;
+  for (let i = 0; i < st[0].length; i++) { const t = i / SR; while (k + 1 < sorted.length && sorted[k + 1] <= t) k++; const d = sorted.length && t >= sorted[k] ? depth * Math.exp(-(t - sorted[k]) / rel) : 0; st[0][i] *= 1 - d; st[1][i] *= 1 - d; }
+  return st;
+}
+/** Bus compressor (peak follower, feed-forward), then make-up. */
+function compress(st, threshDb = -18, ratio = 3, att = 0.005, rel = 0.12, makeup = 1.6) {
+  const th = 10 ** (threshDb / 20), ka = 1 - Math.exp(-1 / (att * SR)), kr = 1 - Math.exp(-1 / (rel * SR)); let env = 0;
+  for (let i = 0; i < st[0].length; i++) { const x = Math.max(Math.abs(st[0][i]), Math.abs(st[1][i])); env += (x > env ? ka : kr) * (x - env); const g = env > th ? (th * (env / th) ** (1 / ratio)) / env : 1; st[0][i] *= g * makeup; st[1][i] *= g * makeup; }
+  return st;
+}
+
+// percussion voices
+function kickHard(level = 1, drive = 3) {
+  const n = Math.ceil(0.55 * SR), out = new Float32Array(n); let ph = 0;
+  for (let i = 0; i < n; i++) { const t = i / SR, f = 42 + 110 * Math.exp(-t / 0.03); ph += 2 * Math.PI * f / SR; const click = i < 90 ? (rnd() * 2 - 1) * 0.5 * (1 - i / 90) : 0; out[i] = tape((Math.sin(ph) * Math.exp(-t / 0.32) + click) * 1.2, drive, 0.1) * level; }
+  return out;
+}
+function snareNoise(level = 1, len = 0.22) {
+  const n = Math.ceil(len * SR), out = new Float32Array(n); let ph = 0, lp = 0, hp = 0;
+  for (let i = 0; i < n; i++) { const t = i / SR, x = rnd() * 2 - 1; lp += 0.55 * (x - lp); hp += 0.08 * (lp - hp); ph += 2 * Math.PI * 185 / SR; out[i] = tape((lp - hp) * Math.exp(-t / 0.07) * 1.4 + Math.sin(ph) * 0.6 * Math.exp(-t / 0.04), 2.2, 0.05) * level; }
+  return out;
+}
+function hatMetal(level = 1, decay = 0.03) {
+  const fs = [263, 400, 421, 474, 587, 845].map((f) => f * 4.3), n = Math.ceil((decay * 6 + 0.01) * SR), out = new Float32Array(n); let p1 = 0, p2 = 0;
+  for (let i = 0; i < n; i++) { const t = i / SR; let s = 0; for (const f of fs) s += Math.sin(2 * Math.PI * f * t) > 0 ? 1 : -1; s = s / 6 + (rnd() * 2 - 1) * 0.6; const d1 = s - p1; p1 = s; const d2 = d1 - p2; p2 = d1; out[i] = d2 * 0.5 * Math.exp(-t / decay) * level; }
+  return out;
+}
+function tom(f, level = 1) { const n = Math.ceil(0.5 * SR), out = new Float32Array(n); let ph = 0; for (let i = 0; i < n; i++) { const t = i / SR; ph += 2 * Math.PI * f * (1 + 0.6 * Math.exp(-t / 0.05)) / SR; out[i] = tape(Math.sin(ph) * Math.exp(-t / 0.28) + (i < 120 ? (rnd() - 0.5) * 0.4 : 0), 2, 0.05) * level; } return out; }
+/** Bowed or struck metal: inharmonic modes (bar ratios), slow or sharp onset, long decay. */
+function metalHit(f, { level = 0.4, attack = 0.25, decay = 2.8, len = 4 } = {}) {
+  const R = [1, 2.756, 5.404, 8.933, 13.34, 18.64], n = Math.ceil(len * SR), out = new Float32Array(n);
+  for (let k = 0; k < R.length; k++) { const fk = f * R[k]; if (fk > 16000) break; const a = level / (k + 1) ** 0.8, dk = decay / (1 + k * 0.45), w = 2 * Math.PI * fk / SR, ph = rnd() * 6; for (let i = 0; i < n; i++) { const t = i / SR; out[i] += a * Math.sin(w * i + ph) * Math.min(1, t / attack) * Math.exp(-t / dk); } }
+  return out;
+}
+function thud(level = 0.6) { const n = Math.ceil(0.4 * SR), out = new Float32Array(n); let s = 0, ph = 0; for (let i = 0; i < n; i++) { const t = i / SR; s += 0.02 * ((rnd() * 2 - 1) - s); ph += 2 * Math.PI * (52 + 30 * Math.exp(-t / 0.02)) / SR; out[i] = (Math.sin(ph) * 0.8 + s * 6) * Math.exp(-t / 0.18) * level; } return out; }
+
+/** The forceful version of the drone: the bed plus a saturated, folded wall layer and moving noise, shaped by `wall(t)`. */
+function droneWall(sec, wall, opt = {}) {
+  const bed = droneBed(sec, opt);
+  const raw = new Float32Array(Math.ceil(sec * SR));
+  for (const [n, a] of [['A1', 0.6], ['A2', 1], ['E3', 0.8], ['A3', 0.5], ['E4', 0.25]]) { const s = bowedString(freq(n), sec, { bright: 0.7, swell: 5 + rnd() * 4 }); for (let i = 0; i < raw.length; i++) raw[i] += s[i] * a; }
+  const hot = lowpass(shape(raw, (x) => fold(tape(x * 3.5, 4, 0.2), 1.3)), (t) => 900 + 2600 * wall(t));
+  const nz = windNoise(sec, { lo: 400, hi: 5000, rate: 0.05, depth: 0.5 });
+  const wallSt = [new Float32Array(raw.length), new Float32Array(raw.length)];
+  for (let i = 0; i < raw.length; i++) { const w = wall(i / SR); wallSt[0][i] = (hot[i] * 0.55 + nz[i] * 0.5) * w; wallSt[1][i] = (hot[i] * 0.5 + nz[(i + 911) % nz.length] * 0.5) * w; }
+  add(bed, granulate(wallSt[0], { density: 22, gmin: 0.05, gmax: 0.3, cents: 20, oct: 0.05, rev: 0.4 }), 0.6);
+  add(bed, wallSt, 1);
+  return bed;
+}
+
 // ---------------------------------------------------------------------------- the three sketches
 const SKETCHES = {
-  // Fennesz end (axis 2): the ground buried in a frozen, saturated granular cloud; re-struck soft plucks
+  // Fennesz end (axis 2): forceful drone wall in the middle, near-silence after; textural percussion, no beat
   lyon() {
     const g = GROUNDS['3-lyon'], { ev, end } = groundEvents(g, 2, 3), sec = end + 9;
-    const mix = droneBed(sec, { drive: 3.5, smear: 0.9, hiss: 0.03, sweep: 30, lo: 400, hi: 1800 });
-    const voice = new Float32Array(Math.ceil(sec * SR));
+    const wall = curve([[0, 0.05], [10, 0.15], [24, 0.6], [30, 1], [42, 1], [46, 0.05], [56, 0.05], [62, 0.3], [sec, 0]]);
+    const mix = droneWall(sec, wall, { drive: 3.8, smear: 0.9, hiss: 0.05, sweep: 30, lo: 350, hi: 1700 });
+    applyCurve(mix, curve([[0, 0.5], [8, 0.8], [30, 1], [44, 1], [47, 0.25], [56, 0.3], [62, 0.7], [sec, 0.4]]));
+    const voice = new Float32Array(Math.ceil(sec * SR)), perc = [new Float32Array(voice.length), new Float32Array(voice.length)];
     for (const e of ev) {
-      // long notes sustained by a slow, decaying re-strike (no blown tone)
       const step = 60 / g.bpm / 2;
       for (let k = 0, t = e.t; t < e.t + e.dur - 0.05; k++, t += step) {
-        const p = lpgPluck(freq(e.pitch), { ratio: 1, index: 1.2, decay: 0.9, grace: k === 0 && e.grace ? freq(e.grace) : null, level: 0.5 * 0.8 ** k });
+        const p = shape(lpgPluck(freq(e.pitch), { ratio: 1, index: 1.4, decay: 0.9, grace: k === 0 && e.grace ? freq(e.grace) : null, level: 0.5 * 0.8 ** k }), (x) => tape(x * 1.6, 1.8, 0.1));
         const i0 = Math.floor(t * SR); for (let j = 0; j < p.length && i0 + j < voice.length; j++) voice[i0 + j] += p[j];
       }
-      // the ornament leaves a glint: a tiny high grain an octave up
-      if (e.grace) { const gl = lpgPluck(freq(e.pitch) * 4, { ratio: 1, index: 0.3, decay: 0.08, level: 0.12 }); const i0 = Math.floor(e.t * SR); for (let j = 0; j < gl.length && i0 + j < voice.length; j++) voice[i0 + j] += gl[j]; }
+      mixInto(perc, thud(1.1), e.t, 0.6, 0.55);                                                     // a low thud under every onset
+      if (e.dur >= 60 / g.bpm * 4) mixInto(perc, metalHit(freq(e.pitch) / 2, { level: 0.22, attack: 0.4, decay: 3.5, len: 5 }), e.t + e.dur * 0.6, 0.4, 0.6);   // bowed metal at phrase ends
     }
-    add(mix, mono2(voice, 0.55, 0.45), 0.8);
-    add(mix, granulate(voice, { density: 30, gmin: 0.15, gmax: 0.6, back: 3, cents: 6, oct: 0.2, rev: 0.4 }), 1.1);   // the melody half-buried in its own smear
-    add(mix, reverb(mix, 9, 0.5, 0.03), 0.5);
-    return mix;
+    add(perc, applyCurve(mono2(noiseBursts(sec, { density: 3, fc: 5000, level: 0.45 }), 0.5, 0.6), wall), 1);     // crackle bursts ride the wall
+    add(perc, mono2(dust(sec, 9, 0.25), 0.55, 0.5), 1);
+    add(mix, mono2(voice, 0.55, 0.45), 0.85);
+    add(mix, granulate(voice, { density: 30, gmin: 0.15, gmax: 0.6, back: 3, cents: 6, oct: 0.2, rev: 0.4 }), 1.0);
+    add(mix, perc, 1);
+    add(mix, reverb(mix, 9, 0.5, 0.03), 0.42);
+    return compress(mix, -16, 2.5, 0.01, 0.25, 1.4);
   },
 
-  // Floating Points end (axis 8): the reel cell on interlocking LPG plucks, kick, sub, birl ticks; phase section in the second half
+  // Floating Points end (axis 8), rebuilt: low, straight, bass-led reel; heavy kit; forceful pumping drone wall
   coe() {
-    const g = GROUNDS['6-coe'], spb = 60 / g.bpm, cell = parseGround(g.notes), bars = 16, sec = 2 + bars * 4 * spb + 6;
-    const mix = droneBed(sec, { drive: 2, smear: 0.35, hiss: 0.012, sweep: 16, lo: 700, hi: 3200 });
-    for (const ch of mix) for (let i = 0; i < ch.length; i++) ch[i] *= 0.6;
-    const eighth = spb / 2, t0 = 2, swing = 0.04;
+    const g = GROUNDS['6-coe'], spb = 60 / g.bpm, cell = parseGround(g.notes), bars = 20, t0 = 1.5, sec = t0 + bars * 4 * spb + 5, eighth = spb / 2;
+    const barT = (b) => t0 + b * 4 * spb;
+    const wall = curve([[0, 0.7], [barT(4), 0.9], [barT(12), 1], [barT(16), 0.8], [barT(18), 1], [sec, 0.3]]);
+    const mix = droneWall(sec, wall, { drive: 4, smear: 0.4, hiss: 0.04, sweep: 14, lo: 300, hi: 2200 });
+    applyCurve(mix, curve([[0, 0.55], [barT(4), 0.7], [barT(16), 0.7], [sec, 0.5]]));
     const notes = cell.map((n) => n.pitch), graces = cell.map((n) => (n.graces.length ? n.graces.at(-1) : null));
+    const bass = new Float32Array(Math.ceil(sec * SR)), plucks = [new Float32Array(bass.length), new Float32Array(bass.length)], kit = [new Float32Array(bass.length), new Float32Array(bass.length)];
+    const kicks = [];
     for (let b = 0; b < bars * 8; b++) {
-      const t = t0 + b * eighth + (b % 2 ? swing * eighth : 0), i = b % 16, bar = Math.floor(b / 8);
-      // voice A: the cell itself, panned right
-      const p = lpgPluck(freq(notes[i]), { ratio: 2, index: 3.2, decay: 0.16, grace: graces[i] ? freq(graces[i]) : null, level: 0.42 * (i % 4 === 0 ? 1 : 0.75) });
-      mixInto(mix, p, t, 0.35, 0.65);
-      // voice B from bar 8: the same cell grouped in threes (3 against 4), an octave up, panned left: the Transformation
-      if (bar >= 8 && b % 3 === 0) mixInto(mix, lpgPluck(freq(notes[(b / 3 | 0) % 16]) * 2, { ratio: 3.5, index: 1.6, decay: 0.12, level: 0.22 }), t + 0.01, 0.7, 0.3);
-      // kit from bar 4: kick on 1 and 3 (2/2 feel), birl ticks before beats, offbeat hats
-      if (bar >= 4) {
-        if (b % 4 === 0) mixInto(mix, kick(0.7), t, 0.7);
-        if (b % 2 === 1) mixInto(mix, tick(0.28), t, 0.45, 0.55);
-        if (b % 8 === 7) for (let k = 0; k < 3; k++) mixInto(mix, tick(0.18, 0.012), t + k * eighth / 3, 0.5);   // the birl as a triplet flutter
-        if (b % 4 === 0) mixInto(mix, subBass(freq(notes[i]) / 4, eighth * 1.6, 0.3), t, 0.6);
-      }
+      const t = t0 + b * eighth, i = b % 16, bar = Math.floor(b / 8), full = bar >= 4 && bar < 16, phase = bar >= 12 && bar < 16;
+      // bass: the reel cell itself, two octaves down, saw stack through a closing filter and tape
+      { const f = freq(notes[i]) / 4, n = Math.floor(eighth * 0.85 * SR), i0 = Math.floor(t * SR); let ph = 0, s = 0;
+        for (let j = 0; j < n && i0 + j < bass.length; j++) { ph += f / SR; let saw = 0; for (let k = 1; k <= 12; k++) saw += Math.sin(2 * Math.PI * k * ph) / k; const tt = j / SR, fc = 220 + 1400 * Math.exp(-tt / 0.06) * (graces[i] && tt < 0.01 ? 1.6 : 1), a = 1 - Math.exp(-2 * Math.PI * fc / SR); s += a * (saw - s); bass[i0 + j] += tape(s * 1.4, 3, 0.15) * 0.55 * Math.min(1, j / 60, (n - j) / 200); } }
+      // plucks: an octave down from before, darker and gritty; in the phase section a second line in threes
+      if (bar >= 2) { const p = shape(lpgPluck(freq(notes[i]) / 2, { ratio: 1, index: 1.6, decay: 0.28, grace: graces[i] ? freq(graces[i]) / 2 : null, level: 0.35 }), (x) => fold(tape(x * 2, 2.5, 0.2), 1.2)); mixInto(plucks, p, t, 0.42, 0.58); }
+      if (phase && b % 3 === 0) { const p = shape(lpgPluck(freq(notes[(b / 3 | 0) % 16]) / 2, { ratio: 1.5, index: 2, decay: 0.22, level: 0.28 }), (x) => tape(x * 2, 3, 0.2)); mixInto(plucks, p, t, 0.62, 0.38); }
+      // kit: kick 1 and 3, snare 2 and 4, gritty 16th hats, a hat roll for the birl, tom fills into section changes
+      if (bar >= 1 && b % 4 === 0) { mixInto(kit, kickHard(full ? 1 : 0.8), t, 0.9); kicks.push(t); }
+      if (full && b % 8 === 4) mixInto(kit, snareNoise(0.75), t, 0.52, 0.48);
+      if (full && b % 8 === 0 && bar % 2 === 1) mixInto(kit, snareNoise(0.25, 0.1), t - eighth / 2, 0.5);
+      if (full) for (let h = 0; h < 2; h++) mixInto(kit, hatMetal(h ? 0.4 : 0.55, b % 2 && h ? 0.09 : 0.025), t + h * eighth / 2, 0.42, 0.58);
+      if (full && b % 8 === 7) for (let k = 0; k < 4; k++) mixInto(kit, hatMetal(0.35, 0.02), t + k * eighth / 4, 0.4, 0.6);   // the birl: a gritty roll
+      if ((bar === 3 || bar === 11 || bar === 15) && b % 8 >= 5) mixInto(kit, tom([110, 98, 82][b % 8 - 5], 0.6), t, 0.55, 0.45);
     }
-    // sidechain-ish duck of the drone on kicks
-    const dry = [mix[0].slice(), mix[1].slice()];
-    add(mix, reverb(dry, 1.8, 0.35, 0.01), 0.18);
-    return mix;
+    duck(mix, kicks, 0.55, 0.25);                                                                    // the wall pumps against the kick
+    add(mix, mono2(crush(bass, 9, 2), 0.95, 0.95), 1);
+    add(mix, plucks, 1);
+    add(mix, mono2(dust(sec, 6, 0.2), 0.5, 0.55), 1);
+    add(kit, reverb(kit, 0.9, 0.3, 0.005), 0.25);                                                   // a short room on the kit
+    add(mix, kit, 1);
+    add(mix, reverb(mix, 1.6, 0.4, 0.01), 0.12);
+    return compress(mix, -18, 3.5, 0.004, 0.12, 1.8);
   },
 
-  // The album ground in between (axis 4-5): electric-piano-like FM, re-struck sustains, soft granular echo, no beat
+  // The album ground (axis 4-5): sparse, then a heavy half-time pulse under the drone wall, then sparse again
   album() {
-    const g = GROUNDS.album, { ev, end } = groundEvents(g, 2, 3), sec = end + 8;
-    const mix = droneBed(sec, { drive: 2.4, smear: 0.55, hiss: 0.015, sweep: 22, lo: 500, hi: 2400 });
-    const voice = new Float32Array(Math.ceil(sec * SR));
+    const g = GROUNDS.album, { ev, end } = groundEvents(g, 2, 3), sec = end + 8, spb = 60 / g.bpm, bar = 4 * spb;
+    const wall = curve([[0, 0.05], [12, 0.2], [20, 0.8], [24, 1], [50, 1], [54, 0.15], [sec, 0.05]]);
+    const mix = droneWall(sec, wall, { drive: 2.8, smear: 0.55, hiss: 0.03, sweep: 22, lo: 450, hi: 2300 });
+    applyCurve(mix, curve([[0, 0.55], [20, 0.8], [52, 0.8], [56, 0.45], [sec, 0.4]]));
+    const voice = new Float32Array(Math.ceil(sec * SR)), kit = [new Float32Array(voice.length), new Float32Array(voice.length)], kicks = [];
     for (const e of ev) {
-      const step = 60 / g.bpm / 2;
+      const step = spb / 2;
       for (let k = 0, t = e.t; t < e.t + e.dur - 0.05; k++, t += step) {
-        const p = lpgPluck(freq(e.pitch), { ratio: 1, index: 1.8, decay: 1.1, grace: k === 0 && e.grace ? freq(e.grace) : null, level: 0.55 * 0.72 ** k, dur: 1.8 });
+        const p = shape(lpgPluck(freq(e.pitch), { ratio: 1, index: 2, decay: 1.1, grace: k === 0 && e.grace ? freq(e.grace) : null, level: 0.55 * 0.72 ** k, dur: 1.8 }), (x) => tape(x * 1.4, 1.6, 0.1));
         const i0 = Math.floor(t * SR); for (let j = 0; j < p.length && i0 + j < voice.length; j++) voice[i0 + j] += p[j];
       }
+      if (e.dur >= 2 * spb) mixInto(kit, metalHit(freq(e.pitch), { level: 0.12, attack: 0.01, decay: 1.6, len: 2.5 }), e.t, 0.45, 0.55);   // struck metal on long notes
     }
+    // half-time pulse from 20 s to 52 s: kick on 1, noise snare on 3, a ghost kick, dusty 8th hats
+    for (let t = 3 + Math.ceil((20 - 3) / bar) * bar; t < 52; t += bar) {
+      mixInto(kit, kickHard(0.95, 3.5), t, 0.9); kicks.push(t);
+      mixInto(kit, snareNoise(0.7, 0.3), t + 2 * spb, 0.5);
+      if (rnd() < 0.6) { mixInto(kit, kickHard(0.5, 2), t + 2.75 * spb, 0.9); kicks.push(t + 2.75 * spb); }
+      for (let h = 0; h < 8; h++) mixInto(kit, hatMetal(h % 2 ? 0.22 : 0.35, 0.02), t + h * spb / 2, 0.45, 0.55);
+    }
+    duck(mix, kicks, 0.5, 0.3);
     add(mix, mono2(voice, 0.5, 0.5), 1);
     add(mix, granulate(voice, { density: 14, gmin: 0.1, gmax: 0.35, back: 2, cents: 4, oct: 0.15, rev: 0.2 }), 0.6);
-    add(mix, reverb(mix, 5, 0.45, 0.02), 0.4);
-    return mix;
+    add(mix, mono2(dust(sec, 8, 0.22), 0.5, 0.55), 1);
+    add(kit, reverb(kit, 1.4, 0.35, 0.008), 0.3);
+    add(mix, kit, 1);
+    add(mix, reverb(mix, 5, 0.45, 0.02), 0.32);
+    return compress(mix, -17, 3, 0.006, 0.18, 1.6);
   },
 };
 
