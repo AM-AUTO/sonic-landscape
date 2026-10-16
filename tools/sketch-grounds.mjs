@@ -345,112 +345,235 @@ function guardrails(name, mix, noiseBed, music) {
 const monoOf = (st) => st[0].map((v, i) => (v + st[1][i]) * 0.5);
 const VOICING = { light: ['A2', 'E3', 'B3', 'C#4', 'F#4', 'A4'], cold: ['A2', 'E3', 'B3', 'D4', 'E4', 'A4'], sus: ['A2', 'E3', 'A3', 'D4', 'G4', 'A4'] };
 
+// ---------------------------------------------------------------------------- round 5: grit first, Highland grammar as substrate
+/** Comb resonator excited by `x`, its pitch following `fAt(t)` (fractional delay, damped loop): pitch heard only as resonance inside noise. */
+function resonate(x, fAt, { g = 0.965, damp = 0.35 } = {}) {
+  const MAX = 4096, buf = new Float32Array(MAX), y = new Float32Array(x.length); let w = 0, lp = 0;
+  for (let i = 0; i < x.length; i++) {
+    const d = Math.min(MAX - 2, SR / fAt(i / SR)), r = w - d, i0 = Math.floor(r), fr = r - i0;
+    const a = buf[(i0 + MAX) % MAX], b = buf[(i0 + 1 + MAX) % MAX], fb = a + (b - a) * fr;
+    lp += (1 - damp) * (fb - lp);
+    const v = x[i] + g * lp; buf[w % MAX] = v; w++; y[i] = v;
+  }
+  return y;
+}
+const pinkish = (n) => { const y = new Float32Array(n); let b0 = 0, b1 = 0, b2 = 0; for (let i = 0; i < n; i++) { const w = rnd() * 2 - 1; b0 = 0.997 * b0 + w * 0.029; b1 = 0.985 * b1 + w * 0.032; b2 = 0.95 * b2 + w * 0.048; y[i] = b0 + b1 + b2 + w * 0.02; } return y; };
+/** A step function of the ground's pitch over time (for resonators): the ground as substrate. */
+const groundPitchAt = (ev, mult = 1) => (t) => { let f = freq('A3'); for (const e of ev) { if (e.t > t) break; f = freq(e.pitch) * mult; } return f; };
+/**
+ * Eroding loop: `frag` repeated `passes` times, each pass older — wow and flutter, dropouts, fewer bits, a closing filter, more crackle.
+ * Returns { out, marks } where marks are the pass start indices (for the decay guardrail).
+ */
+function erodeLoop(frag, passes = 6, { maxWow = 0.012 } = {}) {
+  const n = frag.length, out = new Float32Array(n * passes), marks = [];
+  for (let p = 0; p < passes; p++) {
+    const deg = passes > 1 ? p / (passes - 1) : 1, base = p * n, bits = Math.round(13 - 9 * deg), hold = 1 + Math.round(6 * deg);
+    const fc = 400 + 8600 * (1 - deg) ** 1.6, a = 1 - Math.exp(-2 * Math.PI * fc / SR); let s = 0, h = 0, drop = 1, read = 0;
+    marks.push(base);
+    for (let j = 0; j < n; j++) {
+      const t = j / SR, rate = 1 + maxWow * deg * Math.sin(2 * Math.PI * 0.45 * t + p) + 0.3 * maxWow * deg * Math.sin(2 * Math.PI * 7.3 * t);
+      read += rate; const i0 = Math.floor(read) % n, v = frag[i0];
+      if (rnd() < 0.00004 * (1 + 60 * deg)) drop = 0.03; drop += (1 - drop) * 0.0006;
+      if (j % hold === 0) h = Math.round(v * 2 ** (bits - 1)) / 2 ** (bits - 1);
+      s += a * (h - s);
+      out[base + j] = s * drop * (1 - 0.35 * deg) + (rnd() < 0.002 * deg ? (rnd() - 0.5) * 0.4 * deg : 0);
+    }
+  }
+  return { out, marks, frag };
+}
+/** Contact-mic scrape: band-limited noise with sharp, irregular amplitude spikes. */
+function scrape(sec, { density = 1.5, fc = 1800, level = 0.5 } = {}) {
+  const y = new Float32Array(Math.ceil(sec * SR)), n = Math.floor(sec * density);
+  for (let k = 0; k < n; k++) {
+    const i0 = Math.floor(rnd() * y.length), len = Math.floor((0.08 + rnd() * 0.5) * SR), f = fc * (0.6 + rnd() * 0.8), a = 1 - Math.exp(-2 * Math.PI * f / SR); let s = 0, s2 = 0, amp = 0;
+    for (let j = 0; j < len && i0 + j < y.length; j++) { if (rnd() < 0.004) amp = rnd(); amp *= 0.9993; s += a * ((rnd() * 2 - 1) - s); s2 += a * 0.3 * (s - s2); y[i0 + j] += (s - s2) * amp * level * Math.sin(Math.PI * j / len); }
+  }
+  return y;
+}
+/** Grain click: a 3-12 ms burst of saturated noise or of `src` at a random spot (rhythm made of grain). */
+function grainClick(level = 0.5, src = null) {
+  const n = Math.floor((0.003 + rnd() * 0.009) * SR), out = new Float32Array(n), from = src ? Math.floor(rnd() * (src.length - n)) : 0;
+  for (let j = 0; j < n; j++) { const w = Math.sin(Math.PI * j / n); out[j] = tape((src ? src[from + j] * 3 : rnd() * 2 - 1) * w, 3, 0.1) * level; }
+  return out;
+}
+/** Reverse-reverb swell: a snippet's reverb tail, reversed, landing on `at`. */
+function reverseSwell(st, snippet, at, rt = 3, level = 0.6) {
+  const pad = Math.ceil(rt * SR), x = new Float32Array(snippet.length + pad); x.set(snippet);
+  const wet = reverb([x, x], rt, 0.45, 0), len = wet[0].length;
+  for (let c = 0; c < 2; c++) { const rev = wet[c].slice().reverse(); mixInto([st[c], st[c]], rev, at - len / SR, c === 0 ? level : 0, c === 1 ? level : 0); }
+}
+const dirty = (x, bits = 6, drive = 3) => shape(crush(x, bits, 2), (v) => tape(v * 1.4, drive, 0.12));
+/** Sub (mono A1+A2) and a detuned, beating, distorted mid drone. */
+function subAndBeat(sec, { sub = 0.5, beat = 0.5, fc = 1300 } = {}) {
+  const n = Math.ceil(sec * SR), s = new Float32Array(n), b = new Float32Array(n);
+  let p1 = 0, p2 = 0; for (let i = 0; i < n; i++) { p1 += freq('A1') / SR; p2 += freq('A2') / SR; s[i] = tape(Math.sin(2 * Math.PI * p1) * 0.7 + Math.sin(2 * Math.PI * p2) * 0.4, 1.4, 0.05) * sub; }
+  const det = [['A2', -7], ['A2', 6], ['E3', -5], ['E3', 8], ['A3', 3]];
+  for (const [nm, c] of det) { const f = freq(nm) * 2 ** (c / 1200); let ph = rnd(); for (let i = 0; i < n; i++) { ph += f / SR; b[i] += ((ph % 1) * 2 - 1) * 0.25; } }
+  const bd = lowpass(shape(b, (v) => tape(v * 2.5, 4, 0.25)), (t) => fc * (0.7 + 0.3 * Math.sin(t * 0.21)));
+  for (let i = 0; i < n; i++) bd[i] *= beat;
+  return { sub: s, beat: bd };
+}
+/** Guardrails, round 5: the round-4 checks plus noise share, no clean lead, contra-rhythm and decay. */
+function guardrails5(name, mix, { bed, music, lead, texture, layers, eroded }) {
+  guardrails(name, mix, bed, music);
+  const m = monoOf(mix), N = 4096, rows = [];
+  for (let i = 0; i + N <= m.length; i += N / 2) { const fr = new Float64Array(N); for (let j = 0; j < N; j++) fr[j] = m[i + j] * (0.5 - 0.5 * Math.cos(2 * Math.PI * j / N)); rows.push(fr); }
+  // spectral flatness 200 Hz - 8 kHz in the louder half of frames (a small DFT over a decimated band is enough for a ratio)
+  const bins = []; for (let k = Math.ceil(200 * N / SR); k <= Math.floor(8000 * N / SR); k += 7) bins.push(k);
+  const fl = rows.map((fr) => { let e = 0, lg = 0; for (const k of bins) { let re = 0, im = 0; const w = 2 * Math.PI * k / N; for (let j = 0; j < N; j += 4) { re += fr[j] * Math.cos(w * j); im -= fr[j] * Math.sin(w * j); } const p = re * re + im * im + 1e-12; e += p; lg += Math.log(p); } return { e, sf: Math.exp(lg / bins.length) / (e / bins.length) }; });
+  const med = fl.map((r) => r.e).sort((a, b) => a - b)[fl.length >> 1], loud = fl.filter((r) => r.e >= med), sf = loud.reduce((a, r) => a + r.sf, 0) / loud.length;
+  const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
+  const leadDb = 20 * Math.log10(rms(lead) / (rms(texture) + 1e-9) + 1e-9);
+  const periods = [...new Set(layers.map((l) => l.toFixed(3)))];
+  // decay: distance of each pass's band spectrum from the original fragment (dB, timing-insensitive) must grow pass by pass
+  const CUTS = [250, 500, 1000, 2000, 4000, 8000];
+  const profile = (seg) => { const e = new Float64Array(CUTS.length + 1), st = CUTS.map(() => [0, 0]), al = CUTS.map((f) => 1 - Math.exp(-2 * Math.PI * f / SR)); let tot = 0;
+    for (const v of seg) { tot += v * v; let prev = 0; CUTS.forEach((f, k) => { st[k][0] += al[k] * (v - st[k][0]); st[k][1] += al[k] * (st[k][0] - st[k][1]); const lo = st[k][1]; e[k] += (lo - prev) ** 2; prev = lo; }); e[CUTS.length] += (v - prev) ** 2; }
+    return Array.from(e, (x) => 10 * Math.log10(x / (tot + 1e-12) + 1e-9)); };
+  const ref = profile(eroded.frag);
+  const passHF = eroded.marks.map((s0) => { const pr = profile(eroded.out.subarray(s0, s0 + eroded.frag.length)); return pr.reduce((a, v, k) => a + Math.abs(v - ref[k]), 0) / pr.length; });
+  // a trend, not a staircase (dropouts and crackle make single passes wobble): the later half clearly further than the earlier half, and the last pass at least 1 dB beyond the first
+  const half = Math.ceil(passHF.length / 2), mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const decaying = passHF.at(-1) >= passHF[0] + 1 && mean(passHF.slice(half)) > mean(passHF.slice(0, half)) + 0.3;
+  const ok = (b) => (b ? 'PASS' : 'FAIL');
+  console.log(`  ${name}: noise share (flatness) ${sf.toFixed(3)} ${ok(sf >= 0.05)} · lead vs texture ${leadDb.toFixed(1)} dB ${ok(leadDb <= -10)} · rhythm periods ${periods.join(' / ')} beats ${ok(periods.length >= 2)} · spectral distance by pass ${passHF.map((v) => v.toFixed(1)).join(' < ')} dB ${ok(decaying)}`);
+}
+
 // ---------------------------------------------------------------------------- the three sketches
 const SKETCHES = {
-  // Fennesz end: a cold strummed guitar and a buried tine ground; the guitar itself broken into the wall; hard cut to bare guitar
+  // Fennesz end: drone wall and sub, a resonator pad that follows the ground (the tune only as resonance), an eroding guitar loop, grain clouds, sparse 3-against-4 clicks
   lyon() {
-    const g = GROUNDS['3-lyon'], { ev, end } = groundEvents(g, 2, 3), sec = end + 9, spb = 60 / g.bpm;
-    const cutAt = 42;
-    const wall = curve([[0, 0], [16, 0.05], [24, 0.45], [34, 0.9], [cutAt - 0.05, 1], [cutAt, 0], [55, 0], [61, 0.35], [sec, 0.1]]);
-    const gtr = stereo(sec), tn = stereo(sec);
-    for (let t = 2, k = 0; t < sec - 4; t += 2 * 4 * spb * (0.97 + rnd() * 0.06), k++) strum(gtr, VOICING.cold, t + jit(20), { up: k % 3 === 2, level: 0.32, dur: 7, bright: 0.45, pan: 0.45 });
-    for (const e of ev) {
-      tn[0].fill(0, 0, 0);
-      const s = tine(freq(e.pitch), { vel: 0.5 + rnd() * 0.3, level: 0.45, grace: e.grace ? freq(e.grace) : null, dur: Math.min(5, e.dur + 1.5) });
-      mixInto(tn, s, e.t + jit(25), 0.55, 0.45);
-      if (e.dur >= 4 * spb) mixInto(tn, tine(freq(e.pitch), { vel: 0.35, level: 0.25, dur: 3 }), e.t + e.dur / 2 + jit(30), 0.45, 0.55);
-    }
-    const src = stereo(sec); add(src, gtr); add(src, tn, 0.8);
-    const lap = laptop(src, wall, { bits: 6, grains: 30 });
-    for (const t of [26.5, 31.2, 36.8, 40.1]) stutter(lap, t, 0.09 + rnd() * 0.1, 3 + (rnd() * 4 | 0), 0.85);
-    const drone = droneBed(sec, { drive: 2.5, smear: 0.4, hiss: 0, sweep: 30, lo: 300, hi: 1400 });
-    applyCurve(drone, curve([[0, 0.25], [30, 0.4], [cutAt - 0.05, 0.4], [cutAt, 0.1], [sec, 0.2]]));
-    const bed = dust(sec, 7, 0.06);
-    const mix = stereo(sec); add(mix, drone); add(mix, gtr, 1); add(mix, tn, 0.9); add(mix, lap, 1.25); add(mix, mono2(bed, 0.5, 0.5));
-    add(mix, reverb(mix, 6, 0.55, 0.02), 0.25);
-    monoLow(mix); compress(mix, -24, 3, 0.003, 0.2, 1.7);
-    guardrails('lyon', mix, bed, monoOf(src));
+    const g = GROUNDS['3-lyon'], { ev, end } = groundEvents(g, 2, 3), sec = end + 9, spb = 60 / g.bpm, cutAt = 42;
+    const wall = curve([[0, 0.15], [16, 0.3], [24, 0.65], [34, 1], [cutAt - 0.05, 1], [cutAt, 0.05], [55, 0.08], [61, 0.45], [sec, 0.15]]);
+    const n = Math.ceil(sec * SR);
+    // eroding loop of a cold guitar fragment (strummed once, then aged)
+    const frag = stereo(5); strum(frag, VOICING.cold, 0.05, { level: 0.4, dur: 5, bright: 0.45 });
+    const er = erodeLoop(monoOf(frag).subarray(0, Math.floor(4.6 * SR)), 12, { maxWow: 0.015 });
+    const loop = new Float32Array(n); loop.set(er.out.subarray(0, Math.min(er.out.length, n - Math.floor(2 * SR))), Math.floor(2 * SR));
+    // resonator pad: noise through combs at the ground's pitch, its fifth and the drone A
+    const nz = pinkish(n), pad = new Float32Array(n);
+    for (const [fn, gn] of [[groundPitchAt(ev, 0.5), 0.5], [groundPitchAt(ev, 0.75), 0.25], [() => freq('A2'), 0.35]]) { const r = resonate(nz, fn, { g: 0.93, damp: 0.45 }); for (let i = 0; i < n; i++) pad[i] += r[i] * gn; }
+    for (let i = 0; i < n; i++) pad[i] = tape(pad[i] * 0.5, 2.5, 0.1) * (0.4 + 0.6 * wall(i / SR));
+    const mix = droneWall(sec, wall, { drive: 4, smear: 0.8, hiss: 0.03, sweep: 30, lo: 300, hi: 1500 });
+    applyCurve(mix, curve([[0, 0.45], [30, 0.8], [cutAt - 0.05, 0.8], [cutAt, 0.12], [sec, 0.3]]));
+    const { sub, beat } = subAndBeat(sec, { sub: 0.35, beat: 0.3, fc: 900 });
+    add(mix, applyCurve(mono2(beat, 0.5, 0.5), wall));
+    add(mix, mono2(sub, 0.6, 0.6));
+    add(mix, mono2(pad, 0.55, 0.5), 1);
+    add(mix, applyCurve(mono2(windNoise(sec, { lo: 600, hi: 6000, rate: 0.04, depth: 0.5 }), 0.45, 0.4), wall), 0.9);
+    add(mix, mono2(loop, 0.5, 0.42), 0.8);
+    add(mix, granulate(loop, { density: 40, gmin: 0.03, gmax: 0.25, back: 4, cents: 25, oct: 0.15, rev: 0.5 }), 0.8);
+    // contra-rhythm: grain clicks every 3 beats against crackle every 4, plus dirty thuds on the ground's onsets
+    const perc = stereo(sec), layers = [3, 4];
+    for (let t = 4; t < sec - 2; t += 3 * spb) mixInto(perc, grainClick(0.5, loop), t + jit(15), 0.65, 0.35);
+    for (let t = 4 + spb / 2; t < sec - 2; t += 4 * spb) mixInto(perc, dirty(dust(0.15, 120, 0.6), 5, 3), t + jit(15), 0.35, 0.65);
+    for (const e of ev) mixInto(perc, dirty(thud(0.9), 7, 2.5), e.t + jit(20), 0.55);
+    add(perc, mono2(scrape(sec, { density: 0.6, fc: 2200, level: 0.4 }), 0.45, 0.55));
+    applyCurve(perc, curve([[0, 0.7], [cutAt - 0.05, 1], [cutAt, 0.35], [sec, 0.5]]));
+    add(mix, perc, 1);
+    const bed = dust(sec, 6, 0.05); add(mix, mono2(bed, 0.5, 0.5));
+    add(mix, reverb(mix, 7, 0.55, 0.02), 0.28);
+    monoLow(mix); compress(mix, -22, 3, 0.004, 0.2, 1.6);
+    applyCurve(mix, curve([[0, 0.45], [16, 0.55], [34, 1], [cutAt - 0.05, 1], [cutAt, 0.16], [55, 0.18], [61, 0.55], [sec, 0.2]]));   // the arc after the compressor
+    const texture = new Float32Array(n); for (let i = 0; i < n; i++) texture[i] = pad[i] + (mix[0][i] + mix[1][i]) * 0.25;
+    guardrails5('lyon', mix, { bed, music: monoOf(mix), lead: new Float32Array(n), texture, layers, eroded: er });
     return mix;
   },
 
-  // Floating Points end: bass-led reel, dark tines, cold guitar stabs, broken close drums, a hard-cut break, stutter edits
+  // Floating Points end, gritty: a masked distorted bass growl carries the reel cell; degraded stutter fragments; crushed broken drums; 3:4 grain pulse and 5:4 metal
   coe() {
     const g = GROUNDS['6-coe'], spb = 60 / g.bpm, cell = parseGround(g.notes), bars = 20, t0 = 1.5, sec = t0 + bars * 4 * spb + 4, s16 = spb / 4;
-    const barT = (b) => t0 + b * 4 * spb, cut = barT(10), back = barT(12);
-    const wall = curve([[0, 0.05], [barT(2), 0.1], [barT(4), 0.35], [cut - 0.05, 0.9], [cut, 0.25], [back - 0.05, 0.3], [back, 0.6], [barT(18), 0.85], [sec - 3, 0.6], [sec, 0]]);
-    const notes = cell.map((n) => n.pitch), graces = cell.map((n) => (n.graces.length ? n.graces.at(-1) : null));
-    const bass = new Float32Array(Math.ceil(sec * SR)), keys = stereo(sec), gtr = stereo(sec), kit = stereo(sec), kicks = [];
-    // broken patterns (16 steps): kick, clap, rim; velocities; varied per bar
-    const KICK = [1, 0, 0, 0, 0, 0, 0.7, 0, 0, 0, 1, 0, 0, 0, 0, 0.5], CLAP = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0], RIM = [0, 0, 0.5, 0, 0, 0, 0, 0.4, 0, 0.6, 0, 0, 0, 0.5, 0, 0];
+    const barT = (b) => t0 + b * 4 * spb, cut = barT(10), back = barT(12), n = Math.ceil(sec * SR);
+    const wall = curve([[0, 0.15], [barT(2), 0.3], [barT(4), 0.6], [cut - 0.05, 1], [cut, 0.45], [back - 0.05, 0.5], [back, 0.85], [barT(18), 1], [sec - 3, 0.7], [sec, 0]]);
+    const notes = cell.map((x) => x.pitch);
+    // bass growl: saw stack an octave lower than before, folded and crushed, a resonant filter that barely opens: felt more than heard
+    const growl = new Float32Array(n);
     for (let b = 0; b < bars * 8; b++) {
-      const t = t0 + b * 2 * s16, i = b % 16, bar = Math.floor(b / 8), inBreak = bar >= 10 && bar < 12;
-      { const f = freq(notes[i]) / 4, n = Math.floor(2 * s16 * 0.8 * SR), i0 = Math.floor((t + jit(6)) * SR); let ph = 0, s = 0;
-        const cutoff = inBreak ? 300 : 260 + 1200;
-        for (let j = 0; j < n && i0 + j < bass.length; j++) { ph += f / SR; let saw = 0; for (let k = 1; k <= 10; k++) saw += Math.sin(2 * Math.PI * k * ph) / k; const tt = j / SR, fc = 200 + cutoff * Math.exp(-tt / 0.07), a = 1 - Math.exp(-2 * Math.PI * fc / SR); s += a * (saw - s); bass[i0 + j] += tape(s * 1.3, 2.5, 0.15) * 0.5 * (0.85 + rnd() * 0.15) * Math.min(1, j / 60, (n - j) / 200); } }
-      if (bar >= 2 && !inBreak && b % 2 === 0) mixInto(keys, tine(freq(notes[i]) / 2, { vel: 0.35 + rnd() * 0.25, level: 0.3, dur: 1.2, grace: graces[i] ? freq(graces[i]) / 2 : null }), t + jit(10), 0.6, 0.4);
+      const t = t0 + b * 2 * s16 + jit(6), f = freq(notes[b % 16]) / 8, len = Math.floor(2 * s16 * 0.9 * SR), i0 = Math.floor(t * SR); let ph = 0, s1 = 0, s2 = 0;
+      for (let j = 0; j < len && i0 + j < n; j++) { ph += f / SR; const saw = ((ph % 1) * 2 - 1) + 0.5 * (((ph * 1.005) % 1) * 2 - 1); const fc = 140 + 500 * Math.exp(-j / SR / 0.05), a = 1 - Math.exp(-2 * Math.PI * fc / SR); s1 += a * (saw - s1); s2 += a * (s1 - s2); growl[i0 + j] += fold(tape(s2 * 2.2, 4, 0.2), 1.25) * 0.6 * Math.min(1, j / 80, (len - j) / 300); }
     }
-    for (let bar = 0; bar < bars; bar++) {
-      const t = barT(bar);
-      if (bar % 2 === 0 && bar >= 1) strum(gtr, ['E3', 'B3', 'D4', 'E4', 'B4'], t + 3 * s16 + jit(12), { level: 0.28, dur: 2.5, bright: 0.4, pan: 0.35, up: bar % 4 === 2 });
-      if (bar < 2 || (bar >= 10 && bar < 12)) continue;   // intro and the hard-cut break: no drums
-      const busy = bar >= 12;
+    const growlD = crush(growl, 7, 2);
+    // degraded guitar fragments, stuttered: the only "played" source, and it is broken
+    const frag = stereo(3); strum(frag, ['E2', 'B2', 'E3', 'G3', 'D4'], 0.02, { level: 0.5, dur: 3, bright: 0.5 });
+    const er = erodeLoop(monoOf(frag).subarray(0, Math.floor(1.3 * SR)), 8, { maxWow: 0.02 });
+    const frags = stereo(sec);
+    for (let bar = 2; bar < bars; bar += 2) { const p = (bar / 2) % 8, seg = er.out.subarray(er.marks[p], er.marks[p] + Math.floor(0.6 * SR)); mixInto(frags, seg, barT(bar) + 3 * s16 + jit(10), 0.35, 0.65); stutter(frags, barT(bar) + 3 * s16, s16, 3 + (bar % 3), 0.85); }
+    // crushed broken drums
+    const KICK = [1, 0, 0, 0, 0, 0, 0.7, 0, 0, 0, 1, 0, 0, 0, 0, 0.5], SN = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
+    const kit = stereo(sec), kicks = [];
+    for (let bar = 2; bar < bars; bar++) {
+      if (bar >= 10 && bar < 12) continue;
       for (let s = 0; s < 16; s++) {
-        const ts = t + s * s16 + jit(7), vary = (bar % 4 === 3 && s >= 12);
-        if (KICK[s] && !(vary && s === 15)) { mixInto(kit, kickTight(KICK[s] * (busy ? 1 : 0.9)), ts, 0.85); kicks.push(ts); }
-        if (vary && s === 14) { mixInto(kit, kickTight(0.6), ts, 0.85); kicks.push(ts); }
-        if (CLAP[s]) mixInto(kit, clap(0.7 * (0.9 + rnd() * 0.15)), ts + 0.006, 0.5, 0.5);
-        if (RIM[s] && rnd() < 0.85) mixInto(kit, rim(RIM[s] * 0.5), ts, 0.62, 0.38);
-        mixInto(kit, shaker((s % 4 === 2 ? 0.55 : s % 2 ? 0.25 : 0.38) * (busy ? 1.1 : 0.9) * (0.8 + rnd() * 0.3)), ts, 0.4, 0.6);
+        const ts = barT(bar) + s * s16 + jit(8);
+        if (KICK[s]) { mixInto(kit, dirty(kickTight(KICK[s]), 6, 3), ts, 0.95); kicks.push(ts); }
+        if (SN[s]) mixInto(kit, dirty(snareNoise(0.8, 0.16), 5, 3), ts + 0.006, 0.5);
+        if (s % 2 === 1 && rnd() < 0.7) mixInto(kit, dirty(hatMetal(0.35, 0.015), 5, 2), ts, 0.45, 0.55);
       }
     }
-    const src = stereo(sec); add(src, mono2(bass, 0.8, 0.8)); add(src, keys); add(src, gtr);
-    const lap = laptop(src, wall, { bits: 7, grains: 24 });
-    duck(lap, kicks, 0.5, 0.2);
-    const mix = stereo(sec);
-    add(mix, mono2(bass, 1, 1)); add(mix, keys, 1); add(mix, gtr, 1); add(mix, lap, 1.1);
-    add(kit, reverb(kit, 0.6, 0.3, 0.004), 0.12);
-    add(mix, kit, 1.05);
-    for (const b of [9, 11, 15, 19]) stutter(mix, barT(b) + 12 * s16, s16 * (b % 2 ? 1 : 2), 3, 0.9);   // stutter edits into section changes
+    // contra-rhythm: grain pulse every 3 sixteenths (3 against 4) and metal hits every 5 (5 against 4)
+    const contra = stereo(sec), layers = [0.75, 1.25];
+    for (let t = barT(4); t < sec - 3; t += 3 * s16) mixInto(contra, grainClick(0.45, growl), t + jit(5), 0.7, 0.3);
+    for (let t = barT(6); t < sec - 3; t += 5 * s16) mixInto(contra, dirty(metalHit(freq('E4'), { level: 0.18, attack: 0.002, decay: 0.35, len: 0.6 }), 6, 2), t + jit(5), 0.3, 0.7);
+    applyCurve(contra, curve([[0, 1], [cut - 0.05, 1], [cut, 0.2], [back, 1], [sec, 1]]));
+    const mix = droneWall(sec, wall, { drive: 4.5, smear: 0.5, hiss: 0.05, sweep: 12, lo: 250, hi: 2000 });
+    const { sub, beat } = subAndBeat(sec, { sub: 0.25, beat: 0.4, fc: 1100 });
+    add(mix, applyCurve(mono2(beat, 0.5, 0.5), wall));
+    add(mix, mono2(scrape(sec, { density: 1.2, fc: 2600, level: 0.45 }), 0.5, 0.5));
+    duck(mix, kicks, 0.6, 0.22);
+    add(mix, mono2(sub, 0.5, 0.5)); add(mix, mono2(growlD, 0.95, 0.95)); add(mix, frags, 1); add(mix, contra, 1);
+    add(kit, reverb(kit, 0.5, 0.3, 0.004), 0.1); add(mix, kit, 1.05);
+    for (const b of [9, 11, 15, 19]) stutter(mix, barT(b) + 12 * s16, s16 * (b % 2 ? 1 : 2), 3, 0.9);
     const bed = dust(sec, 5, 0.05); add(mix, mono2(bed, 0.5, 0.5));
-    add(mix, reverb(mix, 1.4, 0.4, 0.01), 0.08);
-    monoLow(mix); compress(mix, -18, 3, 0.004, 0.12, 1.5);
-    applyCurve(mix, curve([[0, 0.3], [barT(2) - 0.05, 0.35], [barT(2), 1], [cut - 0.05, 1], [cut, 0.22], [back - 0.05, 0.28], [back, 1], [sec - 4, 1], [sec, 0.03]]));   // the arc after the bus compressor, so the drops stay drops
-    guardrails('coe', mix, bed, monoOf(src));
+    add(mix, reverb(mix, 1.3, 0.4, 0.01), 0.08);
+    monoLow(mix); compress(mix, -20, 3.5, 0.003, 0.12, 1.7);
+    applyCurve(mix, curve([[0, 0.3], [barT(2) - 0.05, 0.35], [barT(2), 1], [cut - 0.05, 1], [cut, 0.22], [back - 0.05, 0.28], [back, 1], [sec - 4, 1], [sec, 0.03]]));
+    guardrails5('coe', mix, { bed, music: monoOf(mix), lead: new Float32Array(n), texture: monoOf(mix), layers, eroded: er });
     return mix;
   },
 
-  // In between: the album ground on tines (Promises-like patience), warm strummed washes, a broken kit in the middle, the wall from the instruments, a hard cut to bare tines
+  // In between: the tine ground survives only as a heavily eroded, half-buried loop; noise pad, distorted drone, gritty broken beat; snap-ratio grain pulse vs even shaker, 5:4 metal
   album() {
-    const g = GROUNDS.album, { ev, end } = groundEvents(g, 2, 3), sec = end + 8, spb = 60 / g.bpm, bar = 4 * spb, s16 = spb / 4;
-    const cutAt = 50;
-    const wall = curve([[0, 0], [14, 0.05], [22, 0.4], [40, 0.85], [cutAt - 0.05, 1], [cutAt, 0], [sec, 0]]);
-    const tn = stereo(sec), gtr = stereo(sec), kit = stereo(sec), kicks = [];
-    for (const e of ev) {
-      for (let k = 0, t = e.t; t < e.t + e.dur - 0.05; k++, t += spb) mixInto(tn, tine(freq(e.pitch), { vel: (k ? 0.35 : 0.7) * (0.85 + rnd() * 0.3), level: 0.45 * 0.78 ** k, grace: k === 0 && e.grace ? freq(e.grace) : null, dur: 2.4 }), t + jit(18), 0.5 + (rnd() - 0.5) * 0.2, 0.5 - (rnd() - 0.5) * 0.2);
+    const g = GROUNDS.album, { ev, end } = groundEvents(g, 1, 0), spb = 60 / g.bpm, bar = 4 * spb, s16 = spb / 4;
+    // render the ground once on tines (dry), then erode it across the piece
+    const one = stereo(end + 2);
+    for (const e of ev) mixInto(one, tine(freq(e.pitch), { vel: 0.6, level: 0.45, dur: Math.min(3, e.dur + 1), grace: e.grace ? freq(e.grace) : null }), e.t + jit(15), 0.5);
+    const frag = monoOf(one).subarray(0, Math.floor(end * SR));
+    const er = erodeLoop(frag, 3, { maxWow: 0.01 }), sec = 3 + er.out.length / SR + 4, n = Math.ceil(sec * SR), cutAt = 3 + 2 * frag.length / SR + 2;
+    const wall = curve([[0, 0.1], [14, 0.25], [22, 0.6], [40, 1], [cutAt - 0.05, 1], [cutAt, 0.05], [sec, 0.05]]);
+    const loop = new Float32Array(n); loop.set(er.out.subarray(0, Math.min(er.out.length, n - 3 * SR)), 3 * SR);
+    const nz = pinkish(n), pad = new Float32Array(n);
+    for (const [fn, gn] of [[groundPitchAt(ev.map((e) => ({ ...e, t: e.t + 3 })), 0.5), 0.45], [() => freq('E3'), 0.3], [() => freq('A2'), 0.3]]) { const r = resonate(nz, fn, { g: 0.97, damp: 0.4 }); for (let i = 0; i < n; i++) pad[i] += r[i] * gn; }
+    for (let i = 0; i < n; i++) pad[i] = tape(pad[i] * 0.5, 2.5, 0.1) * (0.35 + 0.65 * wall(i / SR));
+    const mix = droneWall(sec, wall, { drive: 3.6, smear: 0.6, hiss: 0.03, sweep: 22, lo: 350, hi: 1800 });
+    applyCurve(mix, curve([[0, 0.45], [20, 0.75], [cutAt - 0.05, 0.75], [cutAt, 0.1], [sec, 0.15]]));
+    const { sub, beat } = subAndBeat(sec, { sub: 0.3, beat: 0.35, fc: 1000 });
+    add(mix, applyCurve(mono2(beat, 0.5, 0.5), wall)); add(mix, mono2(sub, 0.55, 0.55));
+    add(mix, mono2(pad, 0.5, 0.55), 1);
+    add(mix, mono2(loop, 0.48, 0.42), 0.55);                                                    // half-buried
+    add(mix, granulate(loop, { density: 34, gmin: 0.03, gmax: 0.3, back: 3, cents: 20, oct: 0.2, rev: 0.45 }), 0.7);
+    // gritty broken beat from 20 s to the cut; contra layers: snap-ratio grain pulse (0.25 / 0.75) vs even shaker, metal every 5 sixteenths
+    const kit = stereo(sec), kicks = [], KICK = [1, 0, 0, 0, 0, 0, 0, 0.6, 0, 0, 0.8, 0, 0, 0, 0, 0];
+    for (let t = 3 + Math.ceil((20 - 3) / bar) * bar; t < cutAt - 0.1; t += bar) for (let s = 0; s < 16; s++) {
+      const ts = t + s * s16 + jit(8);
+      if (KICK[s]) { mixInto(kit, dirty(kickTight(KICK[s]), 6, 3), ts, 0.95); kicks.push(ts); }
+      if (s === 8) mixInto(kit, dirty(snareNoise(0.8, 0.2), 5, 3), ts + 0.006, 0.5);
+      if (s % 2 === 0) mixInto(kit, dirty(shaker(0.5 * (0.8 + rnd() * 0.3)), 6, 2), ts, 0.42, 0.58);
     }
-    for (let t = 6, k = 0; t < sec - 6; t += 2 * bar * (0.97 + rnd() * 0.06), k++) strum(gtr, k % 4 === 3 ? VOICING.sus : VOICING.light, t + jit(25), { up: k % 2 === 1, level: 0.26, dur: 7, bright: 0.5, pan: 0.55 });
-    const KICK = [1, 0, 0, 0, 0, 0, 0, 0.6, 0, 0, 0.8, 0, 0, 0, 0, 0], RIM = [0, 0, 0, 0.4, 0, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0.35, 0];
-    for (let t = 3 + Math.ceil((20 - 3) / bar) * bar; t < cutAt - 0.1; t += bar) {
-      for (let s = 0; s < 16; s++) {
-        const ts = t + s * s16 + jit(8);
-        if (KICK[s]) { mixInto(kit, kickTight(KICK[s]), ts, 0.85); kicks.push(ts); }
-        if (s === 8) mixInto(kit, clap(0.65), ts + 0.008, 0.5, 0.5);
-        if (RIM[s] && rnd() < 0.8) mixInto(kit, rim(RIM[s] * 0.5), ts, 0.6, 0.4);
-        if (s % 2 === 0) mixInto(kit, shaker((s % 4 ? 0.3 : 0.42) * (0.8 + rnd() * 0.3)), ts, 0.42, 0.58);
-      }
-    }
-    const src = stereo(sec); add(src, tn); add(src, gtr);
-    const lap = laptop(src, wall, { bits: 7, grains: 26 });
-    duck(lap, kicks, 0.45, 0.25);
-    for (const t of [33.3, 41.7, 47.9]) stutter(lap, t, 0.11, 4, 0.85);
-    const drone = droneBed(sec, { drive: 2.2, smear: 0.35, hiss: 0, sweep: 22, lo: 350, hi: 1600 });
-    applyCurve(drone, curve([[0, 0.2], [cutAt - 0.05, 0.35], [cutAt, 0.08], [sec, 0.12]]));
-    const bed = dust(sec, 6, 0.05);
-    const mix = stereo(sec); add(mix, drone); add(mix, tn, 1); add(mix, gtr, 0.9); add(mix, lap, 1.15); add(mix, mono2(bed, 0.5, 0.5));
-    add(kit, reverb(kit, 0.7, 0.3, 0.005), 0.12); add(mix, kit, 1);
-    add(mix, reverb(mix, 4.5, 0.5, 0.02), 0.22);
-    monoLow(mix); compress(mix, -18, 2.5, 0.006, 0.18, 1.4);
-    guardrails('album', mix, bed, monoOf(src));
+    const contra = stereo(sec), layers = [1, 1.25];
+    for (let t = 16; t < cutAt - 0.1; t += spb) { mixInto(contra, grainClick(0.4, loop), t + jit(6), 0.7, 0.3); mixInto(contra, grainClick(0.3, loop), t + 0.25 * spb + jit(4), 0.7, 0.3); }   // the snap: short then long
+    for (let t = 24; t < cutAt - 0.1; t += 5 * s16) mixInto(contra, dirty(metalHit(freq('A3'), { level: 0.16, attack: 0.002, decay: 0.5, len: 0.8 }), 6, 2), t + jit(5), 0.3, 0.7);
+    duck(mix, kicks, 0.5, 0.25);
+    add(mix, mono2(scrape(sec, { density: 0.8, fc: 2000, level: 0.35 }), 0.5, 0.5));
+    add(kit, reverb(kit, 0.6, 0.3, 0.004), 0.1); add(mix, kit, 1); add(mix, contra, 1);
+    for (const t of [cutAt - 6.2, cutAt - 3.1, cutAt - 1.2]) stutter(mix, t, 0.1, 4, 0.85);
+    reverseSwell(mix, frag.subarray(0, Math.floor(1.2 * SR)), cutAt, 3, 0.5);
+    const bed = dust(sec, 6, 0.05); add(mix, mono2(bed, 0.5, 0.5));
+    add(mix, reverb(mix, 5, 0.5, 0.02), 0.22);
+    monoLow(mix); compress(mix, -21, 3, 0.005, 0.18, 1.6);
+    applyCurve(mix, curve([[0, 0.4], [20, 0.75], [cutAt - 0.05, 1], [cutAt, 0.14], [sec, 0.14]]));
+    const texture = new Float32Array(n); for (let i = 0; i < n; i++) texture[i] = pad[i] + (mix[0][i] + mix[1][i]) * 0.25;
+    const leadStem = new Float32Array(n); for (let i = 0; i < n; i++) leadStem[i] = loop[i] * 0.45;
+    guardrails5('album', mix, { bed, music: monoOf(mix), lead: leadStem, texture, layers, eroded: er });
     return mix;
   },
 };

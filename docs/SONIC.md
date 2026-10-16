@@ -17,4 +17,8 @@ The live, commented version is the Claude Doc "Tae Be Walkit: Sonic Palette"
   from the instruments themselves, warm voicings under abrasion, human time, one arc with a hard cut, detailed dry
   broken percussion, a hi-fi mono bottom. `sketch-grounds.mjs` prints the measurable checks (arc ≥ 12 dB,
   crest 11–16 dB, low end mono, independent noise ≤ -18 dB) for every render.
+- **Round 5 (grit first):** played sources only as eroded loops; pitch as resonance inside noise (comb/resonator
+  filters tuned to the drone and the ground); decay as a process; contra-rhythm (3:4, 5:4, the snap against an even
+  pulse); the Highland grammar as substrate. Added checks: noise share (flatness ≥ 0.05), no clean lead, ≥ 2 rhythm
+  periods, decay trend across loop passes.
 - **Status:** awaiting answers to the album-level questions A1–A7 and per-track decisions D1–D3. `src/audio` is unchanged.
